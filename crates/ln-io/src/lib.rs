@@ -1,12 +1,21 @@
-//! Blocking filesystem ops and the tokio offload pool.
+//! Blocking filesystem ops, the tokio offload pool, and the M4 network transports.
 //!
 //! `ln-io` is the only crate that knows about threads. It never sees a JS value: an [`Op`] is
 //! plain Rust, [`OpValue`] is plain Rust, and [`OpDone`] is what travels back to the isolate
 //! thread. The isolate thread calls [`execute`] for the `fs` sync forms and [`Pool::submit`] for
 //! everything else; the pool parks the result via the sink, which wakes the loop.
 //!
+//! Two execution modes share the one lazily created runtime:
+//!
+//! - **Ops** (ADR-0005): one-shot work on the blocking pool, one completion. `fs`, `dns.lookup`.
+//! - **Handles** ([net], ADR-0006): long-lived async tasks that own a connection and emit events
+//!   until it closes. Sockets, TLS sessions, HTTP/1.1 connections.
+//!
 //! The public types in this file are the M3 contract shared with `ln-runtime` and with the plan
-//! in `docs/m3-plan.md`. Extend them, do not rename them.
+//! in `docs/m3-plan.md`; the M4 contract is [`net`] and `docs/m4-plan.md`. Extend them, do not
+//! rename them.
+
+pub mod net;
 
 use std::ffi::CString;
 use std::fs;
@@ -440,6 +449,19 @@ impl Pool {
             };
             sink(done);
         });
+    }
+
+    /// Spawn a long-lived async task on the same runtime (M4's connection tasks, ADR-0006).
+    ///
+    /// The task owns its connection and never blocks: every wait is an await point, so it does not
+    /// consume `--io-threads` (which bounds blocking work only). Errors are the task's to report
+    /// through the [`net::EventSink`]; a panic here is a bug, and tokio's default handler reports
+    /// it.
+    pub fn spawn<F>(&self, task: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self._runtime.spawn(task);
     }
 }
 

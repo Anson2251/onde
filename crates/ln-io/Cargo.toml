@@ -4,13 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Blocking fs ops and the tokio offload pool for onde"
+description = "Blocking fs ops, the tokio offload pool and the M4 network transports for onde"
 publish = false
 
 [dependencies]
 ln-error = { path = "../ln-error" }
+ln-http = { path = "../ln-http" }
 getrandom = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# `net`/`io-util` are M4: sockets, DNS and the connection tasks that drive `ln-http`.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

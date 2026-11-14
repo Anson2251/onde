@@ -48,8 +48,7 @@ jobs:
   # The corpus is the contract. This job proves the .expected files still describe real Node
   # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
   # differential harness (node vs lite, same stdout + exit code) from scratch.
-  corpus-selftest:
-    name: corpus is still Node-valid
+  corpus-selftest:    name: corpus is still Node-valid
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,3 +66,16 @@ jobs:
         run: ./test/smoke/run.sh
       - name: stdlib oracles against Node
         run: ./test/js/run.sh
+
+  # License policy: deny.toml. A separate job because it does not depend on the OS matrix.
+  # M4 adds `webpki-roots` (MPL-2.0), which the allowlist covers.
+  licenses:
+    name: licenses and sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: licenses bans sources
+

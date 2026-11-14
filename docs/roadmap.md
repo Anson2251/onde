@@ -343,6 +343,21 @@ never removable).
 
 ## M4 — Network (6 w)
 
+**Status: in progress (2026-11-14).** The implementation contract is
+[m4-plan.md](m4-plan.md); the protocol decisions are
+[ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
+[ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0 has landed the locked interfaces:
+`ln_io::net`'s command/event types and the `ln-http` skeleton compile and are tested for `Send`.
+Nothing serves a socket yet.
+
+Two recorded reversals of the sketch below, both deliberate:
+
+- **hyper is rejected.** It owns the connection lifecycle, which Node's API requires the caller to
+  own (`'connection'`, `'upgrade'`, `CONNECT`, `rawHeaders`, per-socket tuning). The parser is
+  `httparse` + our own FSM in `ln-http` instead; see ADR-0006 §2.8.
+- **The op protocol is not enough for sockets.** Handles and events are a second primitive
+  (ADR-0006); `dns.lookup` stays a one-shot op.
+
 **Build**
 
 - `net`: TCP client/server, Unix sockets (mac/linux), `socket.setNoDelay`, half-close,
@@ -504,7 +519,7 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | R2 | `Intl` absent (verified on 0.17.0) | Breaks i18n packages | Ship `Intl`-lite (number/date formatting via `icu` optional feature) or document hard non-goal | Two or more target users need it |
 | R3 | Engine patch drift per upstream release | M6 slips, security patches delayed | Minimal patch surface, CI rebase job, upstream PR | Rebase takes > 2 days |
 | R4 | CJS/ESM resolution edge cases (exports maps, dual packages) | Ecosystem compat | Node's documented algorithms implemented once in `ln-modules` (ADR-0004) with a fixture corpus, the 40-package smoke set and 19 module cases; escalate to `oxc_resolver` only if the corpus shows gaps | > 10 packages failing for resolution reasons |
-| R5 | HTTP/1.1 + TLS correctness | M4 overruns | Use `hyper`+`rustls` on the offload pool rather than a hand-written parser; conformance tests early | Header/keep-alive bugs > 5 in the first week of M4 |
+| R5 | HTTP/1.1 + TLS correctness | M4 overruns | `httparse` for the head plus a sans-io FSM in `ln-http` (ADR-0007), with a pinned byte corpus from RFC 9112 and Node's raw-wire tests; conformance tests early. hyper rejected: it owns the connection and cannot serve `'upgrade'`/`CONNECT`/`rawHeaders`/per-socket tuning (ADR-0006 §2.8) | Header/keep-alive bugs > 5 in the first week of M4 |
 | R6 | rquickjs blocks a needed engine call | M0/M1 stall | Escape hatch: `ln-sys` + hand-written wrapper; keep `ln-engine` as the only boundary | Any engine API we need is not exposed and not patchable in a day |
 | R7 | V8-only APIs assumed by ecosystem (`vm`, `inspector`, `async_hooks` internals) | Compat gaps | Document; fail fast with `ERR_FEATURE_UNAVAILABLE`; `async_hooks` approximated in M6 | — |
 | R8 | Windows differences (fs semantics, process spawning) | Platform support | Best-effort in 1.0; CI on Windows only for build, not conformance | 1.1 decision |
@@ -518,8 +533,10 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | [0002](adr/0002-microtask-scheduler.md) | Host-owned two-queue checkpoint scheduler; deferred rejection reporting | accepted |
 | [0003](adr/0003-event-loop.md) | Isolate-per-thread loop; I/O offloaded to tokio; completions as macrotasks | accepted |
 | [0004](adr/0004-module-system.md) | Module system: native ESM, JS CJS loader, engine-free resolver | accepted |
-| 0005 | Ops protocol: sync vs async, payload rules, cancellation, completion ids | accepted |
-| 0006 | Permissions model (deny-by-default `--allow-*`) | deferred to 1.1 |
+| [0005](adr/0005-ops-protocol.md) | Ops protocol: sync vs async, payload rules, cancellation, completion ids | accepted |
+| [0006](adr/0006-handles-and-events.md) | Handles and events: live connections as a second primitive; hyper rejected | accepted |
+| [0007](adr/0007-http-codec.md) | HTTP/1.1 as a sans-io `httparse`-based state machine, outbound heads authored in JS | accepted |
+| 0008 | Permissions model (deny-by-default `--allow-*`) | deferred to 1.1 (renumbered; 0006/0007 taken by M4) |
 
 ## 7. What we are explicitly not doing
 

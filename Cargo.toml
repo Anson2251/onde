@@ -4,6 +4,7 @@ members = [
     "crates/ln-sched",
     "crates/ln-modules",
     "crates/ln-error",
+    "crates/ln-http",
     "crates/ln-engine",
     "crates/ln-io",
     "crates/ln-crypto",

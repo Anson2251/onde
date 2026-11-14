@@ -1,0 +1,47 @@
+# cargo-deny policy for onde.
+#
+# The project ships binaries, so every dependency must be redistributable under a permissive or
+# weak-copyleft license. MPL-2.0 is allowed because `webpki-roots` (M4's bundled root store) is
+# MPL-2.0; it is file-level copyleft, not a linking restriction, and we do not modify it.
+#
+# Run: cargo deny check
+
+[graph]
+targets = [
+  { triple = "x86_64-unknown-linux-gnu" },
+  { triple = "aarch64-unknown-linux-gnu" },
+  { triple = "x86_64-apple-darwin" },
+  { triple = "aarch64-apple-darwin" },
+]
+
+[advisories]
+version = 2
+yanked = "warn"
+
+[licenses]
+version = 2
+# Most crates state their license in SPDX terms; a lower threshold would let a fuzzy match through.
+confidence-threshold = 0.93
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+]
+
+[bans]
+# Duplicate versions are reported for review, not blocked: `getrandom` and the `windows-*` family
+# legitimately appear more than once in the graph.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

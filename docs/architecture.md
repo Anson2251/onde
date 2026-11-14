@@ -30,12 +30,14 @@ boundary at exactly one place: `OpDone` messages.
 ## 2. Crate graph
 
 ```
-ln-cli ──▶ ln-runtime ──┬─▶ ln-sched      (no engine dependency, pure policy)
+ln-cli ──▶ ln-runtime ──┬─▶ ln-sched           (pure policy, no engine)
                         ├─▶ ln-engine ──▶ ln-sys (bindgen, vendored quickjs-ng)
-                        ├─▶ ln-modules     (no engine dependency: CJS/ESM resolution)
-                        ├─▶ ln-io ─────┐
-                        ├─▶ ln-crypto ─┴─▶ ln-error  (Node error model, no deps)
-                        └─▶ js/            (bootstrap + node: modules, bytecode at build time)
+                        ├─▶ ln-modules          (resolution, no engine)
+                        ├─▶ ln-io ──▶ ln-http   (M4 transports → sans-io codec)
+                        ├─▶ ln-crypto
+                        └─▶ js/                 (bootstrap + node: modules)
+
+ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps)
 ```
 
 | Crate | Owns | Must not |
@@ -44,7 +46,8 @@ ln-cli ──▶ ln-runtime ──┬─▶ ln-sched      (no engine dependency,
 | `ln-engine` | `JSRuntime`/`JSContext` lifetime, value handles, class registry, promise hooks, interrupt, the `Job::Engine` adapter | contain Node semantics |
 | `ln-runtime` | bootstrap, the engine's resolver/loader callbacks, host primitives, op registry, event→JS mapping | call `execute_pending_job` directly |
 | `ln-modules` | CJS/ESM resolution, `package.json` maps, file URLs, CJS named-export scan | know about QuickJS, read a `JSValue`, decide runtime policy |
-| `ln-io` | fs syscalls + the tokio offload pool that M4/M5 extend; `Op` execution | hold a `JSValue`, call into JS, depend on the engine |
+| `ln-io` | fs syscalls, the tokio offload pool, and M4's transports (TCP/Unix/TLS) with their connection tasks; `Op` and handle execution | hold a `JSValue`, call into JS, decide HTTP or Node policy |
+| `ln-http` | HTTP/1.1 framing: head parsing, chunked codec, limits, the peer's keep-alive intent | own a socket, depend on tokio, decide JS-visible policy |
 | `ln-crypto` | hash/HMAC/HKDF state and random generation | do I/O, depend on `tokio`, hold a `JSValue` |
 | `ln-error` | `NodeError`, errno→code and message tables, argument-error constructors | know about QuickJS or any runtime policy |
 | `js/` | the user-visible Node API where JS is expressive enough | reach into engine internals |
@@ -59,8 +62,9 @@ adapter is thin enough to review.
    runtime semantics are allowed to live in `ln-cli`.
 2. Create `JSRuntime`; set memory limit, max stack size, GC threshold, interrupt handler.
 3. Spawn/attach isolate thread; `JS_UpdateStackTop`; `JS_SetCanBlock(true)` if workers are enabled.
-4. Create the main context; install the host primitives and the fd table (engine classes such as
-   `Socket` arrive with M4; `Buffer`, `FileHandle`, `Stats` and `Dirent` stay JavaScript).
+4. Create the main context; install the host primitives and the fd table (`Buffer`, `FileHandle`,
+   `Stats`, `Dirent` and, from M4, `Socket`/`Server` stay JavaScript; a socket is a handle over
+   `ln_io::net`, not an engine class).
 5. Install `ln-engine` hooks: job adapter, promise rejection tracker (M1), interrupt deadline
    for the checkpoint budget (M1).
 6. Evaluate `js/bootstrap.js` (bytecode snapshot in M7). It defines `console`, `process`,
@@ -157,6 +161,38 @@ is rejected with `AbortError`; the completion is ignored if it races.
 
 Backpressure: ops that stream (fs read/write, socket read/write) are pull-based — the JS side
 asks for the next chunk only when the consumer is ready, so the pool never runs ahead.
+
+### Handles
+
+An op is bounded work that settles once. A socket is not: it lives, emits events, takes commands,
+and its lifetime decides whether the loop can exit. M4 therefore adds a second primitive next to
+the op table ([ADR-0006](adr/0006-handles-and-events.md)), and M5's stdio pipes reuse it.
+
+```rust
+// ln-io::net — the handle protocol. Ids come from the same sequence as op ids.
+pub type HandleId = u64;
+
+enum Command { Listen(..), Connect(..), Read { max: u32 }, ReadStop, Write { data: Vec<u8> },
+               End, Destroy, Detach, HttpAttach { role, limits }, HttpHead { bytes },
+               HttpBody { bytes }, HttpEnd { keep_alive: bool }, SetNoDelay(bool), .. }
+
+enum Event { Listening { local }, Connection { handle, remote }, Connected { local, remote, alpn },
+             Data { bytes }, End, Drain, Timeout, Error { error }, Closed { had_error },
+             Http(ln_http::Event), ClientError { error } }
+```
+
+- Commands go out through `host.net(id, name, args)`; events come back through
+  `__ln_handle_event(id, name, payload)`. Both carry only ids and plain Rust data; the conversion
+  to JS happens on the isolate thread.
+- The task parks events per handle and wakes the loop with **one** `Completion(id)`, so
+  `ln-sched` stays unaware of handles. The completion phase drains the handle's queue and
+  checkpoints once per batch.
+- Loop refs are per handle, not per event: one ref while listening or connected, released exactly
+  once on `close`/`unref`, which is what makes `server.listen()` keep the process alive and an
+  idle `Agent` socket not.
+- A handle is in raw mode (`data`) or parsed mode (`request`/`response`/`body`, driven by
+  `ln-http`); `detach` hands the socket back to raw mode for `'upgrade'` and `CONNECT`. This is
+  why the raw socket in `'connection'` is the same object the HTTP layer reads from.
 
 ## 6. Module system
 

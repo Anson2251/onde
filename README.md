@@ -5,14 +5,17 @@ A small, embeddable Node.js-compatible JavaScript runtime: **QuickJS (quickjs-ng
 > **Naming:** the project is now **onde**. The `ln-*` crates and the `lite` binary keep
 > their names for now, so build commands below still use `target/debug/lite`.
 
-Status: **M3 complete** (2026-11-13). `lite` runs CommonJS and native ES modules, resolves
-`node_modules` and `exports` maps, ships the Node core stdlib tier 0 (`process`, `path`, `url`,
-`util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`, `querystring`, `punycode`,
-`module`), the M3 I/O core (`fs`, `fs/promises`, `stream`, `stream/promises`, `crypto`,
-`perf_hooks`, `tty`, real stdio), and the globals Node provides (`URL`, `TextEncoder`,
-`AbortController`, `EventTarget`, `structuredClone`). Network and async context are next — see
-[docs/roadmap.md](docs/roadmap.md), the M3 contract in [docs/m3-plan.md](docs/m3-plan.md) and the
-op protocol in [ADR-0005](docs/adr/0005-ops-protocol.md).
+Status: **M3 complete** (2026-11-13), **M4 in progress** (2026-11-14). `lite` runs CommonJS and
+native ES modules, resolves `node_modules` and `exports` maps, ships the Node core stdlib tier 0
+(`process`, `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`,
+`querystring`, `punycode`, `module`), the M3 I/O core (`fs`, `fs/promises`, `stream`,
+`stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio), and the globals Node provides
+(`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). Network is next: the
+M4 interfaces are locked and compile (`ln_io::net`'s handle/event protocol, the `ln-http` sans-io
+codec) but nothing serves a socket yet — see [docs/m4-plan.md](docs/m4-plan.md),
+[ADR-0006](docs/adr/0006-handles-and-events.md) and [ADR-0007](docs/adr/0007-http-codec.md). The
+roadmap is [docs/roadmap.md](docs/roadmap.md); the M3 contract is
+[docs/m3-plan.md](docs/m3-plan.md).
 
 ## Try it
 
@@ -119,14 +122,20 @@ what this repository builds, in that order.
 ## Read in this order
 
 1. [docs/roadmap.md](docs/roadmap.md) — milestones, exit criteria, sequencing, risks.
-2. [docs/adr/0002-microtask-scheduler.md](docs/adr/0002-microtask-scheduler.md) — the scheduler
+2. [docs/m4-plan.md](docs/m4-plan.md) — the milestone being worked on: host boundary, WP
+   ownership, exit criteria.
+3. [docs/adr/0006-handles-and-events.md](docs/adr/0006-handles-and-events.md) — ops vs handles, the
+   structural M4 decision.
+4. [docs/adr/0007-http-codec.md](docs/adr/0007-http-codec.md) — why the HTTP parser is a sans-io
+   Rust state machine.
+5. [docs/adr/0002-microtask-scheduler.md](docs/adr/0002-microtask-scheduler.md) — the scheduler
    redesign (the load-bearing decision).
-3. [docs/adr/0003-event-loop.md](docs/adr/0003-event-loop.md) — loop phases, timers, I/O offload.
-4. [docs/adr/0004-module-system.md](docs/adr/0004-module-system.md) — ESM/CJS, interop, resolver.
-5. [docs/architecture.md](docs/architecture.md) — component map, crate graph, boot sequence.
-6. [docs/adr/0001-engine-baseline.md](docs/adr/0001-engine-baseline.md) — why quickjs-ng, how it
+6. [docs/adr/0003-event-loop.md](docs/adr/0003-event-loop.md) — loop phases, timers, I/O offload.
+7. [docs/adr/0004-module-system.md](docs/adr/0004-module-system.md) — ESM/CJS, interop, resolver.
+8. [docs/architecture.md](docs/architecture.md) — component map, crate graph, boot sequence.
+9. [docs/adr/0001-engine-baseline.md](docs/adr/0001-engine-baseline.md) — why quickjs-ng, how it
    is pinned and patched.
-7. [docs/compat.md](docs/compat.md) — API matrix and known divergences.
+10. [docs/compat.md](docs/compat.md) — API matrix and known divergences.
 
 ## Repo layout
 
@@ -139,8 +148,8 @@ crates/
   ln-sched/      microtask/tick scheduler, timers, loop driver, budget [exists]
   ln-modules/    engine-free CJS/ESM resolution, package.json maps,
                  named-export scan                                    [exists]
-  ln-io/         tokio offload pool + fs ops (net/dns/tls in M4,
-                 child_process in M5)                                   [M3]
+  ln-io/         tokio pool, fs ops, the M4 net/TLS transports         [M3/M4]
+  ln-http/       sans-io HTTP/1.1 codec: framing and limits            [M4]
   ln-crypto/     hash/HMAC/HKDF/random, engine-free and tokio-free      [M3]
   ln-error/      NodeError: errno→code and message tables               [M3]
   ln-sys/        bindgen FFI for vendored, patched quickjs-ng          [M6]
@@ -162,7 +171,7 @@ vendor/          quickjs-ng fork + rquickjs-sys patch queue             [M6]
 ## Build and test
 
 ```sh
-cargo test --all                                # 210 tests across the crates
+cargo test --all                                # 220 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
