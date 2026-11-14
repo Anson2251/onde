@@ -19,6 +19,32 @@
     throw new Error("onde: host primitives are missing");
   }
 
+  // --- internal handle registry (M4) ----------------------------------------------------------
+
+  // A network handle is an id plus a task; events arrive as
+  // `__ln_handle_event(id, name, payload)`. The JS surface (WP4/WP5) registers a per-id sink
+  // here, and the sink is called with `(name, payload)` in task order. This is internal:
+  // `__ln_host` is not public API, and neither is `__ln_handle_event`.
+  const handleSinks = new Map();
+  const handleRegistry = host.handles;
+  if (handleRegistry !== undefined && handleRegistry !== null) {
+    handleRegistry.register = (id, sink) => {
+      if (typeof sink !== "function") {
+        throw invalidArgType("sink", "function", sink);
+      }
+      handleSinks.set(Number(id), sink);
+    };
+    handleRegistry.release = (id) => {
+      handleSinks.delete(Number(id));
+    };
+  }
+
+  function handleEvent(id, name, payload) {
+    const sink = handleSinks.get(id);
+    if (sink === undefined) return;
+    sink(name, payload);
+  }
+
   // --- internal module evaluation -------------------------------------------------------------
 
   function evalInternal(name) {
@@ -217,8 +243,10 @@
   // op table. Rust never holds a JS function: it calls `__ln_op_done(opId, error, value)` from
   // the completion dispatch, and the settler registered here runs synchronously inside that
   // dispatch (Node's callback semantics, including the throw path).
+  //
+  // Ids are minted by the host, not here: there is exactly one RequestId sequence per isolate and
+  // handles (M4) draw from it too, so an id is never ambiguous (m4-plan §2.1).
 
-  let nextOpId = 1;
   const opSettlers = new Map(); // opId -> { resolve, reject } or { callback }
 
   function makeAbortError() {
@@ -265,9 +293,11 @@
     else entry.reject(error);
   }
 
-  function op(name, args, options) {
+  // Shared by `__ln_op` (fs) and `__ln_dns_op` (dns): mint the id, register the settler, hand the
+  // id to the Rust entry point, and return the promise (or undefined for the callback form).
+  function submitOp(submit, options) {
     const settings = options === undefined || options === null ? {} : options;
-    const id = nextOpId++;
+    const id = host.nextRequestId();
     const callback = settings.callback;
     let entry;
     let result;
@@ -302,7 +332,7 @@
     }
 
     try {
-      host.fsAsync(id, name, args);
+      submit(id);
     } catch (error) {
       // Invalid arguments throw synchronously from both the callback and promise entry points
       // (Node does the same). Forget the settler and let the exception reach the caller.
@@ -311,6 +341,15 @@
       throw error;
     }
     return result;
+  }
+
+  function op(name, args, options) {
+    return submitOp((id) => host.fsAsync(id, name, args), options);
+  }
+
+  // `dns.lookup` shares the op table and the one id sequence; only the Rust entry point differs.
+  function dnsOp(hostname, family, all, options) {
+    return submitOp((id) => host.dnsAsync(id, hostname, family, all), options);
   }
 
   // --- events, process, console ---------------------------------------------------------------
@@ -614,6 +653,8 @@
     __ln_dispatch: dispatch,
     __ln_op: op,
     __ln_op_done: opDone,
+    __ln_dns_op: dnsOp,
+    __ln_handle_event: handleEvent,
     __ln_cjs_namespace: requireCjsNamespace,
     __ln_builtin_exports: requireBuiltinExports,
     __ln_builtin_export_names: builtinExportNames,

@@ -7,27 +7,42 @@
 //!
 //! Functions here never decide scheduling (that stays in `ln-runtime`'s loop and `ln-sched`);
 //! they only enqueue ids or perform a bounded syscall.
+//!
+//! The object is assembled from one submodule per capability family:
+//!
+//! * [`stdio`] — stdout/stderr writes and TTY queries;
+//! * [`fs`] — the `fs` op entry points;
+//! * [`crypto`] — the CPU-only crypto primitives;
+//! * [`net`] — `host.net`: commands to live handles (ADR-0006) plus the handle registry;
+//! * [`dns`] — `host.dnsAsync`: `dns.lookup` as an op (ADR-0005).
+//!
+//! The module-system primitives (resolution, embedded sources, CJS evaluation) stay in this file:
+//! they are part of the bootstrap handshake, not a separate capability family.
 
 use std::cell::{Cell, RefCell};
-use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Instant;
 
 use ln_engine::{cjs_wrapper, js};
-use ln_error::NodeError;
 use ln_modules::url as file_url;
 use ln_modules::{Kind, Resolution};
 
-use crate::args;
-use crate::host_crypto::{self, CryptoState};
+use crate::handles::HandleBridge;
 use crate::host_error::{
     io_error_code, io_error_message, throw_node_error, throw_node_error_value,
 };
 use crate::modules::{builtin_source, ModuleRuntime};
-use crate::ops::{build_op, op_value_to_js, OpBridge};
+use crate::ops::{OpBridge, RequestIdAllocator};
 use crate::{Bridge, ExitState, RejectionEvent};
+use ln_error::NodeError;
+
+mod crypto;
+mod dns;
+mod fs;
+mod net;
+mod stdio;
 
 /// All state a host function may touch.
 pub(crate) struct HostState {
@@ -41,6 +56,10 @@ pub(crate) struct HostState {
     pub ops: Rc<OpBridge>,
     /// Cached engine heap size, refreshed between JS calls (see `Isolate::refresh_memory`).
     pub memory: Rc<Cell<usize>>,
+    /// The isolate's single op/handle id sequence (ADR-0006 §2.1).
+    pub ids: Arc<RequestIdAllocator>,
+    /// The handle table: `host.net` submits commands through it (ADR-0006).
+    pub handles: Rc<HandleBridge>,
 }
 
 pub(crate) fn install<'js>(
@@ -52,22 +71,19 @@ pub(crate) fn install<'js>(
 
     // --- M1 scheduler primitives -----------------------------------------------------------
 
-    host.set(
-        "write",
-        js::Function::new(
-            ctx.clone(),
-            |text: String, is_err: bool| -> js::Result<()> {
-                let mut stream: Box<dyn Write> = if is_err {
-                    Box::new(io::stderr())
-                } else {
-                    Box::new(io::stdout())
-                };
-                let _ = write!(stream, "{text}");
-                let _ = stream.flush();
-                Ok(())
-            },
-        )?,
-    )?;
+    stdio::install(ctx, &host, state)?;
+
+    {
+        // The only id source JavaScript has. Ops and handles draw from the same sequence, so
+        // `host.nextRequestId()` is the single way JS can mint either (m4-plan §2.1).
+        let ids = state.ids.clone();
+        host.set(
+            "nextRequestId",
+            js::Function::new(ctx.clone(), move || -> js::Result<f64> {
+                Ok(ids.allocate() as f64)
+            })?,
+        )?;
+    }
 
     {
         let exit = state.exit.clone();
@@ -272,7 +288,7 @@ pub(crate) fn install<'js>(
                     throw_node_error(
                         &ctx,
                         code,
-                        &io_error_message(code, "chdir", Path::new(&path), &error),
+                        &io_error_message(code, "chdir", std::path::Path::new(&path), &error),
                     )
                 })
             },
@@ -349,36 +365,9 @@ pub(crate) fn install<'js>(
         )?,
     )?;
 
-    host.set(
-        "isTTY",
-        js::Function::new(ctx.clone(), |fd: u8| -> js::Result<bool> {
-            Ok(match fd {
-                0 => io::stdin().is_terminal(),
-                1 => io::stdout().is_terminal(),
-                _ => io::stderr().is_terminal(),
-            })
-        })?,
-    )?;
-
-    host.set(
-        "columns",
-        js::Function::new(ctx.clone(), |fd: u8| -> js::Result<u32> {
-            let tty = match fd {
-                0 => io::stdin().is_terminal(),
-                1 => io::stdout().is_terminal(),
-                _ => io::stderr().is_terminal(),
-            };
-            if !tty {
-                return Ok(0);
-            }
-            Ok(std::env::var("COLUMNS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0))
-        })?,
-    )?;
-
     // --- module system ---------------------------------------------------------------------
+
+    // --- filesystem ops --------------------------------------------------------------------
 
     {
         let modules = state.modules.clone();
@@ -556,334 +545,26 @@ pub(crate) fn install<'js>(
 
     // --- filesystem ops --------------------------------------------------------------------
 
-    // One primitive pair for every `fs` capability (`docs/m3-plan.md` §2.2). Argument
-    // normalization lives in `js/lib/internal/fs.js`; `build_op` validates the array again so a
-    // direct `__ln_host.fsSync` call cannot construct an invalid op.
-    {
-        host.set(
-            "fsSync",
-            js::Function::new(
-                ctx.clone(),
-                |ctx: js::Ctx<'js>,
-                 name: js::Value<'js>,
-                 args_value: js::Value<'js>|
-                 -> js::Result<js::Value<'js>> {
-                    let op_name = parse_op_name(&ctx, &name)?;
-                    let arguments = collect_args(&ctx, &args_value)?;
-                    let op = build_op(&op_name, &arguments)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let abort = AtomicBool::new(false);
-                    let value = ln_io::execute(op, &abort)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    op_value_to_js(&ctx, &value)
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let ops = state.ops.clone();
-        host.set(
-            "fsAsync",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>,
-                      op_id: js::Value<'js>,
-                      name: js::Value<'js>,
-                      args_value: js::Value<'js>|
-                      -> js::Result<()> {
-                    let id = args::u64_value(Some(&op_id), "opId")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let op_name = parse_op_name(&ctx, &name)?;
-                    let arguments = collect_args(&ctx, &args_value)?;
-                    let op = build_op(&op_name, &arguments)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    ops.submit(id, op);
-                    Ok(())
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let ops = state.ops.clone();
-        host.set(
-            "fsCancel",
-            // Internal primitive: the JS layer owns the id it allocated, so a typed `u64` is
-            // enough (a bad value is an onde bug, not a user argument).
-            js::Function::new(ctx.clone(), move |op_id: u64| -> js::Result<()> {
-                ops.cancel(op_id);
-                Ok(())
-            })?,
-        )?;
-    }
-
-    // --- stdio -----------------------------------------------------------------------------
-
-    host.set(
-        "writeFd",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, fd: js::Value<'js>, data: js::Value<'js>| -> js::Result<u64> {
-                let fd = args::i32_value(Some(&fd), "fd")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let bytes = args::bytes(Some(&data), "data")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                write_fd(fd, &bytes).map_err(|error| throw_node_error_value(&ctx, &error))
-            },
-        )?,
-    )?;
+    fs::install(ctx, &host, state)?;
 
     // --- crypto primitives -----------------------------------------------------------------
 
-    // Synchronous, CPU-only and loop-free (`docs/m3-plan.md` §2.3). The id→state table lives in
-    // `host_crypto`; JavaScript only ever holds the numeric handle.
-    let crypto = js::Object::new(ctx.clone())?;
-    let crypto_state = Rc::new(RefCell::new(CryptoState::new()));
+    crypto::install(ctx, &host, state)?;
 
-    crypto.set(
-        "randomBytes",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, size: js::Value<'js>| -> js::Result<js::Value<'js>> {
-                let size = args::number(Some(&size), "size")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                if !size.is_finite()
-                    || !(0.0..=2_147_483_647.0).contains(&size)
-                    || size.fract() != 0.0
-                {
-                    let error =
-                        NodeError::out_of_range("size", ">= 0 && <= 2147483647", &size.to_string());
-                    return Err(throw_node_error_value(&ctx, &error));
-                }
-                let bytes = ln_crypto::random_bytes(size as usize);
-                Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value())
-            },
-        )?,
-    )?;
+    // --- network handles (M4, ADR-0006) -----------------------------------------------------
 
-    crypto.set(
-        "randomInt",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, min: js::Value<'js>, max: js::Value<'js>| -> js::Result<f64> {
-                let min = args::number(Some(&min), "min")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let max = args::number(Some(&max), "max")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let value = ln_crypto::random_int(min as i64, max as i64)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                Ok(value as f64)
-            },
-        )?,
-    )?;
+    net::install(ctx, &host, state)?;
 
-    crypto.set(
-        "randomUUID",
-        js::Function::new(ctx.clone(), || -> js::Result<String> {
-            Ok(ln_crypto::random_uuid())
-        })?,
-    )?;
+    // --- DNS (M4, an op rather than a handle) -----------------------------------------------
 
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hashNew",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>, name: js::Value<'js>| -> js::Result<u64> {
-                    let name = args::string(Some(&name), "algorithm")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let algorithm = host_crypto::algorithm(&name)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    Ok(state.borrow_mut().hash_new(algorithm))
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hashUpdate",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>,
-                      id: js::Value<'js>,
-                      data: js::Value<'js>|
-                      -> js::Result<()> {
-                    let id = args::u64_value(Some(&id), "id")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let data = args::bytes(Some(&data), "data")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    state
-                        .borrow_mut()
-                        .hash_update(id, &data)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hashDigest",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>, id: js::Value<'js>| -> js::Result<js::Value<'js>> {
-                    let id = args::u64_value(Some(&id), "id")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let bytes = state
-                        .borrow_mut()
-                        .hash_digest(id)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value())
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hashCopy",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>, id: js::Value<'js>| -> js::Result<u64> {
-                    let id = args::u64_value(Some(&id), "id")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    state
-                        .borrow_mut()
-                        .hash_copy(id)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hmacNew",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>,
-                      name: js::Value<'js>,
-                      key: js::Value<'js>|
-                      -> js::Result<u64> {
-                    let name = args::string(Some(&name), "algorithm")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let algorithm = host_crypto::algorithm(&name)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let key = args::bytes(Some(&key), "key")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    Ok(state.borrow_mut().hmac_new(algorithm, &key))
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hmacUpdate",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>,
-                      id: js::Value<'js>,
-                      data: js::Value<'js>|
-                      -> js::Result<()> {
-                    let id = args::u64_value(Some(&id), "id")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let data = args::bytes(Some(&data), "data")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    state
-                        .borrow_mut()
-                        .hmac_update(id, &data)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))
-                },
-            )?,
-        )?;
-    }
-
-    {
-        let state = crypto_state.clone();
-        crypto.set(
-            "hmacDigest",
-            js::Function::new(
-                ctx.clone(),
-                move |ctx: js::Ctx<'js>, id: js::Value<'js>| -> js::Result<js::Value<'js>> {
-                    let id = args::u64_value(Some(&id), "id")
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let bytes = state
-                        .borrow_mut()
-                        .hmac_digest(id)
-                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value())
-                },
-            )?,
-        )?;
-    }
-
-    crypto.set(
-        "timingSafeEqual",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, a: js::Value<'js>, b: js::Value<'js>| -> js::Result<bool> {
-                let a = args::bytes(Some(&a), "buf1")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let b = args::bytes(Some(&b), "buf2")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                ln_crypto::timing_safe_equal(&a, &b)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))
-            },
-        )?,
-    )?;
-
-    crypto.set(
-        "hkdf",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>,
-             name: js::Value<'js>,
-             ikm: js::Value<'js>,
-             salt: js::Value<'js>,
-             info: js::Value<'js>,
-             length: js::Value<'js>|
-             -> js::Result<js::Value<'js>> {
-                let name = args::string(Some(&name), "algorithm")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let algorithm = host_crypto::algorithm(&name)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let ikm = args::bytes(Some(&ikm), "ikm")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let salt = args::bytes_or_empty(Some(&salt))
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let info = args::bytes_or_empty(Some(&info))
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let length = args::u64_value(Some(&length), "length")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let bytes = ln_crypto::hkdf(algorithm, &ikm, &salt, &info, length as usize)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value())
-            },
-        )?,
-    )?;
-
-    host.set("crypto", crypto)?;
+    dns::install(ctx, &host, state)?;
 
     ctx.globals().set("__ln_host", host)?;
     Ok(())
 }
 
-/// Throw for an `fs` op name that is not a string.
-fn parse_op_name<'js>(ctx: &js::Ctx<'js>, value: &js::Value<'js>) -> js::Result<String> {
-    args::string(Some(value), "name").map_err(|error| throw_node_error_value(ctx, &error))
-}
-
-/// Copy the JS argument array out so `build_op` can index it like any other slice.
-fn collect_args<'js>(
+/// Copy a JS argument array out so the command/op builders can index it like any other slice.
+pub(super) fn collect_args<'js>(
     ctx: &js::Ctx<'js>,
     value: &js::Value<'js>,
 ) -> js::Result<Vec<js::Value<'js>>> {
@@ -900,42 +581,6 @@ fn collect_args<'js>(
         values.push(array.get::<js::Value<'js>>(index)?);
     }
     Ok(values)
-}
-
-/// A synchronous, retry-on-`EINTR` write of the whole buffer (`host.writeFd`).
-#[cfg(unix)]
-fn write_fd(fd: i32, data: &[u8]) -> Result<u64, NodeError> {
-    let mut written = 0_usize;
-    while written < data.len() {
-        let chunk = &data[written..];
-        // SAFETY: `chunk` points at live memory for exactly `chunk.len()` bytes; `write` only
-        // reads from it and reports the count through its return value.
-        let count = unsafe { libc::write(fd, chunk.as_ptr().cast(), chunk.len()) };
-        if count < 0 {
-            let errno = io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EIO);
-            if errno == libc::EINTR {
-                continue;
-            }
-            return Err(NodeError::from_errno(errno, "write", None));
-        }
-        written += count as usize;
-    }
-    Ok(written as u64)
-}
-
-#[cfg(not(unix))]
-fn write_fd(fd: i32, data: &[u8]) -> Result<u64, NodeError> {
-    let mut stream: Box<dyn Write> = if fd == 1 {
-        Box::new(io::stdout())
-    } else {
-        Box::new(io::stderr())
-    };
-    stream
-        .write_all(data)
-        .map_err(|error| NodeError::system(&error, "write", Path::new("")))?;
-    Ok(data.len() as u64)
 }
 
 // --- platform helpers ------------------------------------------------------------------------

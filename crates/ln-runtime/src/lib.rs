@@ -25,6 +25,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub use ln_engine::js;
@@ -37,6 +38,7 @@ use ln_sched::{
 };
 
 mod args;
+mod handles;
 mod host;
 mod host_crypto;
 mod host_error;
@@ -45,6 +47,7 @@ pub mod ops;
 mod report;
 pub use report::render_uncaught;
 
+use handles::HandleBridge;
 use host::HostState;
 use modules::ModuleRuntime;
 use ops::OpBridge;
@@ -300,6 +303,8 @@ pub struct Isolate {
     modules: Rc<ModuleRuntime>,
     /// The async-op bridge: pool, result slots and abort flags.
     ops: Rc<OpBridge>,
+    /// The handle bridge: network tasks, parked events and loop refs (ADR-0006).
+    handles: Rc<HandleBridge>,
     start: Instant,
     /// Last engine heap measurement. Refreshed between JS calls: `Runtime::memory_usage`
     /// re-borrows the runtime, which panics while a JS callback is on the stack.
@@ -323,7 +328,15 @@ impl Isolate {
         modules.install(&engine);
         let memory = Rc::new(Cell::new(0));
         let (reactor, sender) = ChannelReactor::new();
-        let ops = Rc::new(OpBridge::new(driver.clone(), sender, config.io_threads));
+        // One id sequence for the whole isolate: ops and (M4) handles draw from it (ADR-0006).
+        let ids = Arc::new(ops::RequestIdAllocator::new());
+        let ops = Rc::new(OpBridge::new(
+            driver.clone(),
+            sender.clone(),
+            config.io_threads,
+            ids.clone(),
+        ));
+        let handles = Rc::new(HandleBridge::new(driver.clone(), sender, ops.clone()));
 
         let isolate = Isolate {
             engine,
@@ -339,6 +352,7 @@ impl Isolate {
             dispatcher: None,
             modules,
             ops,
+            handles,
             start: Instant::now(),
             memory,
             finished: false,
@@ -363,6 +377,8 @@ impl Isolate {
             modules: self.modules.clone(),
             memory: self.memory.clone(),
             ops: self.ops.clone(),
+            ids: self.ops.ids().clone(),
+            handles: self.handles.clone(),
         };
 
         self.engine
@@ -741,25 +757,54 @@ impl Isolate {
                     }
                 }
                 Turn::Completion(id) => {
-                    // The slot is the payload: the channel only carries the id (ADR-0005 §2.3).
-                    let Some(done) = self.ops.take(id) else {
-                        // A duplicate or unknown completion must not release a second loop ref.
+                    // One id space, two tables (ADR-0006 §2.1): the op table first, then the
+                    // handle table, then nothing. The slot is the payload; the channel only
+                    // carries the id (ADR-0005 §2.3).
+                    if let Some(done) = self.ops.take(id) {
+                        self.driver.borrow_mut().unref_external();
+                        if self.should_stop() {
+                            // process.exit/fatal: drop the parked result without invoking JS
+                            // (O4).
+                            continue;
+                        }
+                        let engine = self.engine.clone();
+                        let exit = self.exit.clone();
+                        let bridge = self.bridge.clone();
+                        self.sched
+                            .run_macrotask("completion", Origin::Completion, move |s| {
+                                run_op_done(&engine, &exit, &bridge, done, s)
+                            });
+                        // The exception path (if any) was already routed to `uncaughtException`
+                        // by the scheduler; this is the same single checkpoint other callbacks
+                        // get.
+                        self.checkpoint_all()?;
+                        continue;
+                    }
+
+                    let Some(events) = self.handles.take(id) else {
+                        // A duplicate completion, or one whose handle was shut down; ignoring an
+                        // unknown id is H5, not an error.
                         continue;
                     };
-                    self.driver.borrow_mut().unref_external();
+                    // Bookkeeping happens before JS runs: a `closed` event releases the handle's
+                    // ref exactly here, and an accepted connection becomes addressable before its
+                    // `connection` handler can issue `read`.
+                    for event in &events {
+                        self.handles.observe_event(id, event);
+                    }
                     if self.should_stop() {
-                        // process.exit/fatal: drop the parked result without invoking JS (O4).
+                        // No event may be dispatched after exit begins; `finish` releases
+                        // whatever refs are still held.
                         continue;
                     }
                     let engine = self.engine.clone();
                     let exit = self.exit.clone();
                     let bridge = self.bridge.clone();
                     self.sched
-                        .run_macrotask("completion", Origin::Completion, move |s| {
-                            run_op_done(&engine, &exit, &bridge, done, s)
+                        .run_macrotask("handle", Origin::Completion, move |s| {
+                            run_handle_events(&engine, &exit, &bridge, id, events, s)
                         });
-                    // The exception path (if any) was already routed to `uncaughtException` by
-                    // the scheduler; this is the same single checkpoint other callbacks get.
+                    // One checkpoint per batch, exactly like an op completion (ADR-0006 §2.3).
                     self.checkpoint_all()?;
                 }
                 Turn::BeforeExit => {
@@ -885,6 +930,9 @@ impl Isolate {
         let exit_code = self.exit.exit_code.get();
 
         self.sched.shutdown();
+        // H4: no handle event after this point, and every held loop ref is released before the
+        // engine (a field of `Isolate`) is freed. Idempotent with `Drop`.
+        self.handles.shutdown();
         // No completion may be delivered after shutdown (O4); release the refs of the parked
         // results the loop will never dispatch.
         let dropped = self.ops.discard_pending();
@@ -949,6 +997,25 @@ impl Isolate {
     pub fn exit_code(&self) -> i32 {
         self.exit.exit_code.get()
     }
+
+    /// Network handles JavaScript currently knows about (diagnostics/tests).
+    pub fn live_handles(&self) -> usize {
+        self.handles.live_handles()
+    }
+
+    /// External loop refs held by live handles: 0 or 1 per handle (H3, diagnostics/tests).
+    pub fn handle_refs(&self) -> usize {
+        self.handles.held_refs()
+    }
+}
+
+impl Drop for Isolate {
+    fn drop(&mut self) {
+        // The isolate is going away: stop the network tasks and release their refs *before* the
+        // engine field is dropped, so no event can be dispatched into a freed context (H4).
+        // `finish` normally did this already; `shutdown` is idempotent.
+        self.handles.shutdown();
+    }
 }
 
 /// One timer/immediate/tick/completion callback, followed by a bridge drain.
@@ -993,6 +1060,34 @@ fn run_op_done(
         return Ok(());
     }
     let outcome = dispatch_op_done(engine, &done);
+    drain_bridge(bridge, sched, engine, exit);
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(caught) => {
+            if exit.requested.get() {
+                Ok(())
+            } else {
+                Err(info_from_caught(&caught))
+            }
+        }
+    }
+}
+
+/// One handle event batch, followed by the usual bridge drain and a single checkpoint (the caller
+/// runs it). The events were parked as plain Rust data (H1); this converts them on the isolate
+/// thread and calls `__ln_handle_event` for each, in task order (H2).
+fn run_handle_events(
+    engine: &Rc<Engine>,
+    exit: &Rc<ExitState>,
+    bridge: &Rc<RefCell<Bridge>>,
+    id: u64,
+    events: std::collections::VecDeque<ln_io::net::Event>,
+    sched: &mut Scheduler,
+) -> Result<(), ErrorInfo> {
+    if exit.requested.get() {
+        return Ok(());
+    }
+    let outcome = handles::dispatch_handle_events(engine, id, &events);
     drain_bridge(bridge, sched, engine, exit);
     match outcome {
         Ok(()) => Ok(()),

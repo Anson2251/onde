@@ -383,6 +383,7 @@ dependencies = [
  "ln-crypto",
  "ln-engine",
  "ln-error",
+ "ln-http",
  "ln-io",
  "ln-modules",
  "ln-sched",

@@ -21,7 +21,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ln_engine::js;
@@ -29,15 +29,19 @@ use ln_error::NodeError;
 use ln_io::{DirEntry, FileKind, Op, OpDone, OpValue, Pool, RequestId, Sink, Stat, StatFs};
 use ln_sched::{Completion, CompletionSender, Driver};
 
-/// Allocates [`RequestId`]s for ops the runtime mints itself.
+/// The single [`RequestId`] sequence of one isolate (ADR-0006 §2.1).
 ///
-/// The `fs` surface allocates ids in JavaScript (`js/bootstrap.js`) so the JS-side settler table
-/// and the Rust-side slot table share one key without a second round trip. This allocator covers
-/// ids minted on the Rust side (tests, and M4's streaming ops) and is kept ahead of any id that
-/// arrives from JavaScript via [`RequestIdAllocator::observe`].
+/// It backs **both** op ids and handle ids: JavaScript asks for ids through
+/// `host.nextRequestId()`, and a pool task that mints a handle itself (an accepted connection)
+/// calls the [`ln_io::net::HandleIdSource`] closure built from the same allocator. There is
+/// therefore exactly one sequence per isolate and an id in a `Completion` is never ambiguous.
+///
+/// It is `Arc`-shared and atomic because the pool threads allocate ids for accepted connections
+/// while the isolate thread allocates op ids. `AtomicU64::fetch_add` makes the unique, gap-free
+/// property hold across threads; ids start at 1 so `0` can mean "no id".
 #[derive(Debug)]
 pub struct RequestIdAllocator {
-    next: Cell<RequestId>,
+    next: AtomicU64,
 }
 
 impl Default for RequestIdAllocator {
@@ -48,21 +52,23 @@ impl Default for RequestIdAllocator {
 
 impl RequestIdAllocator {
     pub fn new() -> Self {
-        RequestIdAllocator { next: Cell::new(1) }
+        RequestIdAllocator {
+            next: AtomicU64::new(1),
+        }
     }
 
-    /// The next unused id. Ids start at 1 so `0` can mean "no id".
+    /// The next unused id.
     pub fn allocate(&self) -> RequestId {
-        let id = self.next.get();
-        self.next.set(id + 1);
-        id
+        self.next.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Keep the sequence ahead of an id minted outside this allocator.
+    ///
+    /// Everything allocates through this type now, so this is only needed for ids that entered
+    /// the runtime from elsewhere (tests, a replayed completion). It is atomic and never moves
+    /// the sequence backwards.
     pub fn observe(&self, id: RequestId) {
-        if self.next.get() <= id {
-            self.next.set(id.saturating_add(1));
-        }
+        self.next.fetch_max(id.saturating_add(1), Ordering::SeqCst);
     }
 }
 
@@ -88,7 +94,8 @@ fn pool_error(error: &io::Error) -> NodeError {
 /// the slot table and a `Mutex`ed [`CompletionSender`] (`CompletionSender` is not `Sync`, and the
 /// sink must be).
 pub(crate) struct OpBridge {
-    ids: RequestIdAllocator,
+    /// The isolate's single id sequence, shared with the handle table.
+    ids: Arc<RequestIdAllocator>,
     /// Filled by a pool thread, drained by the isolate thread.
     results: Arc<Mutex<HashMap<RequestId, OpDone>>>,
     /// Cooperative cancellation flags, keyed by request id.
@@ -96,8 +103,9 @@ pub(crate) struct OpBridge {
     driver: std::rc::Rc<RefCell<Driver>>,
     /// Wakes the loop after a result is parked. Also used by the immediate rejection path.
     sender: Mutex<CompletionSender>,
-    /// Created on the first async op, never at boot (ADR-0005 §9).
-    pool: OnceLock<Result<Pool, io::Error>>,
+    /// Created on the first async op or network handle, never at boot (ADR-0005 §9). `Arc`
+    /// because `NetService` (M4) shares the one runtime with the ops (ADR-0006 §5).
+    pool: OnceLock<Result<Arc<Pool>, io::Error>>,
     io_threads: usize,
     /// Submitted-but-not-yet-dispatched ops. Kept for diagnostics/tests.
     pending: Cell<usize>,
@@ -110,6 +118,7 @@ impl OpBridge {
         driver: std::rc::Rc<RefCell<Driver>>,
         sender: CompletionSender,
         io_threads: usize,
+        ids: Arc<RequestIdAllocator>,
     ) -> Self {
         let results: Arc<Mutex<HashMap<RequestId, OpDone>>> = Arc::new(Mutex::new(HashMap::new()));
         let sink_results = results.clone();
@@ -128,7 +137,7 @@ impl OpBridge {
         });
 
         OpBridge {
-            ids: RequestIdAllocator::new(),
+            ids,
             results,
             aborts: RefCell::new(HashMap::new()),
             driver,
@@ -145,6 +154,25 @@ impl OpBridge {
     /// Takes one external loop ref. If the pool cannot be created the op is rejected through the
     /// normal completion path and the ref is released immediately: no pool thread will ever run,
     /// so nothing else can release it.
+    /// The isolate's id sequence, for the handle table's `HandleIdSource`.
+    pub(crate) fn ids(&self) -> &Arc<RequestIdAllocator> {
+        &self.ids
+    }
+
+    /// The process-wide pool, created on first use and never at boot.
+    ///
+    /// `NetService` is built on top of it so ops and handles share one tokio runtime
+    /// (ADR-0006 §5); the failure shape is the same `ERR_IO_POOL` the op path reports.
+    pub(crate) fn pool(&self) -> Result<Arc<Pool>, NodeError> {
+        match self
+            .pool
+            .get_or_init(|| Pool::new(self.io_threads).map(Arc::new))
+        {
+            Ok(pool) => Ok(pool.clone()),
+            Err(error) => Err(pool_error(error)),
+        }
+    }
+
     pub(crate) fn submit(&self, id: RequestId, op: Op) {
         self.ids.observe(id);
         let abort = Arc::new(AtomicBool::new(false));
@@ -152,17 +180,14 @@ impl OpBridge {
         self.driver.borrow_mut().ref_external();
         self.pending.set(self.pending.get() + 1);
 
-        let pool = match self.pool.get_or_init(|| Pool::new(self.io_threads)) {
+        let pool = match self.pool() {
             Ok(pool) => pool,
             Err(error) => {
                 // No pool thread will ever run, so park the failure directly. The slot still owns
                 // the external ref taken above: the completion phase takes the slot and releases
                 // it exactly once (O3). Releasing it here as well would unref a different live
                 // handle and could let the loop exit with another op in flight.
-                self.park(OpDone::Err {
-                    id,
-                    error: pool_error(error),
-                });
+                self.park(OpDone::Err { id, error });
                 return;
             }
         };
@@ -648,6 +673,39 @@ mod tests {
         assert_eq!(ids.allocate(), 12);
     }
 
+    /// ADR-0006 §2.1: one atomic sequence backs op ids (isolate thread) and handle ids (pool
+    /// threads). Eight threads minting 10k ids each must produce 80k unique, non-zero ids; a
+    /// `Cell`-era allocator fails this by construction.
+    #[test]
+    fn the_id_sequence_is_atomic_across_threads() {
+        let ids = Arc::new(RequestIdAllocator::new());
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let ids = ids.clone();
+            threads.push(std::thread::spawn(move || {
+                let mut minted = Vec::with_capacity(10_000);
+                for _ in 0..10_000 {
+                    minted.push(ids.allocate());
+                }
+                minted
+            }));
+        }
+        let mut all = Vec::with_capacity(80_000);
+        for thread in threads {
+            all.extend(thread.join().expect("id thread"));
+        }
+        assert!(all.iter().all(|id| *id != 0), "0 means \"no id\"");
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), 80_000, "an id was handed out twice");
+    }
+
+    #[test]
+    fn the_allocator_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RequestIdAllocator>();
+    }
+
     #[test]
     fn parses_read_file() {
         with_ctx(|ctx| {
@@ -739,7 +797,8 @@ mod tests {
 
         let driver = Rc::new(RefCell::new(Driver::new()));
         let (mut reactor, sender) = ChannelReactor::new();
-        let bridge = OpBridge::new(driver.clone(), sender, 2);
+        let ids = Arc::new(RequestIdAllocator::new());
+        let bridge = OpBridge::new(driver.clone(), sender, 2, ids);
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
 
         bridge.submit(7, Op::ReadFile { path });

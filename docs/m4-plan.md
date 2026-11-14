@@ -56,9 +56,9 @@ once `webpki-roots` lands).
 There is a single `RequestId` sequence per isolate, owned by `ln-runtime` and used for **both** op
 ids and handle ids, so an id is never ambiguous. JS asks for ids through `host.nextRequestId()`;
 a pool task that creates a handle itself (an accepted connection) calls the `HandleIdSource`
-closure it was constructed with. Both draw from the same atomic sequence, so WP3 makes the
-allocator `Mutex`-backed and `Sync` instead of the `Cell`-based `RequestIdAllocator`. Rust's
-completion router is:
+closure it was constructed with. Both draw from the same `AtomicU64` sequence, so
+`RequestIdAllocator` is `Arc`-shared and `Sync` instead of the `Cell`-based allocator ops alone
+needed. Rust's completion router is:
 
 ```
 Completion(id) → if op table has id: settle as today (ADR-0005)
@@ -81,8 +81,8 @@ an event.
 
 | `name` | `args` | notes |
 |---|---|---|
-| `listen` | `host, port, backlog, ipv6Only, exclusive, tls` or `path, backlog, tls` | starts the accept task |
-| `connect` | `host, port, family, localAddress, localPort, noDelay, keepAliveMs, tls` or `path, tls` | starts the connect task |
+| `listen` | `host, port, path, backlog, ipv6Only, exclusive, tls` | starts the accept task; a non-null `path` means a Unix socket and ignores `host`/`port` |
+| `connect` | `host, port, path, family, localAddress, localPort, noDelay, keepAliveMs, tls` | starts the connect task; a non-null `path` means a Unix socket; `family` is `0`/`4`/`6` |
 | `read` | `maxChunk` | pull one chunk (≤ 64 KiB); ignored while one is in flight. In parsed mode it resumes a paused body, and `maxChunk` does not apply (the codec blocks at `BODY_BLOCK_BYTES`) |
 | `readStop` | — | stop pulling (`pause()`); in parsed mode it pauses the body stream, so the task stops reading the socket |
 | `write` | `Uint8Array` | queued in order; `drain` when the queue empties |
@@ -112,18 +112,21 @@ __ln_handle_event(id, name, payload)
 | `end` | — | peer FIN; `allowHalfOpen` handling is JS |
 | `drain` | — | write queue empty |
 | `timeout` | — | the task's `setTimeout`-style idle timer; JS decides whether to destroy |
-| `error` | `{ code, message, errno?, syscall? }` | same shape as an op error |
-| `closed` | `hadError` | always last, exactly once |
-| `request` | `{ method, target, version, headers, keepAlive, expectContinue, body }` | parsed mode, server role; trailers arrive on `messageEnd` |
-| `response` | `{ status, reason, version, headers, keepAlive, body }` | parsed mode, client role |
+| `error` | a JS `Error` with `code`, `errno`, `syscall` | the same conversion the op path uses |
+| `closed` | `{ hadError }` | always last, exactly once |
+| `request` | `{ method, target, version, headers, keepAlive, expectContinue, body }` | parsed mode, server role; `version` is `0x10`/`0x11`; trailers arrive on `messageEnd` |
+| `response` | `{ status, reason, version, headers, keepAlive, body }` | parsed mode, client role; `version` is `0x10`/`0x11` |
 | `body` | `Uint8Array` | parsed mode, de-framed |
 | `messageEnd` | `{ trailers }` | parsed mode |
 | `upgrade` | `Uint8Array` | 101/CONNECT: bytes already read past the head, unparsed |
-| `clientError` | `{ code, message }` | malformed request; the task has already answered 400/431 and closed (D42) |
+| `clientError` | a JS `Error` with `code`, `errno`, `syscall` | malformed request; the task has already answered 400/431 and closed (D42) |
 
-`headers` is a **flat array** `[name, value, name, value, …]` in wire order, so `rawHeaders` is a
-direct slice and no nested arrays are allocated per header. `body` is `"none" | "length: N" |
-"chunked" | "eof"`.
+`headers` and `trailers` are **flat arrays** `[name, value, name, value, …]` in wire order and with
+the original case, so `rawHeaders` is a direct slice and no nested arrays are allocated per header.
+`body` is `{ kind: "none" | "length" | "chunked" | "eof", length: number | null }`; `length` is only
+non-null for `"length"`. The JS surface registers a per-id sink through the internal registry
+(`host.handles.register(id, fn)` / `.release(id)`) and `__ln_handle_event` calls it with
+`(name, payload)`; a throw from that function is routed to `uncaughtException` like any callback.
 
 ### 2.4 HTTP mode
 
@@ -153,6 +156,10 @@ listen:  { certPem, keyPem, alpn: string[] }
 
 Rust builds the `rustls::ClientConfig`/`ServerConfig` per handle (cached process-wide by a
 content-hash of the options, so an `https.Agent` with 100 sockets builds one config).
+
+Until WP6 lands the transport, `host.net` throws `ERR_FEATURE_UNAVAILABLE` for any `listen`/
+`connect` that carries a non-null `tls` argument. Connecting in plaintext while the caller asked
+for TLS would be a security bug, so the safe failure is the only acceptable one.
 
 ### 2.6 DNS
 

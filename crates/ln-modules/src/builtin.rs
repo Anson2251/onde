@@ -15,6 +15,7 @@ pub const BUILTINS: &[&str] = &[
     "buffer",
     "console",
     "crypto",
+    "dns",
     "events",
     "fs",
     "fs/promises",

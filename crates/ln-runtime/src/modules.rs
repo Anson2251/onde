@@ -46,6 +46,7 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "string_decoder" => include_str!("../../../js/lib/string_decoder.js"),
         "buffer" => include_str!("../../../js/lib/buffer.js"),
         "crypto" => include_str!("../../../js/lib/crypto.js"),
+        "dns" => include_str!("../../../js/lib/dns.js"),
         "os" => include_str!("../../../js/lib/os.js"),
         "console" => include_str!("../../../js/lib/console.js"),
         "module" => include_str!("../../../js/lib/module.js"),
