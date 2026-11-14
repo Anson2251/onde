@@ -673,6 +673,33 @@ function checkSurface() {
   }
 }
 
+// Guard against the reverse divergence: the crypto surface must never expose a digest that
+// Node does not also accept. The RustCrypto `sha2` crate supports a fixed set; if a future change
+// wires one of its variants into `getHashes()`/`createHash` without checking Node, this fails.
+function checkEveryLiteDigestIsNodeSupported() {
+  const nodeHashes = new Set(nodeCrypto.getHashes());
+  for (const name of liteCrypto.getHashes()) {
+    assert.ok(
+      nodeHashes.has(name),
+      `lite exposes digest ${name}, which node's getHashes() does not list`,
+    );
+    assert.doesNotThrow(
+      () => nodeCrypto.createHash(name),
+      `node accepts the digest lite exposes: ${name}`,
+    );
+    assert.doesNotThrow(
+      () => nodeCrypto.createHmac(name, "k").update("x").digest(),
+      `node accepts HMAC with the digest lite exposes: ${name}`,
+    );
+  }
+  for (const name of ["sha224", "sha256", "sha384", "sha512", "sha512-224", "sha512-256"]) {
+    assert.ok(
+      liteCrypto.getHashes().includes(name),
+      `lite still exposes the node-supported digest ${name}`,
+    );
+  }
+}
+
 // Deliberate M3 gap, asserted rather than skipped: Node's OpenSSL accepts SHA-3 and the
 // truncated SHA-256 variants; lite supports the digests listed in docs/compat.md and rejects the
 // rest. Keeping this explicit stops the divergence from silently disappearing from the oracle.
@@ -697,6 +724,7 @@ async function main() {
   checkHkdfSync();
   checkErrors();
   checkUnsupportedDigests();
+  checkEveryLiteDigestIsNodeSupported();
   checkTimingSafeEqual();
   checkSurface();
   checkOneShotHash();
