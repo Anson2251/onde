@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+connection:keep-alive
+body:reply:/one
+HTTP/1.1 200 OK
+connection:close
+body:reply:/two
+same-connection:true
+exit:0

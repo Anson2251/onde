@@ -10,10 +10,11 @@ native ES modules, resolves `node_modules` and `exports` maps, ships the Node co
 (`process`, `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`,
 `querystring`, `punycode`, `module`), the M3 I/O core (`fs`, `fs/promises`, `stream`,
 `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio), and the globals Node provides
-(`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). M4 is under way: the
-I/O layer runs live TCP and Unix connections (raw and parsed modes, with `dns.lookup`) and the
-HTTP/1.1 codec is complete, but the `net`/`http`/`https`/`tls` JavaScript surfaces are not there
-yet — see [docs/m4-plan.md](docs/m4-plan.md), [ADR-0006](docs/adr/0006-handles-and-events.md) and
+(`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). M4 has landed `net`,
+`http` and `dns`: TCP and Unix sockets, an HTTP/1.1 server and client with keep-alive, chunking
+and `Agent`, and `dns.lookup` over the OS resolver. TLS is the remaining piece — `https` currently
+throws `ERR_FEATURE_UNAVAILABLE` rather than silently downgrading to plaintext — see
+[docs/m4-plan.md](docs/m4-plan.md), [ADR-0006](docs/adr/0006-handles-and-events.md) and
 [ADR-0007](docs/adr/0007-http-codec.md). The roadmap is [docs/roadmap.md](docs/roadmap.md); the M3
 contract is [docs/m3-plan.md](docs/m3-plan.md).
 

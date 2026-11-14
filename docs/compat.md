@@ -98,10 +98,10 @@ Measured on the pinned engine (2026-11-13):
 
 | Module | Status | Notes |
 |---|---|---|
-| `net` | 🟡 | TCP + Unix sockets, `Socket`, `Server`, half-close, backpressure |
-| `http`/`https` | 🟡 | HTTP/1.1 server+client, keep-alive, chunked, trailers, agent; no HTTP/2 |
-| `dns` | 🟡 | `lookup` (OS resolver), `resolve4`/`resolve6` optional |
-| `tls` | 🟡 | rustls; `rejectUnauthorized`, `ca`, `servername`, ALPN `http/1.1` |
+| `net` | 🟡 | `Socket` (extends `Duplex`), `Server`, `connect`/`createConnection`/`createServer`, `isIP`/`isIPv4`/`isIPv6`; TCP + Unix, IPv4/IPv6, half-close, `pause`/`resume`, `setTimeout`, `setNoDelay`/`setKeepAlive`, `ref`/`unref`, `bytesRead`/`bytesWritten`, `getConnections`, `maxConnections`, `allowHalfOpen`, `pauseOnConnect`; no JS-visible fd (D40), `write()` accounting differs (D45) |
+| `http`/`https` | 🟡 | `Server`/`createServer`/`request`/`get`/`Agent`/`globalAgent`, `STATUS_CODES`/`METHODS`/`maxHeaderSize`/`validateHeaderName`/`validateHeaderValue`; HTTP/1.1 server + client, chunked both ways, keep-alive, inbound trailers, `100-continue`, `clientError`, upgrade; outbound trailers and the upgrade `head` bytes are missing (D43, D44). `https` refuses every TLS entry point until WP6 rather than downgrading to plaintext |
+| `dns` | 🟡 | `lookup` (callback and `dns.promises.lookup`) over `getaddrinfo`, with `all` and `family`; no `resolve*`, `lookupService`, `getServers`/`setServers`; `hints` is accepted and ignored |
+| `tls` | ⚪ | M4/WP6: rustls; `rejectUnauthorized`, `ca`, `servername`, ALPN `http/1.1`. Until it lands every `https`/TLS entry point throws `ERR_FEATURE_UNAVAILABLE` synchronously — connecting in plaintext while the caller asked for TLS is a security bug, not a compat gap |
 | `readline` | 🟡 | interface over stdin; no `readline/promises` in 1.0. Moved out of M3: it is a stdin consumer, not I/O core, and M3 is the densest milestone |
 | `child_process` | 🟡 | `spawn`/`exec`/`execFile`/`fork`, stdio pipes, `kill` |
 | `worker_threads` | 🟡 | `Worker`, `MessageChannel`/`MessagePort`, `SharedArrayBuffer`, `Atomics` |
@@ -160,6 +160,10 @@ Measured on the pinned engine (2026-11-13):
 | D40 | A socket is owned by a pool task, so there is no JS-visible file descriptor: `socket._handle`, `socket.fd`, `new net.Socket({ fd })` and `net.Socket({ readable, writable })` over an existing fd are unsupported. `setNoDelay`/`setKeepAlive`/`setTimeout` are commands to the task, not libuv handle calls | ADR-0006: `JSValue`s never cross a thread and one thread per socket does not reach 10k connections; the fd is an implementation detail Node exposes by accident of libuv | M4 |
 | D41 | TLS is rustls: no renegotiation, no `getSession`/`setSession`/`isSessionReused`, `getPeerCertificate` returns a field subset, and cipher names are rustls' IANA names (they match Node's TLS 1.3 suites and differ for some TLS 1.2 suites) | rustls does not implement renegotiation or session caching in the OpenSSL shape; the supported knobs (`rejectUnauthorized`, `ca`, `servername`, ALPN) are the ones the roadmap names | M4 |
 | D42 | HTTP parse errors carry onde codes (`ERR_HTTP_PARSE`, `ERR_HTTP_HEADERS_OVERFLOW`) rather than llhttp's `HPE_*`; `clientError` is emitted after the connection has been closed, so a listener cannot write a response on it | the codec is `httparse` + our own framing (ADR-0007), and the task closes before the isolate sees the event; writing to a closed handle would be a lie | M4 |
+| D43 | Client-side interim `1xx`: after a `100`/`103` the parser is restarted on the same handle, so the remembered request method is lost for the final response. A `HEAD`/`CONNECT` request that receives an interim response can mis-frame the final one | the transport parks after every `messageEnd`; keeping the codec alive across a `1xx` is a transport change plus a JS one, deferred to M4 hardening | `test/conformance/http/04-expect-continue` (the POST path) |
+| D44 | HTTP `'upgrade'` hands back a zero-length `head` Buffer: detaching at a request boundary cannot recover bytes the codec reserved without completing a message | `Conn` has no `take_remainder()`; the transport's own surplus is flushed as `data`, so no byte is lost, but Node's third argument is smaller | `test/js/lib/http.test.js` |
+| D45 | `net.Socket.write()` returns `false` at a 16 KiB JS-buffered high-water mark, and `writableLength` counts bytes handed to the task rather than libuv's 64 KiB queue | the M3 stream contract; the observable `false` + conditional `'drain'` shape matches Node, the byte counts do not | `test/js/lib/net.test.js` |
+| D46 | Outbound HTTP trailers are validated and stored by `addTrailers` but never written; `finish` emits `0\r\n\r\n` with no trailer fields | `ln-http::finish` has no trailer parameter (ADR-0007 §2.4, Tier B); inbound trailers are parsed and reported | `test/js/lib/http.test.js` |
 
 
 ## 4. Buffer strategy

@@ -5,11 +5,12 @@ this page says *where* it lives, *how* the host boundary works, and who owns whi
 decisions behind it are [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
 [ADR-0007](adr/0007-http-codec.md) (HTTP codec).
 
-Status: in progress (2026-11-14). **WP0–WP2 are done.** The locked interfaces exist
-(`ln_io::net`'s protocol types, `ln-http`'s codec), `ln-io` runs live TCP/Unix connections with
-raw and parsed modes, and the HTTP/1.1 codec is complete with 38 wire tests. The JS surfaces
-(WP4–WP6) have not started; see §9 for the interface additions and the gaps that are recorded
-rather than fixed. Interfaces stay **extend, don't rename**.
+Status: in progress (2026-11-14). **WP0–WP5 are done.** `ln-io` runs live TCP/Unix
+connections, the HTTP/1.1 codec is complete, and `net`, `http` and `dns` are reachable from
+JavaScript and covered by 13 corpus cases (7 net, 6 http) plus `test/js/lib/{net,http}.test.js`.
+**WP6 (TLS) and WP7 (acceptance) remain**: every TLS entry point throws
+`ERR_FEATURE_UNAVAILABLE`, and §8's performance/interop/corpus targets are not met yet. See §9
+for the recorded gaps. Interfaces stay **extend, don't rename**.
 
 ## 1. Crate graph changes
 
@@ -310,6 +311,12 @@ Recorded gaps, deliberately not fixed in M4's first half:
 - **No `Conn::take_remainder()`.** A manual `detach` in the middle of a message cannot hand back the
   bytes the codec buffered without completing it. Detach at a message or head boundary; the
   `'upgrade'` path already does.
+- **A client `1xx` restarts the codec.** After an interim response the transport parks and
+  `http.js` attaches a fresh parser on the same handle, which loses the remembered request method;
+  a `HEAD`/`CONNECT` request that receives a `100`/`103` can mis-frame the final response (D43).
+  The fix is to keep the codec alive across a `1xx` in `connection.rs` and delete the JS workaround.
+- **Upgrade `head` bytes are empty.** The detach is at the request boundary, so the third
+  `'upgrade'` argument is a zero-length Buffer (D44); no byte is lost, it arrives as `data`.
 - **Socket and EAI errnos live in `ln-io::net::error`**, delegating to `ln-error` where it knows the
   errno. They belong in `ln-error`'s table once it grows beyond filesystem errnos.
 - **`Event::Timeout` is never emitted** (§4): timeouts are JS timers.

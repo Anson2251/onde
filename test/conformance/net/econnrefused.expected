@@ -1,0 +1,5 @@
+code: ECONNREFUSED
+syscall: connect
+negative errno: true
+order: error,close
+exit:0
