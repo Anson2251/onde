@@ -18,6 +18,16 @@ use std::sync::Arc;
 use ln_error::NodeError;
 use ln_http::{Limits, Role};
 
+mod connection;
+pub(crate) mod dns;
+mod error;
+mod listener;
+mod registry;
+mod service;
+mod transport;
+
+pub use service::NetService;
+
 /// Identifies one live connection for its lifetime. Same id space as [`crate::RequestId`].
 pub type HandleId = u64;
 
@@ -70,6 +80,16 @@ impl Addr {
 impl From<SocketAddr> for Addr {
     fn from(address: SocketAddr) -> Self {
         Addr::Ip(address)
+    }
+}
+
+/// Address-family filter shared by `net.connect({ family })`, `server.listen` and
+/// `dns.lookup({ family })`: `Either` accepts both, the others keep one family only.
+pub(crate) fn family_matches(address: IpAddr, family: IpFamily) -> bool {
+    match family {
+        IpFamily::Either => true,
+        IpFamily::V4 => address.is_ipv4(),
+        IpFamily::V6 => address.is_ipv6(),
     }
 }
 
@@ -196,7 +216,9 @@ pub enum Command {
     Read {
         max: u32,
     },
-    /// Stop pulling (`socket.pause()`). Bytes already buffered are delivered after a new `Read`.
+    /// Stop pulling: `socket.pause()` in raw mode, `IncomingMessage.pause()` in parsed mode. Bytes
+    /// already buffered are delivered after a new `Read`. Bounding this way is what keeps a slow
+    /// HTTP consumer from growing the parked event queue (ADR-0006 H7).
     ReadStop,
     Write {
         data: Vec<u8>,
@@ -224,12 +246,19 @@ pub enum Command {
     HttpEnd {
         keep_alive: bool,
     },
+    /// Write an interim `100 Continue` (`res.writeContinue()`). Parsed mode only, before the final
+    /// head; it never touches the outbound framing.
+    HttpContinue,
     SetNoDelay(bool),
     SetKeepAlive {
         enable: bool,
         initial_delay_ms: u32,
     },
     /// Take one loop ref (idempotent).
+    ///
+    /// Accepted and deliberately ignored by the task: loop refcounts are per handle and owned by
+    /// the handle table in `ln-runtime` (WP3), not by the task (ADR-0006 §2.4, H3). `unref` is not
+    /// a read stop, so a socket keeps reading either way.
     Ref,
     /// Release the handle's loop ref (idempotent). The handle keeps running.
     Unref,

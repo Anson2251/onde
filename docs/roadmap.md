@@ -346,9 +346,9 @@ never removable).
 **Status: in progress (2026-11-14).** The implementation contract is
 [m4-plan.md](m4-plan.md); the protocol decisions are
 [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
-[ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0 has landed the locked interfaces:
-`ln_io::net`'s command/event types and the `ln-http` skeleton compile and are tested for `Send`.
-Nothing serves a socket yet.
+[ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0–WP2 have landed: `ln-io` runs live
+TCP/Unix connections (raw and parsed mode, 13 integration tests) and the HTTP/1.1 codec is
+complete (38 wire tests). The JS `net`/`http`/`tls` surfaces are next.
 
 Two recorded reversals of the sketch below, both deliberate:
 

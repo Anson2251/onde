@@ -10,12 +10,12 @@ native ES modules, resolves `node_modules` and `exports` maps, ships the Node co
 (`process`, `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`,
 `querystring`, `punycode`, `module`), the M3 I/O core (`fs`, `fs/promises`, `stream`,
 `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio), and the globals Node provides
-(`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). Network is next: the
-M4 interfaces are locked and compile (`ln_io::net`'s handle/event protocol, the `ln-http` sans-io
-codec) but nothing serves a socket yet — see [docs/m4-plan.md](docs/m4-plan.md),
-[ADR-0006](docs/adr/0006-handles-and-events.md) and [ADR-0007](docs/adr/0007-http-codec.md). The
-roadmap is [docs/roadmap.md](docs/roadmap.md); the M3 contract is
-[docs/m3-plan.md](docs/m3-plan.md).
+(`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). M4 is under way: the
+I/O layer runs live TCP and Unix connections (raw and parsed modes, with `dns.lookup`) and the
+HTTP/1.1 codec is complete, but the `net`/`http`/`https`/`tls` JavaScript surfaces are not there
+yet — see [docs/m4-plan.md](docs/m4-plan.md), [ADR-0006](docs/adr/0006-handles-and-events.md) and
+[ADR-0007](docs/adr/0007-http-codec.md). The roadmap is [docs/roadmap.md](docs/roadmap.md); the M3
+contract is [docs/m3-plan.md](docs/m3-plan.md).
 
 ## Try it
 
@@ -171,7 +171,7 @@ vendor/          quickjs-ng fork + rquickjs-sys patch queue             [M6]
 ## Build and test
 
 ```sh
-cargo test --all                                # 220 tests across the crates
+cargo test --all                                # 286 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 

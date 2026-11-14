@@ -5,9 +5,11 @@ this page says *where* it lives, *how* the host boundary works, and who owns whi
 decisions behind it are [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
 [ADR-0007](adr/0007-http-codec.md) (HTTP codec).
 
-Status: in progress (2026-11-14). WP0 has landed the locked interfaces: `ln_io::net`'s protocol
-types and the `ln-http` sans-io skeleton exist and compile. They are the contract — **extend, do
-not rename**. No JS module in §3 exists yet.
+Status: in progress (2026-11-14). **WP0–WP2 are done.** The locked interfaces exist
+(`ln_io::net`'s protocol types, `ln-http`'s codec), `ln-io` runs live TCP/Unix connections with
+raw and parsed modes, and the HTTP/1.1 codec is complete with 38 wire tests. The JS surfaces
+(WP4–WP6) have not started; see §9 for the interface additions and the gaps that are recorded
+rather than fixed. Interfaces stay **extend, don't rename**.
 
 ## 1. Crate graph changes
 
@@ -81,8 +83,8 @@ an event.
 |---|---|---|
 | `listen` | `host, port, backlog, ipv6Only, exclusive, tls` or `path, backlog, tls` | starts the accept task |
 | `connect` | `host, port, family, localAddress, localPort, noDelay, keepAliveMs, tls` or `path, tls` | starts the connect task |
-| `read` | `maxChunk` | pull one chunk (≤ 64 KiB); ignored while one is in flight |
-| `readStop` | — | stop pulling (`pause()`) |
+| `read` | `maxChunk` | pull one chunk (≤ 64 KiB); ignored while one is in flight. In parsed mode it resumes a paused body, and `maxChunk` does not apply (the codec blocks at `BODY_BLOCK_BYTES`) |
+| `readStop` | — | stop pulling (`pause()`); in parsed mode it pauses the body stream, so the task stops reading the socket |
 | `write` | `Uint8Array` | queued in order; `drain` when the queue empties |
 | `end` | — | flush queued writes, then FIN; the read side stays open (half-close) |
 | `destroy` | — | close now; `closed` is still emitted exactly once. A user-supplied `destroy(err)` is emitted by JS locally, so no error object crosses the boundary |
@@ -91,6 +93,7 @@ an event.
 | `httpHead` | `Uint8Array` | JS-authored request/response head |
 | `httpBody` | `Uint8Array` | body chunk; the codec frames it |
 | `httpEnd` | `keepAlive` | finish the message; JS decides keep-alive |
+| `httpContinue` | — | write the interim `100 Continue` (`res.writeContinue()`), before the final head |
 | `setNoDelay` / `setKeepAlive` | `bool` / `enable, initialDelayMs` | live socket options |
 | `ref` / `unref` | — | loop refcount, idempotent |
 
@@ -125,10 +128,14 @@ direct slice and no nested arrays are allocated per header. `body` is `"none" | 
 ### 2.4 HTTP mode
 
 `httpAttach` switches a connected handle into parsed mode: the task feeds every read to
-`ln_http::Conn`, and `data` is replaced by `request`/`response`/`body`/`messageEnd`/`upgrade`. The
-socket object the user holds is unchanged, so `'connection'`, `'upgrade'` and `detach` all refer to
-the same connection. The server task, after `messageEnd`, waits for `httpEnd` and uses its
-`keepAlive` flag to decide between another round and a close — the codec never closes by itself.
+`ln_http::Conn`, and `data` is replaced by `request`/`response`/`body`/`messageEnd`/`upgrade`. A
+zero-length read calls `Conn::end_of_stream()` (the codec's EOF signal, added by WP2 as an additive
+method) and then drains events; a `feed` error drains the events queued before it *before* the
+canned response, `clientError` and `Closed` are emitted, so Node's `request` → `clientError` order
+holds. The socket object the user holds is unchanged, so `'connection'`, `'upgrade'` and `detach`
+all refer to the same connection. The server task, after `messageEnd`, waits for `httpEnd` and uses
+its `keepAlive` flag to decide between another round and a close — the codec never closes by
+itself.
 
 The response head is built in JS (`http.js`), so `writeHead` validation and header serialization
 stay where the errors need to be thrown, and `Date`/`Connection`/`Transfer-Encoding` are computed
@@ -192,10 +199,17 @@ needs WP1+WP3; WP5 needs WP2+WP4; WP6 needs WP1.
   grows unbounded.
 - **`unref` is a loop-ref toggle, not a read stop.** An unref'd socket still reads; it just does not
   keep the process alive. `Agent`'s idle pool relies on this.
+- **`drain` is a queue-empty signal.** The task emits it whenever its write queue empties, which can
+  be after any write. Node's `'drain'` only follows a `write()` that returned `false`, so `net.js`
+  emits it conditionally (WP4); the task's event is the primitive, not the public behaviour.
+- **Parsed-mode backpressure uses `read`/`readStop`.** `IncomingMessage.pause()` is `httpPause`
+  (or `readStop`), and `_read` is `read`; while paused the task does not pull from the socket at
+  all, so a slow consumer bounds the parked events (H7) instead of buffering the upload.
 - **EMFILE on accept.** Node emits `error` on the server and backs off. The task retries after a
   short sleep instead of spinning, and the fd count is asserted flat in the 10k-connection test.
-- **`setTimeout(0)` disables the timer.** A `timeout` event is advisory: JS destroys the socket or
-  not. The task's timer is reset on every successful read or write.
+- **`setTimeout(0)` disables the timer.** Socket idle timeouts are JS timers in WP4 (reset on
+  `data`/`drain`), so `ln-sched` stays the only source of timers and `Event::Timeout` remains
+  reserved. JS decides whether a timeout destroys the socket.
 
 ## 5. `http` semantics that are easy to get wrong
 
@@ -217,6 +231,9 @@ needs WP1+WP3; WP5 needs WP2+WP4; WP6 needs WP1.
   the connection, so JS must not write a response: the task writes the canned `400`/`431` itself
   from `ProtocolError::status` before closing, and the event is informational. This is narrower
   than Node, where `clientError` can still write; recorded as a divergence (D42).
+- **`'upgrade'` needs a `detach`.** The task emits `upgrade` with the bytes read past the head and
+  then parks at most one read; `http.js` calls `detach` before it expects `data` on the upgraded
+  socket. The parked bytes are flushed as the first `data` after `detach`.
 - **`Agent` is a JS pool of idle sockets.** `keepAlive: true` is the Node 19+ default; free sockets
   are `unref`'d and evicted after `keepAliveTimeout`. Reusing a socket means a new `httpAttach`
   cycle on the same handle, not a new connection.
@@ -268,3 +285,29 @@ Integration gate for M4 (the lead runs these): `cargo fmt --all --check`,
 | slow-loris: 10k half-open conns bounded, 431 past `maxHeaderSize` | `test/net/slowloris.sh` |
 | no scheduler regression: M1 corpus byte-identical | `./test/conformance/run.sh` |
 | cold start unchanged (~13 ms) | release `lite -e '1+1'`, 25 runs |
+
+## 9. Status and known gaps (after WP0–WP2)
+
+Interface additions made after the WP0 scaffold, all additive:
+
+| Addition | Why |
+|---|---|
+| `ln_io::net::HandleIdSource` | accepted connections need ids from the same sequence as JS-minted ones |
+| `Conn::end_of_stream()` | the codec has no other way to learn the socket hit EOF, so `BodyMode::Eof` bodies can complete |
+| `Command::HttpContinue` | `res.writeContinue()` needs to reach `Conn::write_continue` |
+| `Pool::handle()` and `.enable_io()` | connection tasks are spawned on the same runtime, which must have I/O enabled |
+| parsed-mode `read`/`readStop` | `IncomingMessage.pause()`/`_read`; without it a slow consumer grows the parked events without bound (H7) |
+
+Recorded gaps, deliberately not fixed in M4's first half:
+
+- **No `Conn::take_remainder()`.** A manual `detach` in the middle of a message cannot hand back the
+  bytes the codec buffered without completing it. Detach at a message or head boundary; the
+  `'upgrade'` path already does.
+- **Socket and EAI errnos live in `ln-io::net::error`**, delegating to `ln-error` where it knows the
+  errno. They belong in `ln-error`'s table once it grows beyond filesystem errnos.
+- **`Event::Timeout` is never emitted** (§4): timeouts are JS timers.
+- **Outbound trailers are Tier B**: `finish` writes `0\r\n\r\n` with no trailer fields; inbound
+  trailers are parsed and reported.
+- **TLS is a seam** (`Transport::{Tcp, Unix}`); WP6 adds rustls.
+- **`exclusive: true` disables `SO_REUSEADDR`** rather than reproducing `SO_REUSEPORT`/cluster fd
+  sharing, and a Unix socket file is not unlinked on close (Node does not either).

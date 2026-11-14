@@ -12,10 +12,14 @@ ln-error = { path = "../ln-error" }
 ln-http = { path = "../ln-http" }
 getrandom = "0.2"
 # `net`/`io-util` are M4: sockets, DNS and the connection tasks that drive `ln-http`.
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
+# `macros` is `tokio::select!`, the one `await` point that waits on commands, reads and writes
+# at once. It is a tokio feature, not an extra dependency.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util", "macros"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# SO_KEEPALIVE timings (TCP_KEEPIDLE/TCP_KEEPINTVL) and the listener options tokio does not expose.
+socket2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"

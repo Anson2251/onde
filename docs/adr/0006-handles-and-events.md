@@ -124,9 +124,10 @@ Ops keep ADR-0005 unchanged. Handles are a second, strictly separate primitive.
   second arm (`handle` vs `op`). The `Completion` type does not change.
 - M5's `child_process` stdio and the eventual `process.stdin` handle reuse this protocol, with a
   `readable`/`writable` flag instead of a socket.
-- Timeouts inside a task are real-time and emit a `timeout` event; they never fire a JS timer, so
-  `ln-sched`'s fake clock stays the only authority on timer ordering. A test that scripts
-  completions still never sleeps.
+- Socket idle timeouts are JS timers (WP4), reset on `data`/`drain`, so the task emits no `timeout`
+  event and `ln-sched`'s fake clock stays the only authority on timer ordering. `Event::Timeout`
+  stays reserved for a future kernel-level idle timer. A test that scripts completions still never
+  sleeps.
 - `http`'s JS surface is a `Readable`/`Writable` pair over the M3 stream layer, so backpressure,
   `pipe`, `pipeline` and `addAbortSignal` work without new machinery.
 - The cost is a second protocol to review. It is deliberately shaped like the first: one id, one

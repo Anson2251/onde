@@ -102,6 +102,9 @@ pub enum OpValue {
     Stat(Stat),
     StatFs(StatFs),
     Dir(Vec<DirEntry>),
+    /// Resolved addresses (`dns.lookup`). Ports are `0`: a lookup returns addresses, not
+    /// endpoints, and the JS layer attaches the port to the connection target.
+    Addrs(Vec<net::Addr>),
 }
 
 /// One filesystem capability. Paths are UTF-8 strings by the time they reach this layer: the JS
@@ -251,6 +254,13 @@ pub enum Op {
         atime_ms: f64,
         mtime_ms: f64,
     },
+    /// `dns.lookup`. A bounded, one-result capability, so it is an op, not a handle: the OS
+    /// resolver runs on the blocking pool (ADR-0005, m4-plan §2.6).
+    Lookup {
+        host: String,
+        family: net::IpFamily,
+        all: bool,
+    },
 }
 
 impl Op {
@@ -314,6 +324,7 @@ impl Op {
             Op::Fchmod { .. } => "fchmod",
             Op::Fchown { .. } => "fchown",
             Op::Futimes { .. } => "futimes",
+            Op::Lookup { .. } => "getaddrinfo",
         }
     }
 
@@ -398,6 +409,9 @@ impl Op {
                 mtime_ms,
             } => futimes(fd, atime_ms, mtime_ms),
             Op::Statfs { path } => statfs(&path),
+            // `getaddrinfo` is synchronous by nature; this arm is the body of the blocking-pool
+            // work, so being sync is correct (m4-plan §2.6).
+            Op::Lookup { host, family, all } => net::dns::lookup(&host, family, all),
         }
     }
 }
@@ -425,6 +439,9 @@ impl Pool {
             .worker_threads(1)
             .max_blocking_threads(io_threads.max(1))
             .enable_time()
+            // `enable_io` also serves the handle tasks (M4's sockets); the fs ops never need it,
+            // but there is one runtime for both modes (ADR-0006 §5).
+            .enable_io()
             .build()?;
         Ok(Self { _runtime: runtime })
     }
@@ -449,6 +466,16 @@ impl Pool {
             };
             sink(done);
         });
+    }
+
+    /// A handle for spawning tasks on this runtime.
+    ///
+    /// Connection tasks use it instead of holding an `Arc<Pool>`: a task that held the pool would
+    /// keep its own runtime alive, and the last drop would then happen on a worker thread, where
+    /// dropping a runtime is not allowed (a self-referential cycle). The service keeps the pool
+    /// alive; the tasks only borrow the scheduler.
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self._runtime.handle().clone()
     }
 
     /// Spawn a long-lived async task on the same runtime (M4's connection tasks, ADR-0006).
@@ -1582,6 +1609,14 @@ mod tests {
                     mtime_ms: 0.0,
                 },
                 "futimes",
+            ),
+            (
+                Op::Lookup {
+                    host: "localhost".into(),
+                    family: net::IpFamily::Either,
+                    all: false,
+                },
+                "getaddrinfo",
             ),
         ];
         for (op, expected) in ops {

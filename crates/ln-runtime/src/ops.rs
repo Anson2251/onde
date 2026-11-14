@@ -252,7 +252,30 @@ pub(crate) fn op_value_to_js<'js>(
         OpValue::Stat(stat) => stat_to_js(ctx, stat),
         OpValue::StatFs(fs) => statfs_to_js(ctx, fs),
         OpValue::Dir(entries) => dir_to_js(ctx, entries),
+        OpValue::Addrs(addrs) => addrs_to_js(ctx, addrs),
     }
+}
+
+/// `dns.lookup`'s result shape: an array of `{ address, family }` with the family as Node's
+/// numeric `4`/`6` (unlike `socket.address()`, which uses `"IPv4"`). The JS layer picks the first
+/// entry for the non-`all` callback form.
+fn addrs_to_js<'js>(ctx: &js::Ctx<'js>, addrs: &[ln_io::net::Addr]) -> js::Result<js::Value<'js>> {
+    let array = js::Array::new(ctx.clone())?;
+    for (index, addr) in addrs.iter().enumerate() {
+        let object = js::Object::new(ctx.clone())?;
+        match addr {
+            ln_io::net::Addr::Ip(address) => {
+                object.set("address", address.ip().to_string())?;
+                object.set("family", if address.is_ipv4() { 4 } else { 6 })?;
+            }
+            ln_io::net::Addr::Unix(path) => {
+                object.set("address", path.to_string_lossy().into_owned())?;
+                object.set("family", "unix")?;
+            }
+        }
+        array.set(index, object)?;
+    }
+    Ok(array.into_value())
 }
 
 fn stat_to_js<'js>(ctx: &js::Ctx<'js>, stat: &Stat) -> js::Result<js::Value<'js>> {
