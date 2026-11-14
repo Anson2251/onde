@@ -1,0 +1,3 @@
+promise ABORT_ERR AbortError
+callback ABORT_ERR AbortError
+exit:0

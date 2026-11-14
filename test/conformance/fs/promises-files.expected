@@ -1,0 +1,15 @@
+read hello
+append hello!
+iterable async-iterable
+mkdir true
+mkdir-existing true
+readdir a.txt:f,x:d
+stat true object
+copy async-iterable
+rename true
+truncate 2
+chmod 600
+readlink true
+realpath true
+rm undefined
+exit:0

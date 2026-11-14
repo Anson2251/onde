@@ -1,0 +1,11 @@
+"use strict";
+const path = require("path");
+console.log(path.join("a", "b", "..", "c"));
+console.log(path.normalize("/a//b/../c/"));
+console.log(path.resolve("/a", "b", "../c"));
+console.log(path.relative("/a/b", "/a/c/d"));
+console.log(path.dirname("/a/b/c.txt"), path.basename("/a/b/c.txt"), path.extname("/a/b/c.txt"));
+console.log(JSON.stringify(path.parse("/a/b.tar.gz")));
+console.log(path.format({ dir: "/a", name: "x", ext: ".js" }));
+console.log(path.posix.join("a", "/b"), path.win32.join("a", "\\b"));
+console.log(path.sep === path.posix.sep, path.win32.sep);

@@ -1,0 +1,10 @@
+"use strict";
+const os = require("os");
+console.log(typeof os.platform(), typeof os.arch(), typeof os.homedir());
+console.log(os.EOL === "\n" || os.EOL === "\r\n");
+console.log(os.devNull === "/dev/null" || os.devNull.endsWith("nul"));
+console.log(os.availableParallelism() >= 1);
+console.log(Array.isArray(os.cpus()), os.cpus().length >= 1);
+console.log(typeof os.totalmem(), typeof os.freemem(), typeof os.uptime());
+console.log(os.endianness() === "LE" || os.endianness() === "BE");
+console.log(typeof os.tmpdir(), typeof os.hostname(), typeof os.type(), typeof os.release());

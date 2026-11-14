@@ -1,0 +1,13 @@
+[package]
+name = "ln-engine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Safe engine boundary for lite-node (quickjs-ng via rquickjs)"
+publish = false
+
+[dependencies]
+# Deliberately no `futures` feature: AsyncRuntime, `Context::async_with` and the spawner own a
+# second job pump, which violates invariant I1 (ADR-0001 §2, ADR-0002 §4).
+rquickjs = { version = "0.14", features = ["loader"] }

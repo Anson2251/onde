@@ -1,0 +1,12 @@
+"use strict";
+console.log("a", 1, true);
+console.log("obj", { x: 1 });
+console.group("g");
+console.log("inner");
+console.groupEnd();
+console.count("k");
+console.count("k");
+console.countReset("k");
+console.count("k");
+console.dir({ a: [1, 2] });
+console.log("end");

@@ -1,0 +1,11 @@
+"use strict";
+const path = require("path");
+const win = path.win32;
+console.log(win.normalize("C:\\temp\\\\foo\\..\\bar\\"));
+console.log(win.basename("C:\\temp\\file.txt"), win.dirname("C:\\temp\\file.txt"));
+console.log(win.extname("C:\\temp\\file.tar.gz"));
+console.log(win.isAbsolute("C:\\x"), win.isAbsolute("\\x"), win.isAbsolute("x"));
+console.log(win.parse("\\\\server\\share\\dir\\file.js").root);
+console.log(path.posix.relative("/a/b/c", "/a/d"));
+console.log(path.posix.extname(".gitignore"));
+console.log(path.posix.basename("/a/b/c/"));

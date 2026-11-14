@@ -1,0 +1,7 @@
+beforeExit 0 0
+timer 1
+beforeExit 0 1
+timer 2
+beforeExit 0 2
+exit 0
+exit:0

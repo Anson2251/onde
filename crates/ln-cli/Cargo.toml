@@ -1,0 +1,16 @@
+[package]
+name = "ln-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The `lite` CLI for lite-node"
+publish = false
+
+[[bin]]
+name = "lite"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ln-runtime = { path = "../ln-runtime" }

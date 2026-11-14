@@ -1,0 +1,8 @@
+sync hello
+buffer true
+append hello!
+buffer-write bytes
+options options
+callback null options async true
+write-callback null cb
+exit:0

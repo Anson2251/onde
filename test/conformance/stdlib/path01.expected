@@ -1,0 +1,10 @@
+a/c
+/a/c/
+/a/c
+../c/d
+/a/b c.txt .txt
+{"root":"/","dir":"/a","base":"b.tar.gz","ext":".gz","name":"b.tar"}
+/a/x.js
+a/b a\b
+true \
+exit:0

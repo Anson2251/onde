@@ -1,0 +1,9 @@
+https://user:pass@example.com:8443/a/b?x=1#frag
+https://example.com:8443 example.com:8443 /a/b ?x=1 #frag user pass
+https://user:pass@example.com:8443/c%20d?x=1&y=2#frag
+https://example.com/a/z?q=1
+1,3 3
+a=1&a=3&b=2
+false true
+/tmp/a%20b.txt
+exit:0

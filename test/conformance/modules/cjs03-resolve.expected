@@ -1,0 +1,4 @@
+main shared require
+true
+ERR_PACKAGE_PATH_NOT_EXPORTED
+exit:0

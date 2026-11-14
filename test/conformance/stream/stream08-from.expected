@@ -1,0 +1,4 @@
+async a,b true
+bytes a,b
+objectMode true 1
+exit:0

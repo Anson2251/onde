@@ -1,0 +1,9 @@
+enoent ENOENT -2 open missing.txt
+eisdir EISDIR -21 read
+encoding ERR_INVALID_ARG_VALUE
+data ERR_INVALID_ARG_TYPE
+mkdir-file EEXIST -17 mkdir file.txt
+double-close EBADF -9 close
+arg-throw ERR_INVALID_ARG_TYPE
+callback ENOENT async true
+exit:0

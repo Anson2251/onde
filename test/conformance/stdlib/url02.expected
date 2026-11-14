@@ -1,0 +1,7 @@
+https: example.com:8080 8080 /p 1 #h
+https://example.com/p?a=1
+https://a.com/d
+/tmp/a b.txt
+file:///tmp/a%20b.txt
+{"protocol":"http:","hostname":"h","hash":"#f","search":"?q=1","pathname":"/p","path":"/p?q=1","href":"http://u:p@h:81/p?q=1#f","port":81,"auth":"u:p"}
+exit:0

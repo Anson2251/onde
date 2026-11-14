@@ -1,0 +1,10 @@
+a 1 true
+obj { x: 1 }
+g
+  inner
+k: 1
+k: 2
+k: 1
+{ a: [ 1, 2 ] }
+end
+exit:0

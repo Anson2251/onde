@@ -1,0 +1,5 @@
+slow true false true
+write:a:buffer|write:b:buffer|cb|endcb|finish|close
+drain false 0
+slow finish true
+exit:0

@@ -1,0 +1,7 @@
+stat true false 5
+lstat true false
+mode 640
+dates true true true
+plain true false
+missing true
+exit:0

@@ -1,0 +1,21 @@
+[package]
+name = "ln-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Isolate bootstrap, host globals and the microtask checkpoint driver for lite-node"
+publish = false
+
+[dependencies]
+ln-crypto = { path = "../ln-crypto" }
+ln-engine = { path = "../ln-engine" }
+ln-error = { path = "../ln-error" }
+ln-io = { path = "../ln-io" }
+ln-sched = { path = "../ln-sched" }
+ln-modules = { path = "../ln-modules" }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Host identity (ppid, uid/gid, hostname, uname, memory totals) has no `std` equivalent.
+libc = "0.2"

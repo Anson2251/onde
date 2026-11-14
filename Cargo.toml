@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ln-sched",
+    "crates/ln-modules",
+    "crates/ln-error",
+    "crates/ln-engine",
+    "crates/ln-io",
+    "crates/ln-crypto",
+    "crates/ln-runtime",
+    "crates/ln-cli",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

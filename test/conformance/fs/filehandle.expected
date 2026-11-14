@@ -1,0 +1,10 @@
+fd true
+write 2 true
+read 2 Y2
+stat true 10
+truncate 4
+closed-fd -1
+double-close undefined
+after-close EBADF EBADF
+handle-stream XY EBADF
+exit:0

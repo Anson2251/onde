@@ -1,0 +1,9 @@
+empty null 0
+len 5
+read2 he 3
+read-rest llo 0
+eof null false
+object len 3
+object reads 0 false ""
+hwm 8 false
+exit:0

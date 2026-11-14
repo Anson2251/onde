@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        run: cargo test --all
+      - name: build
+        run: cargo build
+      - name: conformance corpus
+        run: ./test/conformance/run.sh
+      - name: node for the stdlib oracle
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: stdlib tests (node + lite) and Node oracles
+        run: ./test/js/run.sh
+      - name: M3 acceptance programs (cat, wc -l, cp -r)
+        run: ./test/programs/run.sh
+      - name: module smoke set (30 CJS + 10 ESM packages)
+        run: ./test/smoke/run.sh
+      - name: smoke
+        run: |
+          test "$(cargo run -q -p ln-cli -- -e '1+1')" = "2"
+          cargo run -q -p ln-cli -- --version
+          printf 'const x = 1;\n' > /tmp/lite-check.js
+          cargo run -q -p ln-cli -- --check /tmp/lite-check.js
+
+  # The corpus is the contract. This job proves the .expected files still describe real Node
+  # behaviour, so they cannot silently rot into "whatever lite-node does". It also runs the
+  # differential harness (node vs lite, same stdout + exit code) from scratch.
+  corpus-selftest:
+    name: corpus is still Node-valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: node self-test
+        run: RUN=node ./test/conformance/run.sh
+      - name: build lite
+        run: cargo build
+      - name: differential (node vs lite)
+        run: ./test/differential.sh
+      - name: module smoke set against Node
+        run: ./test/smoke/run.sh
+      - name: stdlib oracles against Node
+        run: ./test/js/run.sh

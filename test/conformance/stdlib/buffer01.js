@@ -1,0 +1,15 @@
+"use strict";
+const { Buffer } = require("buffer");
+const bytes = Buffer.from("hi");
+console.log(bytes.length, bytes.toString(), bytes.toString("hex"), Buffer.isBuffer(bytes));
+console.log(Buffer.from("aGVsbG8=", "base64").toString());
+console.log(Buffer.from("hello").toString("base64"), Buffer.from("hello").toString("base64url"));
+const view = Buffer.alloc(4);
+view.writeUInt32BE(0xdeadbeef);
+console.log(view.toString("hex"));
+console.log(view.readUInt16LE(0).toString(16));
+console.log(Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString());
+const swapped = Buffer.from([1, 2, 3, 4]);
+swapped.swap16();
+console.log(swapped.toString("hex"));
+console.log(Buffer.byteLength("é"));

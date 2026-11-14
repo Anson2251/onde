@@ -1,0 +1,16 @@
+"use strict";
+const { URL, URLSearchParams } = require("url");
+const u = new URL("https://user:pass@example.com:8443/a/b?x=1#frag");
+console.log(u.href);
+console.log(u.origin, u.host, u.pathname, u.search, u.hash, u.username, u.password);
+u.pathname = "/c d";
+u.searchParams.append("y", "2");
+console.log(u.href);
+const rel = new URL("../z?q=1", "https://example.com/a/b/");
+console.log(rel.href);
+const p = new URLSearchParams("a=1&b=2&a=3");
+console.log(p.getAll("a").join(","), p.size);
+p.sort();
+console.log(p.toString());
+console.log(URL.canParse("not a url"), URL.canParse("/x", "https://e.com"));
+console.log(new URL("file:///tmp/a%20b.txt").pathname);

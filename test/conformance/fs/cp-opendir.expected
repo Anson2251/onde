@@ -1,0 +1,4 @@
+cp F true
+self ERR_FS_CP_EINVAL
+opendir inner,top.txt true
+exit:0

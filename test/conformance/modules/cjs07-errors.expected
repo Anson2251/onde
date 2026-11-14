@@ -1,0 +1,5 @@
+MODULE_NOT_FOUND Cannot find module './fixtures/does-not-exist'
+MODULE_NOT_FOUND
+ERR_INVALID_ARG_TYPE
+path
+exit:0

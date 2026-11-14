@@ -1,0 +1,6 @@
+set 5 -> 5
+threw 1.5 ERR_OUT_OF_RANGE
+set -1 -> -1
+set 999 -> 999
+threw true ERR_INVALID_ARG_TYPE
+exit:0

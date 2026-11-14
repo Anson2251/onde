@@ -1,0 +1,9 @@
+true true
+object string true
+bigint true
+true
+object string true
+number true
+true string string
+undefined
+exit:0

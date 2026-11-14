@@ -1,0 +1,13 @@
+[package]
+name = "ln-modules"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Engine-free module resolution for lite-node (CJS, ESM, package.json maps)"
+publish = false
+
+[dependencies]
+# `preserve_order` matters: Node resolves conditional `exports` targets in property order, so a
+# BTreeMap would silently reorder `{"import": ..., "require": ..., "default": ...}`.
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -1,0 +1,6 @@
+AssertionError ERR_ASSERTION strictEqual
+AssertionError ERR_ASSERTION deepStrictEqual
+throws-ok
+ERR_ASSERTION true
+rejects-ok
+exit:0

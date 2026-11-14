@@ -1,0 +1,10 @@
+"use strict";
+console.log(Array.isArray(process.argv), process.argv.length >= 2);
+console.log(typeof process.env, typeof process.cwd(), process.cwd().startsWith("/"));
+console.log(typeof process.hrtime.bigint(), process.hrtime.bigint() > 0n);
+const memory = process.memoryUsage();
+console.log(["rss", "heapTotal", "heapUsed", "external", "arrayBuffers"].every((key) => typeof memory[key] === "number"));
+console.log(typeof process.versions, typeof process.version, process.version.startsWith("v"));
+console.log(typeof process.uptime(), process.uptime() >= 0);
+console.log(process.execPath.length > 0, typeof process.platform, typeof process.arch);
+console.log(process.exitCode);

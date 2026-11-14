@@ -1,0 +1,6 @@
+names a.txt,link,sub
+dirents a.txt:f,link:l,sub:d
+parent true
+recursive a.txt,link,sub,sub/inner,sub/inner/deep.txt
+buffer true
+exit:0

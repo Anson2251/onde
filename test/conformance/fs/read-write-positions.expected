@@ -1,0 +1,9 @@
+write 2
+write-string 1
+read 2 _YZ_
+readv 4
+writev 2
+read-callback null:2:45
+eof 0
+content ABZ3456789
+exit:0

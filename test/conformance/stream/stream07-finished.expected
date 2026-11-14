@@ -1,0 +1,4 @@
+clean true
+error x
+premature ERR_STREAM_PREMATURE_CLOSE
+exit:0
