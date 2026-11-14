@@ -28,7 +28,7 @@ function validateExitCode(value) {
 
 // --- stdio -----------------------------------------------------------------------------------
 //
-// Node creates the standard streams lazily, and so does lite: `bootstrap.js` constructs
+// Node creates the standard streams lazily, and so does onde: `bootstrap.js` constructs
 // `process` before the stdlib modules are loadable, and a program that never touches stdio
 // should not pay for loading `stream` (and `tty` on a terminal). Each getter caches its stream
 // and only calls `__ln_builtin_exports` on the first access. That hook is installed at the end
@@ -44,7 +44,7 @@ function requireBuiltin(name) {
   if (typeof load !== "function") {
     // Only possible while bootstrap is still running. Let the caller fail with a useful
     // message rather than "load is not a function".
-    throw new Error(`lite-node: the "${name}" builtin is not available during bootstrap`);
+    throw new Error(`onde: the "${name}" builtin is not available during bootstrap`);
   }
   return load(name);
 }
@@ -95,7 +95,7 @@ function createInput(host, fd) {
     read(size) {
       const op = globalThis.__ln_op;
       if (typeof op !== "function") {
-        stream.destroy(new Error("lite-node: async I/O (__ln_op) is unavailable"));
+        stream.destroy(new Error("onde: async I/O (__ln_op) is unavailable"));
         return;
       }
       const length =

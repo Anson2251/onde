@@ -1,6 +1,6 @@
 "use strict";
 
-// lite-node's `util` module.
+// onde's `util` module.
 //
 // The inspect() implementation is deliberately "Node-shaped" rather than a
 // byte-for-byte port: it covers the value kinds a CLI or test runner actually

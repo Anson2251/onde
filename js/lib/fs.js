@@ -73,7 +73,7 @@ function validateFd(fd) {
 
 function validateBigintOption(options) {
   if (options !== null && typeof options === "object" && options.bigint === true) {
-    throw internal.invalidArgValue("options.bigint", true, "is not supported by lite-node M3");
+    throw internal.invalidArgValue("options.bigint", true, "is not supported by onde M3");
   }
 }
 

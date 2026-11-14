@@ -96,7 +96,7 @@ runs `exit` listeners synchronously, and returns.
 
 ## 5. Divergences from Node (documented, tested)
 
-| Area | Node | lite-node | Why |
+| Area | Node | onde | Why |
 |---|---|---|---|
 | Phase order | timers → pending → poll → check → close | timers → completions → immediates → block | no libuv readiness set; completions stand in for poll |
 | `setTimeout(0)` vs `setImmediate` at top level | nondeterministic in practice | whichever phase sees its work first: a timer is due only once `now >= deadline`; a 1 ms timer created in the same turn is not due yet, so its immediate runs first — the same rule Node effectively follows | no libuv polling; the due-time rule is explicit and testable |
@@ -110,7 +110,7 @@ divergences are outside that corpus and are asserted explicitly in `test/conform
 
 One sub-case is worth naming because Node's own result is timing-dependent: a `setTimeout(0)`
 created inside `process.nextTick` (before the loop starts) can run before or after a top-level
-`setImmediate` in Node, depending on how much wall time the tick took. lite applies the due-time
+`setImmediate` in Node, depending on how much wall time the tick took. onde applies the due-time
 rule above, so the immediate runs first. j2-style programs in Node flip between both orders; the
 corpus only contains cases where Node is stable.
 

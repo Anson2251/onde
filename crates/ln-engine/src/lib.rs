@@ -1,4 +1,4 @@
-//! Safe engine boundary for lite-node.
+//! Safe engine boundary for onde.
 //!
 //! This crate owns the [`rquickjs`] `Runtime`/`Context` pair and exposes the small surface the
 //! runtime needs. It deliberately contains **no Node semantics**: no globals are installed here,

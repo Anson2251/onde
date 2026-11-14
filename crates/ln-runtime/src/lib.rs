@@ -1,4 +1,4 @@
-//! Isolate bootstrap and the M1 event loop for lite-node.
+//! Isolate bootstrap and the M1 event loop for onde.
 //!
 //! One [`Isolate`] = one engine + one scheduler + one loop driver + the host globals. It is the
 //! only place that decides when microtasks run (ADR-0002 invariant I1): every host→JS callback
@@ -56,7 +56,7 @@ const BOOTSTRAP_NAME: &str = "<lite:bootstrap>";
 /// Private value thrown by `process.exit` so the host can unwind the current callback
 /// immediately. JS can catch it, but the recorded exit code is authoritative: the runtime stops
 /// at the next boundary and never drains the remaining queue (ADR-0002 R3).
-const EXIT_SENTINEL: &str = "lite-node:process.exit";
+const EXIT_SENTINEL: &str = "onde:process.exit";
 
 /// Callback kinds understood by `bootstrap.js`'s `__ln_dispatch`.
 const KIND_TIMER: u8 = 0;
@@ -97,7 +97,7 @@ impl Config {
 /// an exit code.
 #[derive(Debug)]
 pub enum Failure {
-    /// The engine could not be created, or the bootstrap script failed. A lite-node bug.
+    /// The engine could not be created, or the bootstrap script failed. An onde bug.
     Engine(String),
 }
 
@@ -370,7 +370,7 @@ impl Isolate {
 
         match self.engine.eval_global(BOOTSTRAP, BOOTSTRAP_NAME) {
             Ok(_) => {}
-            // A failing bootstrap is a bug in lite-node; surface it as an engine failure so the
+            // A failing bootstrap is a bug in onde; surface it as an engine failure so the
             // CLI does not pretend it was a user script error.
             Err(error) => {
                 return Err(Failure::Engine(format!(
@@ -477,7 +477,7 @@ impl Isolate {
                 self.report_entry_error(
                     "ERR_DLOPEN_FAILED",
                     &format!(
-                        "Cannot load native addon {}: lite-node does not support N-API modules",
+                        "Cannot load native addon {}: onde does not support N-API modules",
                         resolved.display()
                     ),
                 );
@@ -1315,14 +1315,14 @@ mod tests {
         let source = r#"const value = __ln_host.fsSync("readFile", [__PATH__]);
 if (!(value instanceof Uint8Array) || value.length === 0) throw new Error("bad readFile");
 try {
-  __ln_host.fsSync("readFile", ["/lite-node/definitely-missing"]);
+  __ln_host.fsSync("readFile", ["/onde/definitely-missing"]);
   process.exit(20);
 } catch (error) {
   const shaped =
     error.code === "ENOENT" &&
     error.errno === -2 &&
     error.syscall === "open" &&
-    error.path === "/lite-node/definitely-missing";
+    error.path === "/onde/definitely-missing";
   process.exit(shaped ? 21 : 22);
 }"#
         .replace("__PATH__", &manifest_literal());
@@ -1345,7 +1345,7 @@ try {
 
     #[test]
     fn async_op_errors_are_shaped_like_node() {
-        let source = r#"__ln_op("readFile", ["/lite-node/definitely-missing"]).then(
+        let source = r#"__ln_op("readFile", ["/onde/definitely-missing"]).then(
   () => process.exit(40),
   (error) => process.exit(
     error.code === "ENOENT" && error.errno === -2 ? 41 : 42,

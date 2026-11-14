@@ -170,7 +170,7 @@ Object.defineProperty(EventEmitter, "captureRejections", {
   enumerable: true,
   configurable: true,
   get() {
-    // Default reads expose the symbol flag (the lite API); after an
+    // Default reads expose the symbol flag (the onde API); after an
     // assignment, expose the assigned boolean like Node's static default.
     return captureWasAssigned ? defaultCapture : captureRejectionsSymbol;
   },

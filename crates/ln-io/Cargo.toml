@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Blocking fs ops and the tokio offload pool for lite-node"
+description = "Blocking fs ops and the tokio offload pool for onde"
 publish = false
 
 [dependencies]

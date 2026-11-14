@@ -11,7 +11,7 @@
 Node's observable behaviour is defined as much by *when* microtasks run as by what they do.
 `process.nextTick` outranks promise reactions, exceptions in a microtask are reported before
 the next microtask runs, and an unhandled rejection is reported only after the checkpoint
-drains. A runtime that gets these wrong is not "Node-lite"; it is a different language with a
+drains. A runtime that gets these wrong is not "onde"; it is a different language with a
 familiar API.
 
 QuickJS is an engine, not a runtime. In quickjs-ng (0.17.0, the pinned baseline) the entire
@@ -338,7 +338,7 @@ encodes the policy; the real runtime must pass the same table through the differ
 
 Each case has a sibling `.expected` file holding stdout plus an `exit:<code>` line.
 `./run.sh` diffs a runtime against them, `RUN=node ./run.sh` proves they still describe Node,
-and `REGEN=1 RUN=node ./run.sh` re-records them (never record from lite-node itself).
+and `REGEN=1 RUN=node ./run.sh` re-records them (never record from onde itself).
 
 The programs, abridged (the files under `test/conformance/microtasks/` are authoritative; each has
 an `.expected` recorded from Node):

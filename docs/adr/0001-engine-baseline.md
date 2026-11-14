@@ -58,7 +58,7 @@ it, but it is a reason to keep tracking ng tags (R3).
 |---|---|
 | Bellard QuickJS | No `JS_SetPromiseHook`, no settled-promise helpers, no `JS_GetPendingJobContext` in the pinned header; promise hooks are a hard requirement for `async_hooks`/ALS (ADR-0002 §8). Also a slower ES-feature cadence and no import-attribute-aware job/dynamic-import work in flight |
 | V8 | Exactly the weight we are avoiding: ~30 MB+ binary, higher RSS floor, C++ build |
-| Boa | Pure Rust is attractive, but performance and ES coverage are not yet at a point where "Node-lite" is honest |
+| Boa | Pure Rust is attractive, but performance and ES coverage are not yet at a point where "onde" is honest |
 | JavaScriptCore | Platform-tied API, heavy, no embed story comparable to QuickJS |
 | QuickJS + a JS-level promise wrapper for context | Cannot intercept engine-created reactions; breaks promise identity (see ADR-0002 §11) |
 

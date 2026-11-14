@@ -1,4 +1,4 @@
-//! Timer heap for the lite-node event loop.
+//! Timer heap for the onde event loop.
 //!
 //! One binary heap keyed `(deadline, seq)` per isolate (ADR-0003 §2/§7). `seq` is a monotonic
 //! insertion counter, which is what makes two timers with the same deadline fire in creation

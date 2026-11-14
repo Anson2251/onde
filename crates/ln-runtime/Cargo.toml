@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Isolate bootstrap, host globals and the microtask checkpoint driver for lite-node"
+description = "Isolate bootstrap, host globals and the microtask checkpoint driver for onde"
 publish = false
 
 [dependencies]

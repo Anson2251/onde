@@ -1,6 +1,6 @@
 "use strict";
 
-// lite-node's `assert` module.
+// onde's `assert` module.
 //
 // The shapes and the common messages follow Node's assert.  The deep-equality
 // decisions are delegated to util.js so that assert.deepStrictEqual and
@@ -9,7 +9,7 @@
 // decision, AssertionError field and the compact messages are covered by
 // test/js/lib/assert.oracle.js.
 
-// Relative requires work under Node and under lite's CJS loader.  Keep a bare
+// Relative requires work under Node and under onde's CJS loader.  Keep a bare
 // specifier as a fallback for an embedded-stdlib loader that only knows
 // builtin names (the runtime resolves "util" to this same file).
 let util;

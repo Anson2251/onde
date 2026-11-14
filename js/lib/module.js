@@ -32,7 +32,7 @@ class Module {
 
 function createRequire(filename) {
   if (hooks === null) {
-    throw new Error("lite-node: module system is not installed");
+    throw new Error("onde: module system is not installed");
   }
   if (typeof filename !== "string") {
     const error = new TypeError(

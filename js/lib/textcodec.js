@@ -1,6 +1,6 @@
 "use strict";
 
-// WHATWG `TextEncoder` / `TextDecoder` for lite.
+// WHATWG `TextEncoder` / `TextDecoder` for onde.
 //
 // The engine has no encoding APIs, so this module owns the semantics. UTF-8 decoding follows
 // the WHATWG decoder exactly: the "maximal subpart" rule means an incomplete or invalid

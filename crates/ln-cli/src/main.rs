@@ -1,4 +1,4 @@
-//! `lite` — the lite-node CLI.
+//! `lite` binary — the onde CLI.
 //!
 //! Entry modes: `-e/--eval EXPR`, `FILE`, `--check`, and the informational flags. There is no
 //! REPL and no stdin script. The CLI is a delivery mechanism: argument parsing and flag plumbing
@@ -146,7 +146,7 @@ fn run_eval(expression: &str, argv: Vec<String>, budget: Budget, io_threads: usi
     config.budget = budget;
     config.io_threads = io_threads;
     // Node's `-e` evaluates as CommonJS with `require` in scope; keep the completion-value
-    // printing, which is lite's documented convenience.
+    // printing, which is onde's documented convenience.
     config.expose_require = true;
     let mut isolate = match Isolate::new(config) {
         Ok(isolate) => isolate,
@@ -166,7 +166,7 @@ fn run_eval(expression: &str, argv: Vec<String>, budget: Budget, io_threads: usi
     }
 }
 
-/// Translate a clap parse result into `lite`'s exit-code convention.
+/// Translate a clap parse result into `onde`'s exit-code convention.
 ///
 /// Help and version are successful output; every usage error is exit 1 (Node's convention), and
 /// unknown options keep the wording the CLI documents.
@@ -204,7 +204,7 @@ fn cli_error(error: clap::Error) -> i32 {
     }
 }
 
-/// Print an engine-level failure (a lite-node bug, not a user program error). User errors are
+/// Print an engine-level failure (an onde bug, not a user program error). User errors are
 /// rendered by the runtime at the point they happen.
 fn report_failure(failure: Failure) -> i32 {
     let mut err = io::stderr().lock();

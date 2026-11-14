@@ -143,7 +143,7 @@ impl js::loader::Loader for EsmLoader {
                         ctx,
                         "ERR_DLOPEN_FAILED",
                         &format!(
-                            "Cannot load native addon '{}': lite-node does not support N-API modules",
+                            "Cannot load native addon '{}': onde does not support N-API modules",
                             path.display()
                         ),
                     )),
@@ -186,7 +186,7 @@ fn load_builtin<'js>(
     )?;
     for name in names.iter::<String>() {
         let name = name?;
-        // Underscore-prefixed helpers are lite internals, not part of the builtin's API.
+        // Underscore-prefixed helpers are onde internals, not part of the builtin's API.
         if name == "default"
             || name == "__esModule"
             || name.starts_with('_')

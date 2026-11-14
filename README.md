@@ -1,6 +1,9 @@
-# lite-node
+# onde
 
 A small, embeddable Node.js-compatible JavaScript runtime: **QuickJS (quickjs-ng) as the engine, Rust as the host**.
+
+> **Naming:** the project is now **onde**. The `ln-*` crates and the `lite` binary keep
+> their names for now, so build commands below still use `target/debug/lite`.
 
 Status: **M3 complete** (2026-11-13). `lite` runs CommonJS and native ES modules, resolves
 `node_modules` and `exports` maps, ships the Node core stdlib tier 0 (`process`, `path`, `url`,
@@ -95,7 +98,7 @@ tracked differences are in [docs/compat.md](docs/compat.md).
 
 ## Why
 
-Node's cost model is dominated by things a "lite" runtime does not need: V8's memory floor,
+Node's cost model is dominated by things an "onde" runtime does not need: V8's memory floor,
 an npm-install-time dependency graph, and libuv's surface. For CLIs, edge/serverless
 handlers, build scripts and embedded scripting, the useful part of Node is its **semantics**
 (module system, `process`, timers, streams, `fs`) and its **API shape**, not its engine.
@@ -105,7 +108,7 @@ not give is a runtime: no event loop, no timers, no modules on disk, no `process
 microtask queue whose execution model has to be re-hosted carefully (see ADR-0002). Those are
 what this repository builds, in that order.
 
-## What "lite" means here
+## What "onde" means here
 
 - Same *shape* as Node: `require`, `import`, `process`, `fs`, `path`, `events`, `net`, `http`,
   `worker_threads`, Node-style errors with `code`.

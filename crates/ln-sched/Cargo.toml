@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Reference microtask/tick scheduler for lite-node (engine-free)"
+description = "Reference microtask/tick scheduler for onde (engine-free)"
 publish = false
 
 [dependencies]

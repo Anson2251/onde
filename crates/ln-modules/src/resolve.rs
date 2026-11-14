@@ -48,7 +48,7 @@ pub enum Format {
     Module,
     /// JSON module: parsed once, `default` export.
     Json,
-    /// Native addon (`.node`): always a clear error in lite.
+    /// Native addon (`.node`): always a clear error in onde.
     Native,
 }
 

@@ -8,7 +8,7 @@
 #   * `*.test.js`   runtime-agnostic: requires our module by relative path and asserts literals.
 #                   Run under both node and lite; their output must be identical.
 #   * `*.oracle.js` Node-only differential against the corresponding Node builtin. These are the
-#                   cases that keep our behaviour honest even before lite can run them.
+#                   cases that keep our behaviour honest even before onde can run them.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

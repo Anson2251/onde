@@ -2,7 +2,7 @@
 //!
 //! ESM importing CJS needs a static list of names: `import { sort } from "lodash"` must fail at
 //! link time when `sort` does not exist, and a namespace import should contain the same names
-//! Node provides. Node solves this with `cjs-module-lexer`; lite uses a small scanner with the
+//! Node provides. Node solves this with `cjs-module-lexer`; onde uses a small scanner with the
 //! same contract but a much smaller input language:
 //!
 //! Detected:

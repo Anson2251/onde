@@ -19,10 +19,10 @@ Measured on the pinned engine (2026-11-13):
 | Feature | Status | Notes |
 |---|---|---|
 | ES2023+ syntax, TLA, classes, private fields | 🟢 | `Promise.withResolvers`, `Object.groupBy`, `toSorted`, `RegExp.escape` present |
-| Modules, dynamic `import()` | 🟢 | `JS_SetModuleLoaderFunc2`; lite supplies the resolver, canonical names and `import.meta` |
+| Modules, dynamic `import()` | 🟢 | `JS_SetModuleLoaderFunc2`; onde supplies the resolver, canonical names and `import.meta` |
 | `queueMicrotask` | 🟢 | shares FIFO with promise reactions (correct) |
 | `WeakRef`, `FinalizationRegistry` | 🟡 | `WeakRef` works; cleanup callbacks are enqueued as jobs in ng master but not in 0.17.0 — do not rely on them in 1.0 |
-| `atob`/`btoa` | 🟢 | lite also defines them from `Buffer` if absent |
+| `atob`/`btoa` | 🟢 | onde also defines them from `Buffer` if absent |
 | `Intl` | ⚪ | non-goal for 1.0 (R2); `typeof Intl === "undefined"` (D5) |
 | `TextEncoder`/`TextDecoder` | 🔵 M2 | `js/lib/textcodec.js` (WHATWG subset; see D28) |
 | `URL`/`URLSearchParams` | 🔵 M2 | `js/lib/url.js`; no `URLPattern` (D29) |
@@ -57,7 +57,7 @@ Measured on the pinned engine (2026-11-13):
 
 | Module | Status | Notes |
 |---|---|---|
-| `process` | 🟡 | env/argv/cwd/chdir/platform/arch/version(s)/pid/ppid/title/exit/exitCode/nextTick/hrtime/bigint/uptime/memoryUsage/emitWarning/stdio; `cpuUsage()` zeroes (D22), signals M5, `version` is lite's (D34) |
+| `process` | 🟡 | env/argv/cwd/chdir/platform/arch/version(s)/pid/ppid/title/exit/exitCode/nextTick/hrtime/bigint/uptime/memoryUsage/emitWarning/stdio; `cpuUsage()` zeroes (D22), signals M5, `version` is onde's (D34) |
 | `path` | 🟡 | posix + win32 complete; `matchesGlob` absent (D31) |
 | `url` | 🟡 | WHATWG `URL`/`URLSearchParams`, legacy `parse`/`format`/`resolve`/`resolveObject`, `fileURLToPath`, `pathToFileURL`, `urlToHttpOptions`, `domainTo*`; no `URLPattern`/`fileURLToPathBuffer` (D29) |
 | `util` | 🟡 | `format`, `formatWithOptions`, `inspect`, `inherits`, `promisify` (+custom), `callbackify`, `types`, `isDeepStrictEqual`, `deprecate`, `debuglog`, errno helpers, `stripVTControlCharacters`, `toUSVString`; inspect is a documented subset (D30) |
@@ -65,7 +65,7 @@ Measured on the pinned engine (2026-11-13):
 | `assert` | 🟡 | full core set + `strict` + `AssertionError`; no snapshots/`CallTracker`/`partialDeepStrictEqual`, simpler diff bodies (D30) |
 | `buffer` | 🟡 | `Uint8Array` subclass, utf8/hex/base64/base64url/latin1/ascii/utf16le, numeric I/O, comparison/search; no pool, no `Blob`/`File`/`transcode` (D28) |
 | `string_decoder` | 🟡 | utf8/utf16le/base64/hex/latin1/ascii with correct split handling; `text` is a method (Node's legacy form), no `lastChar`/`omitPadding` (D28) |
-| `os` | 🟡 | platform/arch/type/release/EOL/devNull/homedir/tmpdir/hostname/cpus count/totalmem/freemem/uptime/userInfo/endianness/availableParallelism; lite values (D24) |
+| `os` | 🟡 | platform/arch/type/release/EOL/devNull/homedir/tmpdir/hostname/cpus count/totalmem/freemem/uptime/userInfo/endianness/availableParallelism; onde values (D24) |
 | `console` | 🟡 | `Console` class, log/info/debug/warn/error, dir/trace/assert/time/count/group/table/clear; no `profile*`/`timeStamp`/`createTask`, no color (D25) |
 | `querystring` | ✅ | parse/stringify/escape/unescape/decode/encode/unescapeBuffer |
 | `punycode` | ✅ | deprecated but complete |
@@ -112,13 +112,13 @@ Measured on the pinned engine (2026-11-13):
 | `inspector` | ⚪ | non-goal |
 | `diagnostics_channel` | ⚪ | 1.1 candidate |
 | `cluster`, `dgram`, `http2`, `zlib`, `sqlite` | ⚪ | not in 1.0 |
-| `node:test` | 🟡 M7 | lite runner powering our own conformance corpus |
+| `node:test` | 🟡 M7 | onde runner powering our own conformance corpus |
 
 ## 3. Divergences (deliberate, tested)
 
 | ID | Divergence | Rationale | Test |
 |---|---|---|---|
-| D1 | No libuv poll phase: lite orders timers by due time, so a clamped 0 ms timer that is already due runs before `setImmediate`. Whether it is due at loop start is wall-clock dependent (as in Node), so races are `.nodiff`; the ordering rule itself is deterministic | determinism within a turn is a feature for embedders; the one unavoidable race is not papered over | `test/conformance/divergences/d04-zero-timer-vs-immediate.js` (asserts the byte set, since the order is the race); `loop/l09-immediate-before-timer.js` and `microtasks/c10-*` use a 20 ms timer and assert the order deterministically |
+| D1 | No libuv poll phase: onde orders timers by due time, so a clamped 0 ms timer that is already due runs before `setImmediate`. Whether it is due at loop start is wall-clock dependent (as in Node), so races are `.nodiff`; the ordering rule itself is deterministic | determinism within a turn is a feature for embedders; the one unavoidable race is not papered over | `test/conformance/divergences/d04-zero-timer-vs-immediate.js` (asserts the byte set, since the order is the race); `loop/l09-immediate-before-timer.js` and `microtasks/c10-*` use a 20 ms timer and assert the order deterministically |
 | D2 | Close callbacks are dispatched as completions, not in a dedicated phase | single completion channel | M3 |
 | D3 | `fs.watch` polls in 1.0 | avoids three platform watch backends in the first release | M3 |
 | D4 | `process.exit` inside a microtask drops remaining microtasks | matches Node (verified C7), stated loudly because it surprises people | `microtasks/c07` |
@@ -135,14 +135,14 @@ Measured on the pinned engine (2026-11-13):
 | D15 | `process.exit` unwinds with a private sentinel, so a script that catches arbitrary values can catch it; Node exits immediately | QuickJS has no uncatchable abort that preserves the exit path; the recorded code is authoritative and the loop stops at the next boundary | `divergences/d05-exit-sentinel-catchable` |
 | D16 | `require()` of an ES module throws `ERR_REQUIRE_ESM`; Node 22+ can synchronously require a TLA-free graph | evaluating ESM inside a running CJS call would pump the engine job queue re-entrantly (ADR-0002 I1); dynamic `import()` is the supported direction | `divergences/d06-require-esm` |
 | D17 | ESM named exports from CJS come from a static scan (`exports.x`, `module.exports.x`, brackets, `Object.defineProperty`, `module.exports = {...}`); `Object.assign`, loop-built names and re-exports are missed | a full parser is not worth the code; Node's `cjs-module-lexer` has the same class of false negatives; `default` is always reliable | `test/conformance/modules/esm02-interop.mjs` |
-| D18 | JSON modules do not require `with { type: "json" }`; the attribute is parsed and ignored | keeps lite lenient while accepting the same source Node accepts | `divergences/d07-json-attribute` |
+| D18 | JSON modules do not require `with { type: "json" }`; the attribute is parsed and ignored | keeps onde lenient while accepting the same source Node accepts | `divergences/d07-json-attribute` |
 | D19 | A rejected top-level `await` is reported through `unhandledRejection`; Node routes it to `uncaughtException` | the engine exposes the module promise as a normal rejection; with no listeners both exit 1, and M6's job ownership can route it exactly | `divergences/d08-tla-rejection` |
 | D20 | Resolution/loader error messages are Node-shaped, not byte-identical (no Node internal frames, shorter require stack, specifier text may be relative where Node prints an absolute URL) | different engine and no `module` internals; `name [CODE]: message`, the `code` property and the useful first line match | CLI e2e + `test/conformance/modules/esm03-dynamic.mjs` |
 | D21 | `process.memoryUsage().rss` is the engine heap (equal to `heapTotal`); `external`/`arrayBuffers` are 0 | OS-level RSS is an M7 measurement; the fields exist so callers keep working | `test/conformance/stdlib/process01.js` |
 | D22 | `process.cpuUsage()` returns zeroes | per-process CPU accounting arrives with processes/workers (M5) | `test/conformance/stdlib/process01.js` |
 | D23 | No package self-reference (`import "own-name"`), no custom conditions, no `node-addons` condition; unknown `node:` names throw `ERR_UNKNOWN_BUILTIN_MODULE` | the common conditional map is supported; the rest is 1.1 scope | `crates/ln-modules/tests/resolve.rs` |
 | D24 | `os.networkInterfaces()` is `{}`; `os.loadavg()` is `[0,0,0]`; `os.cpus()` is count-only with zeroed times; `os.freemem()` is 0 on macOS; permissions constants are a portable subset; `getPriority`/`setPriority`/`version` absent | no host ops for these yet; shape stays Node-compatible | `test/js/lib/os.test.js` |
-| D25 | `console.table` is a lite box table (no Map/Set iterators, multiline cells flattened); `colorMode` accepted but never colorizes; `time` formatting simplified; `profile`/`timeStamp`/`createTask` absent | avoids porting cli-table/colors for M2 | `test/js/lib/console.test.js` |
+| D25 | `console.table` is an onde box table (no Map/Set iterators, multiline cells flattened); `colorMode` accepted but never colorizes; `time` formatting simplified; `profile`/`timeStamp`/`createTask` absent | avoids porting cli-table/colors for M2 | `test/js/lib/console.test.js` |
 | D26 | Events: `EventEmitterAsyncResource`, `addAbortListener` and `usingDomains` absent; no max-listener leak warning; `EventEmitter.captureRejections` is an accessor over a symbol flag (assignment still toggles the default) | small surface, no async_hooks yet; warning policy deferred to M6 | `test/js/lib/events.oracle.js` |
 | D27 | Globals: `structuredClone` is a data subset (no Blob/File/MessagePort/streams; a Proxy clones as a plain object); `EventTarget` tree propagation is an extension; listener errors rethrow from `queueMicrotask`; `passive` is inert | single-realm, no host objects before M3/M5; DOM behaviour is otherwise followed | `test/js/lib/globals.test.js` + `globals.oracle.js` |
 | D28 | Buffer/codecs: no pool; `Buffer.from(array)` validates 0–255 (Node coerces), iterables are accepted (Node throws), `DataView` copies; `StringDecoder.text` is a method; `TextDecoder` supports utf-8/utf-16le/windows-1252 only | documented subset; the common encodings and Node's split/hold rules are matched | `test/js/lib/buffer.oracle.js`, `textcodec.test.js` |
@@ -151,7 +151,7 @@ Measured on the pinned engine (2026-11-13):
 | D31 | `path.matchesGlob` (Node 22.17+) absent | rare and new; `path` is otherwise complete on both flavors | `test/js/lib/path.oracle.js` |
 | D32 | No loader hooks, no `--conditions`, no import attributes validation, no network module loading (`ERR_UNSUPPORTED_ESM_URL_SCHEME`); `import.meta.resolve` is synchronous and returns the canonical name | M2 scope; the resolver's condition list is fixed | `test/conformance/modules` |
 | D33 | `module` exposes only `createRequire`/`builtinModules`/`isBuiltin`/`_cache`; no `_compile`, `_resolveFilename`, `registerHooks`, `findPackageJSON`, `runMain` internals | internals are not API; supporting them would freeze private structures | `test/conformance/stdlib/module01.js` |
-| D34 | `process.version` is lite's version (`v0.1.0`) and `process.versions` only has `lite` (no `node` key); `process.argv[1]` is canonicalized (symlinks resolved) where Node uses `path.resolve`; `process.env` is a startup snapshot whose mutations are not exported to the OS environment | honest identity; packages that gate on a Node major take their fallback paths (M8 compat sweep); environment propagation belongs to `child_process` (M5) | `test/conformance/stdlib/process01.js` |
+| D34 | `process.version` is onde's version (`v0.1.0`) and `process.versions` still reports the `lite` key (no `node` key); `process.argv[1]` is canonicalized (symlinks resolved) where Node uses `path.resolve`; `process.env` is a startup snapshot whose mutations are not exported to the OS environment | honest identity; packages that gate on a Node major take their fallback paths (M8 compat sweep); environment propagation belongs to `child_process` (M5) | `test/conformance/stdlib/process01.js` |
 | D35 | `fs/promises` is **not** a promisified `fs`: no `*Sync` variants, no top-level fd calls (`close`/`read`/`write`/`readv`/`writev`/`fstat`/`fchmod`/`fchown`/`fsync`/`fdatasync`/`ftruncate`/`futimes` are `FileHandle` methods), `open` resolves a `FileHandle`, `watch` is an async iterator, module-level `createReadStream`/`createWriteStream` are absent, `exists`/`watchFile` are absent, and `constants` is the same object as `fs.constants`. Bad arguments still throw synchronously from the callback/sync forms and reject from the promise forms | derived from the same ops but shaped like Node, because the promise form is a different API (verified against `node v26.10.0`, which has 35 promise functions against ~90 `fs` functions) | `test/js/lib/fs-promises.test.js` + an exact `Object.keys` conformance case |
 | D36 | `fs.readFile`/`fs.read` copy the op's bytes into a JS `Uint8Array`; the zero-copy external-memory view promised by [architecture](architecture.md) §10 is M7 work | `ln-engine` has no external `ArrayBuffer` path yet, and correctness of the fs surface outranks one copy per read; `Buffer` stays a plain `Uint8Array` subclass (D7) | M7 benchmark (`fs.readFile` 10 MB within 1.2x of Node) |
 | D37 | `FileHandle.getAsyncId` is absent until M6 (it is an `async_hooks` hook); `FileHandle.readLines`/`readableWebStream`/`fs.openAsBlob` are absent (M7/1.1); `fs.glob`/`globSync`/`fs/promises.glob` are absent; `fs.promises.FileHandle` is not exported (Node does not export it either); `Dir` is a JS iterator over a materialized `readdir` rather than a lazy fd-backed directory; `URL` paths work but a `Buffer` path is decoded as UTF-8, so non-UTF-8 byte paths are unsupported | keeps M3 to the I/O core; the class surface is recorded from the oracle rather than assumed | `test/js/lib/fs.test.js` |

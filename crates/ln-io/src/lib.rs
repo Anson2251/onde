@@ -832,7 +832,7 @@ fn rm(
 /// Refuse to remove the process's own working directory.
 ///
 /// Node rejects the literal `.` and `./` but will happily remove an absolute path that *is* the
-/// cwd (`fs.rmSync(process.cwd())` deletes the project). Lite rejects both: `rm -r .` walking the
+/// cwd (`fs.rmSync(process.cwd())` deletes the project). Onde rejects both: `rm -r .` walking the
 /// runtime's own tree is not a failure mode worth preserving, and a path resolved by the JS layer
 /// must not slip past the check. The comparison is lexical, so `.`, `./`, `a/..` and an absolute
 /// path equal to the cwd all reach the same decision. See compat D39.

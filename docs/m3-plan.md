@@ -202,7 +202,7 @@ are editing):
 | WP3/WP5/WP6 | `node test/js/lib/<file>.test.js` where possible; final `./test/js/run.sh` is the lead's |
 | WP4 | `cargo test -p ln-runtime -p ln-cli`, `cargo build` |
 
-Recording expectations: never record from lite. Use `REGEN=1 RUN=node ./test/conformance/run.sh`
+Recording expectations: never record from onde (the `lite` binary). Use `REGEN=1 RUN=node ./test/conformance/run.sh`
 for corpus cases, and keep printed output deterministic (basenames, not absolute temp paths; no
 mode/mtime assertions that depend on the host umask).
 

@@ -1,4 +1,4 @@
-# lite-node roadmap
+# onde roadmap
 
 Goal: a Node-shaped runtime on quickjs-ng, in Rust, that is **small, sub-15 ms cold-start, and
 semantically honest** about the parts of Node it claims to support.
@@ -37,7 +37,7 @@ Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 | M0 | Bootstrap | workspace, engine binding, `lite -e '1+1'` | 1.5 | — |
 | M1 | **Scheduler & tick model** ★ | Node-compatible microtask/tick semantics, timers, loop | 3 | M0 |
 | M2 | Modules + core stdlib | CJS/ESM, `process`, JS stdlib tier 0 | 4 | M1 |
-| M3 | I/O core | op bridge, `fs`, Node errors, lite streams, `crypto` base | 5 | M2 |
+| M3 | I/O core | op bridge, `fs`, Node errors, onde streams, `crypto` base | 5 | M2 |
 | M4 | Network | `net`, `dns`, `http`/`https`, TLS | 6 | M3 |
 | M5 | Processes & threads | `child_process`, `worker_threads`, shared memory | 4 | M3 |
 | M6 | **Engine patch + async context** ★ | host-owned job queue, `async_hooks`, ALS everywhere | 4 | M1, M2 |
@@ -148,7 +148,7 @@ Deviations from the plan, all deliberate:
 - Cases that mix a clamped 0 ms timer with `setImmediate` carry a `.nodiff` marker: the order
   depends on whether the timer is already due when the loop starts, which is wall-clock timing
   in Node and in lite. `divergences/d04` asserts the byte set rather than the order and the
-  Node self-test and differential harness skip it; lite's due-time ordering rule is asserted by
+  Node self-test and differential harness skip it; onde's due-time ordering rule is asserted by
   the non-racing cases instead (ADR-0003 §5).
 - Timer ids start at 1 instead of Node's 2 (compat D13). Ids are an implementation detail;
   `Timeout` objects are the API.
@@ -211,14 +211,14 @@ What the exit criteria ask for and where it is proven:
 Deviations from the plan, all deliberate:
 
 - **`require(esm)` is rejected** with `ERR_REQUIRE_ESM` (D16). Node 22+ can require a
-  synchronous ESM graph; lite cannot evaluate one inside a running CJS call without pumping the
+  synchronous ESM graph; onde cannot evaluate one inside a running CJS call without pumping the
   engine's job queue re-entrantly, which ADR-0002 forbids. Dynamic `import()` from CJS works.
 - **ESM named exports from CJS are a static scan** (D17). `exports.x`, `module.exports.x`,
   bracket assignments, `Object.defineProperty` and `module.exports = { ... }` are detected;
   `Object.assign`, loop-built names and re-exports are not. `default` is always
   `module.exports`, exactly as in Node.
 - **JSON modules do not require an import attribute** (D18). Node needs
-  `with { type: "json" }`; lite accepts `.json` either way. The attribute is parsed and ignored,
+  `with { type: "json" }`; onde accepts `.json` either way. The attribute is parsed and ignored,
   so the same source runs on both.
 - **A rejected top-level `await` is reported through the unhandled-rejection path** (D19). With
   no `unhandledRejection` listener it still becomes an uncaught exception and exits 1; the
@@ -448,7 +448,7 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 
 - Full compat sweep against [compat.md](compat.md); every "partial" either finished or
   documented as a divergence with a test asserting the divergence.
-- Install: `curl | sh`, Homebrew tap, npm wrapper package (`lite-node` with prebuilt binaries).
+- Install: `curl | sh`, Homebrew tap, npm wrapper package (`onde` with prebuilt binaries).
 - Docs: module reference generated from the JS stdlib, error-code index, migration notes
   ("coming from Node").
 - Release checklist: reproducible builds, SBOM, license audit, security notes on permissions.

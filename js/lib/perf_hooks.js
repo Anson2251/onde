@@ -16,7 +16,7 @@
 //     not as the scheduler's duty cycle.
 //   * `PerformanceObserver` never delivers entries (`observe()` records the options and
 //     `takeRecords()` returns an empty array): entries are produced synchronously by mark/
-//     measure and lite has no observer notification queue in M3.
+//     measure and onde has no observer notification queue in M3.
 //   * `performance.nodeTiming`, `timerify`, `monitorEventLoopDelay` and histograms are absent.
 //   * `performance.toJSON()` exposes `timeOrigin` and `eventLoopUtilization` only.
 //
@@ -331,7 +331,7 @@ if (alreadyInstalled) {
   module.exports = previousGlobal[EXPORTS_PROPERTY];
 } else {
   // Capture the engine clock before the global is replaced. `previousGlobal` is the engine object
-  // under lite; under a bare Node process it is Node's native Performance instance.
+  // under onde; under a bare Node process it is Node's native Performance instance.
   enginePerformance = previousGlobal;
   const startMono = monotonicNow();
   const timeOrigin = Date.now() - startMono;

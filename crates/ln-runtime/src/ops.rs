@@ -74,7 +74,7 @@ pub(crate) fn done_id(done: &OpDone) -> RequestId {
 }
 
 fn pool_error(error: &io::Error) -> NodeError {
-    // A lite-specific code: the pool is a runtime resource, not a Node API. It is delivered like
+    // An onde-specific code: the pool is a runtime resource, not a Node API. It is delivered like
     // any other async failure so a callback gets it instead of a synchronous throw.
     NodeError::new(
         "ERR_IO_POOL",

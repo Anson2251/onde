@@ -70,7 +70,7 @@ function parseMode(options) {
   if (typeof options === "number") return { mode: options };
   if (typeof options !== "object") throw internal.invalidArgType("options", "object", options);
   if (options.bigint === true) {
-    throw internal.invalidArgValue("options.bigint", true, "is not supported by lite-node M3");
+    throw internal.invalidArgValue("options.bigint", true, "is not supported by onde M3");
   }
   return options;
 }

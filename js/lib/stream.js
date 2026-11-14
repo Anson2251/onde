@@ -9,7 +9,7 @@
 //
 // Design notes:
 //
-//   * `EventEmitter` comes from `events`, which resolves to lite's module under lite and to
+//   * `EventEmitter` comes from `events`, which resolves to onde's module under onde and to
 //     Node's builtin under Node. That is intentional: this file is exercised by both runtimes.
 //   * Everything is deferred with `process.nextTick` (falling back to `queueMicrotask`), which
 //     is what makes `data`/`end`/`finish` order match Node for the common cases.
@@ -842,7 +842,7 @@ function emitEndNow(stream) {
 // pull mode (Node's `Readable.prototype.on` does the same through `resume()`/`read(0)`).
 //
 // This is written against the public `on`/`prependListener` API rather than an internal
-// `_addListener` hook so it works with both lite's `events` and Node's builtin.
+// `_addListener` hook so it works with both onde's `events` and Node's builtin.
 function afterAddListener(stream, type) {
   const state = stream._readableState;
   if (!state) return;

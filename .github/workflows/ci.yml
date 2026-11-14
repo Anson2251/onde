@@ -46,7 +46,7 @@ jobs:
           cargo run -q -p ln-cli -- --check /tmp/lite-check.js
 
   # The corpus is the contract. This job proves the .expected files still describe real Node
-  # behaviour, so they cannot silently rot into "whatever lite-node does". It also runs the
+  # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
   # differential harness (node vs lite, same stdout + exit code) from scratch.
   corpus-selftest:
     name: corpus is still Node-valid

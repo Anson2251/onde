@@ -143,7 +143,7 @@ function createRequire(fromFile, parentModule) {
         throw codedError(
           Error,
           "ERR_DLOPEN_FAILED",
-          `Cannot load native addon '${resolution.path}': lite-node does not support N-API modules`,
+          `Cannot load native addon '${resolution.path}': onde does not support N-API modules`,
         );
       default:
         return loadCjsFile(resolution.path, parentModule || null);

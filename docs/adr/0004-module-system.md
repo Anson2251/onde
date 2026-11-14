@@ -50,7 +50,7 @@ milliseconds and do not need the engine.
 canonical name, reads sources, generates facades, and throws Node-shaped errors (with `code`)
 from the callbacks.
 
-Why not a third-party resolver (`oxc_resolver`, as R4 suggested)? It would still need lite's
+Why not a third-party resolver (`oxc_resolver`, as R4 suggested)? It would still need onde's
 `package.json` type lookup, CJS extension semantics and the `require` cache, and it would add a
 large dependency to a runtime whose value proposition is a small binary. The surface we need is
 Node's documented algorithm, and it has one implementation here.
@@ -95,7 +95,7 @@ not update the ESM binding.
 
 ### 5. `require()` of ESM is rejected, `import()` of CJS works
 
-Node 22+ supports `require(esm)` for synchronous graphs. lite does not: evaluating an ESM graph
+Node 22+ supports `require(esm)` for synchronous graphs. onde does not: evaluating an ESM graph
 synchronously inside a running CJS call would require pumping the engine's job queue
 re-entrantly, which ADR-0002 forbids (the checkpoint owns the queue). The rejection is explicit
 (`ERR_REQUIRE_ESM` with the dynamic-import hint), not a confusing "not found". Dynamic

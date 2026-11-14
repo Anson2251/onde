@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Conformance runner for the lite-node corpus.
+# Conformance runner for the onde corpus.
 #
 #   ./run.sh                       # compare target/debug/lite against recorded .expected files
 #   RUN=node ./run.sh              # prove the expectations still describe Node
-#   REGEN=1 RUN=node ./run.sh      # re-record expectations from Node (never from lite)
+#   REGEN=1 RUN=node ./run.sh      # re-record expectations from Node (never from onde)
 #   DIFF=1 ./run.sh                # differential: node vs lite, same stdout + exit code
 #   SUITES="timers loop" ./run.sh  # only some suites
 #
 # A suite is a directory under test/conformance containing `<case>.js` and
 # `<case>.expected`. The expected file holds stdout lines followed by `exit:<code>`.
 # `divergences/` holds deliberate, documented differences: it is excluded from the Node
-# self-test because its expectations are recorded from lite-node, not Node.
+# self-test because its expectations are recorded from onde, not Node.
 
 set -uo pipefail
 
@@ -57,7 +57,7 @@ for suite in "${suites[@]}"; do
     continue
   fi
 
-  # `divergences/` expectations are recorded from lite-node and asserted to *differ* from Node,
+  # `divergences/` expectations are recorded from onde and asserted to *differ* from Node,
   # so they are excluded from Node self-tests and only recorded on explicit request.
   if [ "$suite" = "divergences" ] && { [ "${DIFF:-0}" = "1" ] || { [ "$runner_name" = "node" ] && [ "${REGEN:-0}" != "1" ]; }; }; then
     echo "skip      $suite (divergence suite is lite-only)" >&2
@@ -77,7 +77,7 @@ for suite in "${suites[@]}"; do
     marker="$dir/$case_name.nodiff"
     if [ -f "$marker" ] && { [ "$runner_name" = "node" ] || [ "${DIFF:-0}" = "1" ]; }; then
       # Node's own output for this case depends on wall-clock timing; the expectation is the
-      # deterministic lite-node order. See ADR-0003 §5.
+      # deterministic onde order. See ADR-0003 §5.
       printf 'skip      %s (Node timing-dependent; .nodiff)\n' "$name"
       continue
     fi

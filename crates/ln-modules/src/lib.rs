@@ -1,4 +1,4 @@
-//! Module resolution for lite-node, with no engine dependency.
+//! Module resolution for onde, with no engine dependency.
 //!
 //! Resolution is the part of the module system that is easiest to get subtly wrong and easiest
 //! to test in isolation, so it lives here: `ln-runtime` only bridges these functions to the
@@ -14,7 +14,7 @@
 //!   `node`/`import`/`default`, and canonical `file:` URLs for the engine's module names.
 //!
 //! The implementation follows Node's documented algorithms ([ESM resolution] and the CJS
-//! `require` algorithm) rather than the quirks of any one Node release. Where lite deliberately
+//! `require` algorithm) rather than the quirks of any one Node release. Where onde deliberately
 //! differs, the divergence is listed in `docs/compat.md`.
 //!
 //! [ESM resolution]: https://nodejs.org/api/esm.html#resolution-algorithm

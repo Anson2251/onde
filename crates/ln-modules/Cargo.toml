@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Engine-free module resolution for lite-node (CJS, ESM, package.json maps)"
+description = "Engine-free module resolution for onde (CJS, ESM, package.json maps)"
 publish = false
 
 [dependencies]

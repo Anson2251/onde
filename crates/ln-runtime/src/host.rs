@@ -610,7 +610,7 @@ pub(crate) fn install<'js>(
         host.set(
             "fsCancel",
             // Internal primitive: the JS layer owns the id it allocated, so a typed `u64` is
-            // enough (a bad value is a lite-node bug, not a user argument).
+            // enough (a bad value is an onde bug, not a user argument).
             js::Function::new(ctx.clone(), move |op_id: u64| -> js::Result<()> {
                 ops.cancel(op_id);
                 Ok(())

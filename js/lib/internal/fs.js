@@ -77,7 +77,7 @@ function hostSync(name, args) {
 function hostAsync(name, args, options) {
   const op = globalThis.__ln_op;
   if (typeof op !== "function") {
-    const error = new Error("lite-node: the async op bridge (__ln_op) is not installed");
+    const error = new Error("onde: the async op bridge (__ln_op) is not installed");
     error.code = "ERR_IO_BRIDGE";
     throw error;
   }
@@ -968,7 +968,7 @@ class FileHandle extends EventEmitter {
     throw codedError(
       Error,
       "ERR_METHOD_NOT_IMPLEMENTED",
-      "FileHandle.getAsyncId() is not supported until lite-node M6",
+      "FileHandle.getAsyncId() is not supported until onde M6",
     );
   }
 
@@ -1039,7 +1039,7 @@ class FileHandle extends EventEmitter {
   async stat(options) {
     const fd = this._checkOpen("fstat");
     if (options !== undefined && options !== null && options.bigint === true) {
-      throw invalidArgValue("options.bigint", true, "is not supported by lite-node M3");
+      throw invalidArgValue("options.bigint", true, "is not supported by onde M3");
     }
     return makeStats(await promise("fstat", [fd]));
   }

@@ -4,7 +4,7 @@
 //
 // Design (docs/compat.md §4, divergence D7): there is no pool allocator. `Buffer.allocUnsafe`
 // and `Buffer.allocUnsafeSlow` therefore return zero-filled memory just like `alloc`; the only
-// difference is intent, since a lite embedder cannot expose uninitialised engine memory safely.
+// difference is intent, since an onde embedder cannot expose uninitialised engine memory safely.
 //
 // Encodings are implemented here rather than delegated to the engine: utf8/utf-8, hex,
 // base64, base64url, latin1/binary, ascii and utf16le/ucs2/ucs-2. UTF-8 uses the same WHATWG

@@ -1,4 +1,4 @@
-// Bootstrap for lite-node: installs the Node surface on top of the host primitives.
+// Bootstrap for onde: installs the Node surface on top of the host primitives.
 //
 // This file is evaluated as a classic script (global code, sloppy) before the entry point. It is
 // deliberately the *only* global-installing code: stdlib modules live in js/lib/ and are loaded
@@ -16,7 +16,7 @@
   const g = globalThis;
   const host = g.__ln_host;
   if (host === undefined || host === null) {
-    throw new Error("lite-node: host primitives are missing");
+    throw new Error("onde: host primitives are missing");
   }
 
   // --- internal module evaluation -------------------------------------------------------------
@@ -24,7 +24,7 @@
   function evalInternal(name) {
     const source = host.builtinSource(name);
     if (source === null || source === undefined) {
-      throw new Error("lite-node: missing internal module " + name);
+      throw new Error("onde: missing internal module " + name);
     }
     const module = {
       exports: {},

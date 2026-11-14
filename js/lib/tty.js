@@ -119,7 +119,7 @@ function toBytes(chunk, encoding) {
 function writeChunk(stream, chunk, encoding, callback) {
   const host = hostObject();
   if (host === null || typeof host.writeFd !== "function") {
-    callback(new Error("lite-node: host.writeFd is unavailable"));
+    callback(new Error("onde: host.writeFd is unavailable"));
     return;
   }
   let written;
@@ -138,7 +138,7 @@ function writeChunk(stream, chunk, encoding, callback) {
 function readChunk(stream, size) {
   const op = globalThis.__ln_op;
   if (typeof op !== "function") {
-    stream.destroy(new Error("lite-node: async I/O (__ln_op) is unavailable"));
+    stream.destroy(new Error("onde: async I/O (__ln_op) is unavailable"));
     return;
   }
   const length =

@@ -1,4 +1,4 @@
-//! Reference implementation of lite-node's scheduler: checkpoints, timers and the loop driver.
+//! Reference implementation of onde's scheduler: checkpoints, timers and the loop driver.
 //!
 //! This crate exists so the policy in ADR-0002 and ADR-0003 is executable and reviewable before
 //! any FFI is involved. It is engine-free on purpose: `ln-engine` adapts a [`Job`] to

@@ -17,7 +17,7 @@ use ln_engine::Engine;
 /// It is a string rather than an `Error` so user code that inspects errors does not mistake it
 /// for a real failure. JS can still `catch` it; the host records the exit code first and treats it
 /// as authoritative at the next boundary (documented in the M0 notes).
-const EXIT_SENTINEL: &str = "lite-node:process.exit";
+const EXIT_SENTINEL: &str = "onde:process.exit";
 
 /// Shared isolate state that JS-visible natives need to mutate.
 #[derive(Default)]

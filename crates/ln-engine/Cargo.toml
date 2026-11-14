@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Safe engine boundary for lite-node (quickjs-ng via rquickjs)"
+description = "Safe engine boundary for onde (quickjs-ng via rquickjs)"
 publish = false
 
 [dependencies]

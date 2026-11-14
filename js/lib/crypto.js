@@ -8,10 +8,10 @@
 // loading it under plain Node (the differential oracle) does not crash.
 //
 // Fidelity notes (tracked in `docs/compat.md`):
-//   - `getHashes()` lists the digests lite implements (the SHA-2 family plus MD5/SHA-1),
+//   - `getHashes()` lists the digests onde implements (the SHA-2 family plus MD5/SHA-1),
 //     not Node's full OpenSSL catalog: SHA-3, BLAKE2, RIPEMD-160, SM3 and the XOFs are
 //     not available without new RustCrypto dependencies.
-//   - `hkdf(...)` without a callback is a lite extension: Node's `hkdf` is
+//   - `hkdf(...)` without a callback is an onde extension: Node's `hkdf` is
 //     async-only and its sync form is `hkdfSync`. The optional callback is
 //     delivered with `queueMicrotask` (no thread pool) and receives an
 //     `ArrayBuffer`, which is what Node's callback form yields.
@@ -167,7 +167,7 @@ function hostCrypto() {
   const host = globalThis.__ln_host;
   const crypto = host === undefined || host === null ? undefined : host.crypto;
   if (crypto === undefined || crypto === null) {
-    // Not a Node error: this only happens when the module runs outside lite without the
+    // Not a Node error: this only happens when the module runs outside onde without the
     // differential oracle's host shim.
     throw new Error("crypto is unavailable: __ln_host.crypto is not installed");
   }
@@ -695,7 +695,7 @@ function hkdf(digest, ikm, salt, info, keylen, callback) {
   }
   const result = hkdfBytes(params);
   if (callback === undefined) return result;
-  // Node's callback form hands back an ArrayBuffer; lite's sync `hkdf` stays a Buffer.
+  // Node's callback form hands back an ArrayBuffer; onde's sync `hkdf` stays a Buffer.
   const arrayBuffer = result.buffer.slice(
     result.byteOffset,
     result.byteOffset + result.byteLength,
