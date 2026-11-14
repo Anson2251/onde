@@ -673,12 +673,30 @@ function checkSurface() {
   }
 }
 
+// Deliberate M3 gap, asserted rather than skipped: Node's OpenSSL accepts SHA-3 and the
+// truncated SHA-256 variants; lite supports the digests listed in docs/compat.md and rejects the
+// rest. Keeping this explicit stops the divergence from silently disappearing from the oracle.
+function checkUnsupportedDigests() {
+  for (const algorithm of ["sha3-256", "sha3-512", "sha256-192", "ripemd160"]) {
+    assert.throws(
+      () => liteCrypto.createHash(algorithm),
+      /Digest method not supported/,
+      `lite rejects unsupported digest ${algorithm}`,
+    );
+    assert.doesNotThrow(
+      () => nodeCrypto.createHash(algorithm),
+      `node supports ${algorithm}`,
+    );
+  }
+}
+
 async function main() {
   checkHashes();
   checkHmac();
   checkHkdf();
   checkHkdfSync();
   checkErrors();
+  checkUnsupportedDigests();
   checkTimingSafeEqual();
   checkSurface();
   checkOneShotHash();
