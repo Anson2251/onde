@@ -79,6 +79,7 @@ host.fsCancel(opId)                        -> void        (sets the op's abort f
 | `unlink` / `readlink` | `path` | — / `Uint8Array` |
 | `rename` | `from, to` | — |
 | `stat` / `lstat` | `path` | `StatObject` |
+| `statfs` | `path` | `StatFsObject` (`type,bsize,frsize,blocks,bfree,bavail,files,ffree`) |
 | `fstat` | `fd` | `StatObject` |
 | `access` | `path, mode` | — |
 | `chmod` / `chown` | `path, mode\|uid, gid, follow` | — |

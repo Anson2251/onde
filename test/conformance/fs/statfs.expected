@@ -1,0 +1,6 @@
+keys type,bsize,frsize,blocks,bfree,bavail,files,ffree
+types number number number
+positive true true true
+sums true true
+bigint bigint bigint
+exit:0

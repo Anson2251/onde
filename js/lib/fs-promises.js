@@ -228,6 +228,22 @@ async function mkdtemp(prefix, options) {
   return encoding === "buffer" ? Buffer.from(value) : value;
 }
 
+async function mkdtempDisposable(prefix, options) {
+  const path = await mkdtemp(prefix, options);
+  let removed = false;
+  return {
+    path,
+    async remove() {
+      if (removed) return;
+      removed = true;
+      await internal.promise("rm", [path, true, true, 0, 0]);
+    },
+    [Symbol.asyncDispose]() {
+      return this.remove();
+    },
+  };
+}
+
 async function readdir(path, options) {
   const opts = dirOptions(options);
   if (opts.recursive) return fromCallback(fs.readdir, [path, options]);
@@ -296,10 +312,25 @@ async function chmod(path, mode) {
   await internal.promise("chmod", [internal.toPath(path), internal.parseFileMode(mode, "mode", 0o666), true]);
 }
 
+async function lchmod(path, mode) {
+  if (mode === undefined || mode === null) throw internal.invalidArgType("mode", "integer", mode);
+  await internal.promise("chmod", [
+    internal.toPath(path),
+    internal.parseFileMode(mode, "mode", 0o666),
+    false,
+  ]);
+}
+
 async function chown(path, uid, gid) {
   const userId = internal.validateInteger(uid, "uid", 0, 4294967295);
   const groupId = internal.validateInteger(gid, "gid", 0, 4294967295);
   await internal.promise("chown", [internal.toPath(path), userId, groupId, true]);
+}
+
+async function lchown(path, uid, gid) {
+  const userId = internal.validateInteger(uid, "uid", 0, 4294967295);
+  const groupId = internal.validateInteger(gid, "gid", 0, 4294967295);
+  await internal.promise("chown", [internal.toPath(path), userId, groupId, false]);
 }
 
 async function truncate(path, len) {
@@ -322,6 +353,27 @@ async function utimes(path, atime, mtime) {
     internal.toUnixTimestamp(mtime),
     true,
   ]);
+}
+
+async function lutimes(path, atime, mtime) {
+  if (atime === undefined || atime === null) {
+    throw internal.invalidArgType("atime", "number, string, or Date", atime);
+  }
+  if (mtime === undefined || mtime === null) {
+    throw internal.invalidArgType("mtime", "number, string, or Date", mtime);
+  }
+  await internal.promise("utimes", [
+    internal.toPath(path),
+    internal.toUnixTimestamp(atime),
+    internal.toUnixTimestamp(mtime),
+    false,
+  ]);
+}
+
+async function statfs(path, options) {
+  const bigint = Boolean(options && options.bigint);
+  const raw = await internal.promise("statfs", [internal.toPath(path)]);
+  return internal.makeStatsFs(raw, bigint);
 }
 
 // --- links -----------------------------------------------------------------------------------
@@ -481,10 +533,14 @@ module.exports = {
   constants,
   copyFile,
   cp,
+  lchmod,
+  lchown,
   link,
   lstat,
+  lutimes,
   mkdir,
   mkdtemp,
+  mkdtempDisposable,
   open,
   opendir,
   readFile,
@@ -495,6 +551,7 @@ module.exports = {
   rm,
   rmdir,
   stat,
+  statfs,
   symlink,
   truncate,
   unlink,

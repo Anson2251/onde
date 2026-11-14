@@ -626,6 +626,10 @@ class Stats {
   }
 }
 
+function makeStatsFs(value, bigint) {
+  return new StatsFs(value, bigint === true);
+}
+
 function makeStats(value) {
   return new Stats(
     value.dev,
@@ -643,6 +647,20 @@ function makeStats(value) {
     value.ctimeMs,
     value.birthtimeMs,
   );
+}
+
+class StatsFs {
+  constructor(value, bigint) {
+    const convert = bigint ? (number) => BigInt(number) : (number) => number;
+    this.type = convert(value.type);
+    this.bsize = convert(value.bsize);
+    this.frsize = convert(value.frsize);
+    this.blocks = convert(value.blocks);
+    this.bfree = convert(value.bfree);
+    this.bavail = convert(value.bavail);
+    this.files = convert(value.files);
+    this.ffree = convert(value.ffree);
+  }
 }
 
 const kDirentType = Symbol("lite.fs.direntType");
@@ -1458,6 +1476,7 @@ module.exports = {
   toUnixTimestamp,
   decodeBytes,
   makeStats,
+  makeStatsFs,
   makeDirent,
   dirIterator,
   copyInto,

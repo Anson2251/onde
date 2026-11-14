@@ -276,7 +276,7 @@ What the exit criteria ask for and where it is proven:
 | Criterion | Evidence |
 |---|---|
 | `cat`, `wc -l`, `cp -r` in JS over `fs`+`stream` | `test/programs/run.sh` 11/11: stdout, stderr, exit code and a tree/content/symlink manifest, node vs lite |
-| 150 ported fs/stream tests; cancellation leaves no leaked fds | 208 Rust tests (44 CLI, 26 runtime, 22 io, 20 crypto, 7 error, 55 modules, 34 sched), 49 JS suites, 137 corpus cases including `fs/` (12) and `stream/` (10); `AbortSignal` cases in `test/js/lib/fs.test.js` |
+| 150 ported fs/stream tests; cancellation leaves no leaked fds | 210 Rust tests (44 CLI, 26 runtime, 24 io, 20 crypto, 7 error, 55 modules, 34 sched), 49 JS suites, 138 corpus cases including `fs/` (13) and `stream/` (10); `AbortSignal` cases in `test/js/lib/fs.test.js` |
 | Microtask checkpoint after every callback form | sync/callback/promise fs cases, stream `data`/`end` cases, and the M1 ordering corpus still byte-identical |
 | No `JSValue` crosses a thread boundary | `Op`/`OpValue`/`OpDone: Send` assertions in `crates/ln-runtime/src/ops.rs`; `Pool: Send + Sync` in `ln-io` |
 | Cold start stays within the engine budget | release `lite -e '1+1'`: **12.7 ms min / 13.5 ms median** over 25 runs, with `perf_hooks` installed at startup |

@@ -313,7 +313,69 @@ fs.rmSync(path.join(dir, "never-existed"), { force: true });
 // Dialogs: async callbacks, watchers, streams, abort. Everything below runs in one async main so
 // the event loop can drive the completion dispatch.
 
+// ---------------------------------------------------------------------------------------------
+// M3 parity: no-follow metadata, statfs, mkdtempDisposable
+//
+// Every path here is either the suite's own `mkdtemp` scratch or a fresh one under os.tmpdir().
+// No test in this file ever targets ".", ".." or the process cwd.
+
+{
+  const target = path.join(dir, "meta.txt");
+  const link = path.join(dir, "meta-link");
+  fs.writeFileSync(target, "meta");
+  fs.symlinkSync(target, link);
+
+  const targetBefore = fs.statSync(target).mtimeMs;
+  fs.lutimesSync(link, 1000000, 2000000);
+  eq(Math.round(fs.lstatSync(link).mtimeMs / 1000), 2000000, "lutimesSync changes the link mtime");
+  eq(fs.statSync(target).mtimeMs, targetBefore, "lutimesSync leaves the target alone");
+
+  if (process.platform === "darwin") {
+    fs.lchmodSync(link, 0o600);
+    eq(fs.lstatSync(link).mode & 0o777, 0o600, "lchmodSync changes the link mode");
+  } else {
+    throwsCode(() => fs.lchmodSync(link, 0o600), "ENOSYS", "lchmodSync is ENOSYS off macOS");
+  }
+
+  fs.lchownSync(link, process.getuid(), process.getgid());
+  eq(fs.lstatSync(link).isSymbolicLink(), true, "lchownSync keeps the link a link");
+
+  const stats = fs.statfsSync(dir);
+  eq(
+    Object.keys(stats).join(","),
+    "type,bsize,frsize,blocks,bfree,bavail,files,ffree",
+    "statfsSync keys match Node",
+  );
+  ok(stats.bsize > 0, "statfsSync bsize is positive");
+  ok(stats.blocks > 0, "statfsSync blocks is positive");
+  eq(stats.constructor.name, "StatsFs", "statfsSync returns StatsFs");
+  eq(typeof fs.statfsSync(dir, { bigint: true }).blocks, "bigint", "statfsSync bigint option");
+
+  const disposable = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lite-fs-disp-"));
+  ok(fs.existsSync(disposable.path), "mkdtempDisposableSync creates its directory");
+  eq(typeof disposable.remove, "function", "mkdtempDisposableSync has remove()");
+  disposable.remove();
+  eq(fs.existsSync(disposable.path), false, "mkdtempDisposableSync remove deletes it");
+  disposable.remove();
+  ok(true, "mkdtempDisposableSync remove is idempotent");
+}
+
 async function asyncChecks() {
+  // callback statfs/lutimes (the sync forms are covered above)
+  await new Promise((resolve) => {
+    fs.statfs(dir, (error, stats) => {
+      eq(error, null, "statfs callback error is null");
+      ok(stats !== undefined && stats.bsize > 0, "statfs callback returns StatsFs");
+      resolve();
+    });
+  });
+  await new Promise((resolve) => {
+    fs.lutimes(path.join(dir, "meta-link"), 1000000, 2000000, (error) => {
+      eq(error, null, "lutimes callback error is null");
+      resolve();
+    });
+  });
+
   // callback read: (err, bytesRead, buffer)
   fs.writeFileSync(file, "0123456789");
   await new Promise((resolve, reject) => {
@@ -525,6 +587,26 @@ function delay(ms) {
 }
 
 function finish() {
+  // Safety: only ever remove the suite's own scratch directory. Compare real paths (macOS
+  // maps /tmp to /private/tmp) and refuse the cwd or any ancestor of it outright.
+  if (typeof dir !== "string" || !path.isAbsolute(dir)) {
+    throw new Error("refusing to clean a non-absolute scratch path");
+  }
+  const resolvedScratch = path.resolve(dir);
+  const resolvedCwd = process.cwd();
+  if (resolvedScratch === resolvedCwd || resolvedCwd.startsWith(resolvedScratch + path.sep)) {
+    throw new Error("refusing to clean the working directory");
+  }
+  let realScratch = resolvedScratch;
+  try {
+    realScratch = fs.realpathSync(resolvedScratch);
+  } catch (_) {
+    // The directory may already be gone; the lexical check above still holds.
+  }
+  const realTemp = fs.realpathSync(os.tmpdir());
+  if (!realScratch.startsWith(realTemp + path.sep)) {
+    throw new Error("refusing to clean a path outside the temp root");
+  }
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch (_) {

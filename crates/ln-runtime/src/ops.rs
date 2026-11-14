@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ln_engine::js;
 use ln_error::NodeError;
-use ln_io::{DirEntry, FileKind, Op, OpDone, OpValue, Pool, RequestId, Sink, Stat};
+use ln_io::{DirEntry, FileKind, Op, OpDone, OpValue, Pool, RequestId, Sink, Stat, StatFs};
 use ln_sched::{Completion, CompletionSender, Driver};
 
 /// Allocates [`RequestId`]s for ops the runtime mints itself.
@@ -250,6 +250,7 @@ pub(crate) fn op_value_to_js<'js>(
         }
         OpValue::Text(text) => Ok(js::String::from_str(ctx.clone(), text)?.into_value()),
         OpValue::Stat(stat) => stat_to_js(ctx, stat),
+        OpValue::StatFs(fs) => statfs_to_js(ctx, fs),
         OpValue::Dir(entries) => dir_to_js(ctx, entries),
     }
 }
@@ -271,6 +272,20 @@ fn stat_to_js<'js>(ctx: &js::Ctx<'js>, stat: &Stat) -> js::Result<js::Value<'js>
     object.set("mtimeMs", stat.mtime_ms)?;
     object.set("ctimeMs", stat.ctime_ms)?;
     object.set("birthtimeMs", stat.birthtime_ms)?;
+    Ok(object.into_value())
+}
+
+fn statfs_to_js<'js>(ctx: &js::Ctx<'js>, fs: &StatFs) -> js::Result<js::Value<'js>> {
+    let object = js::Object::new(ctx.clone())?;
+    // Node's key is `type`; `kind` is the Rust-side name (see `ln_io::StatFs`).
+    object.set("type", fs.kind)?;
+    object.set("bsize", fs.bsize)?;
+    object.set("frsize", fs.frsize)?;
+    object.set("blocks", fs.blocks)?;
+    object.set("bfree", fs.bfree)?;
+    object.set("bavail", fs.bavail)?;
+    object.set("files", fs.files)?;
+    object.set("ffree", fs.ffree)?;
     Ok(object.into_value())
 }
 
@@ -390,6 +405,9 @@ pub(crate) fn build_op<'js>(name: &str, args: &[js::Value<'js>]) -> Result<Op, N
         }),
         "fstat" => Ok(Op::Fstat {
             fd: fd_arg(args, 0)?,
+        }),
+        "statfs" => Ok(Op::Statfs {
+            path: path_arg(args, 0, "path")?,
         }),
         "access" => Ok(Op::Access {
             path: path_arg(args, 0, "path")?,

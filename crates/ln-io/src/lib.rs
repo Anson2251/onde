@@ -58,6 +58,20 @@ pub struct Stat {
     pub birthtime_ms: f64,
 }
 
+/// `fs.statfs` fields. Node's object calls the first one `type`; Rust cannot, so it is `kind`
+/// here and renamed by `ln-runtime` at the JS boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatFs {
+    pub kind: u64,
+    pub bsize: u64,
+    pub frsize: u64,
+    pub blocks: u64,
+    pub bfree: u64,
+    pub bavail: u64,
+    pub files: u64,
+    pub ffree: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
@@ -77,6 +91,7 @@ pub enum OpValue {
     /// A path string (`mkdtemp`, `realpath`, `mkdir --recursive`'s first created path).
     Text(String),
     Stat(Stat),
+    StatFs(StatFs),
     Dir(Vec<DirEntry>),
 }
 
@@ -137,6 +152,9 @@ pub enum Op {
     Stat {
         path: PathBuf,
         follow: bool,
+    },
+    Statfs {
+        path: PathBuf,
     },
     Fstat {
         fd: i32,
@@ -251,15 +269,34 @@ impl Op {
             }
             Op::Fstat { .. } => "fstat",
             Op::Access { .. } => "access",
-            Op::Chmod { .. } => "chmod",
-            Op::Chown { .. } => "chown",
+            Op::Chmod { follow, .. } => {
+                if *follow {
+                    "chmod"
+                } else {
+                    "lchmod"
+                }
+            }
+            Op::Chown { follow, .. } => {
+                if *follow {
+                    "chown"
+                } else {
+                    "lchown"
+                }
+            }
             Op::Truncate { .. } => "truncate",
             Op::Ftruncate { .. } => "ftruncate",
             Op::Readlink { .. } => "readlink",
             Op::Symlink { .. } => "symlink",
             Op::Link { .. } => "link",
             Op::Realpath { .. } => "realpath",
-            Op::Utimes { .. } => "utimes",
+            Op::Utimes { follow, .. } => {
+                if *follow {
+                    "utimes"
+                } else {
+                    "lutimes"
+                }
+            }
+            Op::Statfs { .. } => "statfs",
             Op::Close { .. } => "close",
             Op::Read { .. } => "read",
             Op::Write { .. } => "write",
@@ -351,6 +388,7 @@ impl Op {
                 atime_ms,
                 mtime_ms,
             } => futimes(fd, atime_ms, mtime_ms),
+            Op::Statfs { path } => statfs(&path),
         }
     }
 }
@@ -899,6 +937,54 @@ fn rename(from: &Path, to: &Path) -> Result<OpValue, NodeError> {
         .map_err(|error| two_path_error(&error, "rename", from, to))
 }
 
+fn statfs(path: &Path) -> Result<OpValue, NodeError> {
+    let c_path = cpath(path, "statfs")?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statfs(c_path.as_ptr(), &mut buf) };
+        if result != 0 {
+            return Err(NodeError::from_errno(last_errno(), "statfs", Some(path)));
+        }
+        Ok(OpValue::StatFs(StatFs {
+            kind: buf.f_type as u64,
+            bsize: buf.f_bsize as u64,
+            frsize: buf.f_iosize as u64,
+            blocks: buf.f_blocks,
+            bfree: buf.f_bfree,
+            bavail: buf.f_bavail,
+            files: buf.f_files,
+            ffree: buf.f_ffree,
+        }))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statfs(c_path.as_ptr(), &mut buf) };
+        if result != 0 {
+            return Err(NodeError::from_errno(last_errno(), "statfs", Some(path)));
+        }
+        Ok(OpValue::StatFs(StatFs {
+            kind: buf.f_type as u64,
+            bsize: buf.f_bsize as u64,
+            frsize: buf.f_bsize as u64,
+            blocks: buf.f_blocks,
+            bfree: buf.f_bfree,
+            bavail: buf.f_bavail,
+            files: buf.f_files,
+            ffree: buf.f_ffree,
+        }))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = c_path;
+        Err(NodeError::from_errno(libc::ENOSYS, "statfs", Some(path)))
+    }
+}
+
 fn stat(path: &Path, follow: bool) -> Result<OpValue, NodeError> {
     let metadata = if follow {
         fs::metadata(path).map_err(|error| NodeError::system(&error, "stat", path))?
@@ -933,7 +1019,8 @@ fn access(path: &Path, mode: i32) -> Result<OpValue, NodeError> {
 }
 
 fn chmod(path: &Path, mode: u32, follow: bool) -> Result<OpValue, NodeError> {
-    let c_path = cpath(path, "chmod")?;
+    let syscall = if follow { "chmod" } else { "lchmod" };
+    let c_path = cpath(path, syscall)?;
     #[cfg(target_os = "macos")]
     {
         let result = unsafe {
@@ -946,26 +1033,27 @@ fn chmod(path: &Path, mode: u32, follow: bool) -> Result<OpValue, NodeError> {
         if result == 0 {
             Ok(OpValue::Unit)
         } else {
-            Err(errno_error("chmod", Some(path)))
+            Err(errno_error(syscall, Some(path)))
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // Linux has no lchmod; libuv/Node report ENOTSUP for fs.lchmod.
+        // Linux has no lchmod; libuv/Node report ENOSYS for fs.lchmod.
         if !follow {
-            return Err(NodeError::from_errno(libc::ENOTSUP, "chmod", Some(path)));
+            return Err(NodeError::from_errno(libc::ENOSYS, "lchmod", Some(path)));
         }
         let result = unsafe { libc::chmod(c_path.as_ptr(), as_mode_t(mode)) };
         if result == 0 {
             Ok(OpValue::Unit)
         } else {
-            Err(errno_error("chmod", Some(path)))
+            Err(errno_error(syscall, Some(path)))
         }
     }
 }
 
 fn chown(path: &Path, uid: u32, gid: u32, follow: bool) -> Result<OpValue, NodeError> {
-    let c_path = cpath(path, "chown")?;
+    let syscall = if follow { "chown" } else { "lchown" };
+    let c_path = cpath(path, syscall)?;
     let result = unsafe {
         if follow {
             libc::chown(c_path.as_ptr(), as_uid(uid), as_gid(gid))
@@ -976,7 +1064,7 @@ fn chown(path: &Path, uid: u32, gid: u32, follow: bool) -> Result<OpValue, NodeE
     if result == 0 {
         Ok(OpValue::Unit)
     } else {
-        Err(errno_error("chown", Some(path)))
+        Err(errno_error(syscall, Some(path)))
     }
 }
 
@@ -1025,14 +1113,15 @@ fn realpath(path: &Path) -> Result<OpValue, NodeError> {
 }
 
 fn utimes(path: &Path, atime_ms: f64, mtime_ms: f64, follow: bool) -> Result<OpValue, NodeError> {
-    let c_path = cpath(path, "utimes")?;
+    let syscall = if follow { "utimes" } else { "lutimes" };
+    let c_path = cpath(path, syscall)?;
     let times = [ms_to_timespec(atime_ms), ms_to_timespec(mtime_ms)];
     let flags = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
     let result = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), flags) };
     if result == 0 {
         Ok(OpValue::Unit)
     } else {
-        Err(errno_error("utimes", Some(path)))
+        Err(errno_error(syscall, Some(path)))
     }
 }
 
@@ -1200,6 +1289,72 @@ mod tests {
     }
 
     #[test]
+    fn statfs_reports_a_usable_filesystem() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let abort = AtomicBool::new(false);
+        match execute(
+            Op::Statfs {
+                path: dir.path().to_path_buf(),
+            },
+            &abort,
+        )
+        .expect("statfs")
+        {
+            OpValue::StatFs(fs) => {
+                assert!(fs.bsize > 0, "bsize");
+                assert!(fs.frsize > 0, "frsize");
+                assert!(fs.blocks > 0, "blocks");
+                assert!(fs.bfree <= fs.blocks, "bfree <= blocks");
+                assert!(fs.bavail <= fs.bfree, "bavail <= bfree");
+                assert!(fs.files > 0, "files");
+            }
+            other => panic!("unexpected value: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_false_ops_report_the_l_syscall_word() {
+        assert_eq!(
+            Op::Chmod {
+                path: "x".into(),
+                mode: 0o644,
+                follow: false
+            }
+            .syscall(),
+            "lchmod"
+        );
+        assert_eq!(
+            Op::Chown {
+                path: "x".into(),
+                uid: 0,
+                gid: 0,
+                follow: false
+            }
+            .syscall(),
+            "lchown"
+        );
+        assert_eq!(
+            Op::Utimes {
+                path: "x".into(),
+                atime_ms: 0.0,
+                mtime_ms: 0.0,
+                follow: false
+            }
+            .syscall(),
+            "lutimes"
+        );
+        assert_eq!(
+            Op::Chmod {
+                path: "x".into(),
+                mode: 0o644,
+                follow: true
+            }
+            .syscall(),
+            "chmod"
+        );
+    }
+
+    #[test]
     fn self_references_are_refused_without_touching_the_filesystem() {
         for raw in [".", "./", ".//", "..", "../", "a/..", "./a/.."] {
             let error = refuse_self_reference(Path::new(raw), "rm")
@@ -1327,7 +1482,7 @@ mod tests {
                     gid: 0,
                     follow: false,
                 },
-                "chown",
+                "lchown",
             ),
             (
                 Op::Truncate {

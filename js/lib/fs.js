@@ -576,6 +576,22 @@ function mkdtempSync(prefix, options) {
   return decodeStringResult(internal.sync("mkdtemp", [internal.toPath(prefix, "prefix")]), opts.encoding);
 }
 
+function mkdtempDisposableSync(prefix, options) {
+  const path = mkdtempSync(prefix, options);
+  let removed = false;
+  return {
+    path,
+    remove() {
+      if (removed) return;
+      removed = true;
+      rmSync(path, { recursive: true, force: true });
+    },
+    [Symbol.dispose]() {
+      this.remove();
+    },
+  };
+}
+
 // --- readdir / opendir -----------------------------------------------------------------------
 
 function dirEncoding(encoding) {
@@ -815,6 +831,18 @@ function chmodSync(pathValue, mode) {
   internal.sync("chmod", [internal.toPath(pathValue), requiredMode(mode), true]);
 }
 
+function lchmod(pathValue, mode, callback) {
+  checkCallback(callback);
+  const value = requiredMode(mode);
+  internal.callAsync("chmod", [internal.toPath(pathValue), value, false], {
+    callback: (error) => callback(error),
+  });
+}
+
+function lchmodSync(pathValue, mode) {
+  internal.sync("chmod", [internal.toPath(pathValue), requiredMode(mode), false]);
+}
+
 function parseId(value, name) {
   if (value === undefined || value === null) throw internal.invalidArgType(name, "integer", value);
   return internal.validateInteger(value, name, 0, 4294967295);
@@ -831,6 +859,19 @@ function chown(pathValue, uid, gid, callback) {
 
 function chownSync(pathValue, uid, gid) {
   internal.sync("chown", [internal.toPath(pathValue), parseId(uid, "uid"), parseId(gid, "gid"), true]);
+}
+
+function lchown(pathValue, uid, gid, callback) {
+  checkCallback(callback);
+  const userId = parseId(uid, "uid");
+  const groupId = parseId(gid, "gid");
+  internal.callAsync("chown", [internal.toPath(pathValue), userId, groupId, false], {
+    callback: (error) => callback(error),
+  });
+}
+
+function lchownSync(pathValue, uid, gid) {
+  internal.sync("chown", [internal.toPath(pathValue), parseId(uid, "uid"), parseId(gid, "gid"), false]);
 }
 
 // --- truncate family -------------------------------------------------------------------------
@@ -1038,6 +1079,60 @@ function utimesSync(pathValue, atime, mtime) {
     internal.toUnixTimestamp(mtime),
     true,
   ]);
+}
+
+function validateTimes(atime, mtime) {
+  if (atime === undefined || atime === null) {
+    throw internal.invalidArgType("atime", "number, string, or Date", atime);
+  }
+  if (mtime === undefined || mtime === null) {
+    throw internal.invalidArgType("mtime", "number, string, or Date", mtime);
+  }
+}
+
+function lutimes(pathValue, atime, mtime, callback) {
+  checkCallback(callback);
+  validateTimes(atime, mtime);
+  internal.callAsync(
+    "utimes",
+    [
+      internal.toPath(pathValue),
+      internal.toUnixTimestamp(atime),
+      internal.toUnixTimestamp(mtime),
+      false,
+    ],
+    { callback: (error) => callback(error) },
+  );
+}
+
+function lutimesSync(pathValue, atime, mtime) {
+  validateTimes(atime, mtime);
+  internal.sync("utimes", [
+    internal.toPath(pathValue),
+    internal.toUnixTimestamp(atime),
+    internal.toUnixTimestamp(mtime),
+    false,
+  ]);
+}
+
+// --- statfs ----------------------------------------------------------------------------------
+
+function statfs(pathValue, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  checkCallback(callback);
+  const bigint = Boolean(options && options.bigint);
+  internal.callAsync("statfs", [internal.toPath(pathValue)], {
+    callback: (error, value) =>
+      callback(error, error ? undefined : internal.makeStatsFs(value, bigint)),
+  });
+}
+
+function statfsSync(pathValue, options) {
+  const bigint = Boolean(options && options.bigint);
+  return internal.makeStatsFs(internal.sync("statfs", [internal.toPath(pathValue)]), bigint);
 }
 
 // --- open / close / read / write -------------------------------------------------------------
@@ -1763,6 +1858,7 @@ const fs = {
   mkdirSync,
   mkdtemp,
   mkdtempSync,
+  mkdtempDisposableSync,
   readdir,
   readdirSync,
   opendir,
@@ -1785,18 +1881,26 @@ const fs = {
   realpathSync,
   utimes,
   utimesSync,
+  lutimes,
+  lutimesSync,
   truncate,
   truncateSync,
   chmod,
   chmodSync,
+  lchmod,
+  lchmodSync,
   chown,
   chownSync,
+  lchown,
+  lchownSync,
   access,
   accessSync,
   stat,
   statSync,
   lstat,
   lstatSync,
+  statfs,
+  statfsSync,
   fstat,
   fstatSync,
 

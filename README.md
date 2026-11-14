@@ -148,7 +148,7 @@ js/
                  module, process, loader, fs, fs-promises, internal/fs,
                  stream, stream-promises, crypto, tty, perf_hooks
 test/
-  conformance/   137 cases: scheduler (M1), modules, stdlib,
+  conformance/   138 cases: scheduler (M1), modules, stdlib,
                  fs, stream, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
@@ -159,13 +159,13 @@ vendor/          quickjs-ng fork + rquickjs-sys patch queue             [M6]
 ## Build and test
 
 ```sh
-cargo test --all                                # 208 tests across the crates
+cargo test --all                                # 210 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 137/137 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 138/138 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (127)
+./test/differential.sh                          # node vs lite, same stdout + exit code (128)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
 ./test/js/run.sh                                # 49 stdlib suites under node and lite + oracles
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)

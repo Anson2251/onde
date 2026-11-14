@@ -78,10 +78,14 @@ const expectedKeys = [
   "constants",
   "copyFile",
   "cp",
+  "lchmod",
+  "lchown",
   "link",
   "lstat",
+  "lutimes",
   "mkdir",
   "mkdtemp",
+  "mkdtempDisposable",
   "open",
   "opendir",
   "readFile",
@@ -92,6 +96,7 @@ const expectedKeys = [
   "rm",
   "rmdir",
   "stat",
+  "statfs",
   "symlink",
   "truncate",
   "unlink",
@@ -352,7 +357,63 @@ async function errorChecks() {
   eq((await iterator.next()).done, true, "watch iterator is done after return()");
 }
 
+async function parityChecks() {
+  // All scratch lives under the suite's mkdtemp root; nothing targets cwd or "..".
+  const target = path.join(scratch, "meta.txt");
+  const link = path.join(scratch, "meta-link");
+  await fsp.writeFile(target, "meta");
+  await fsp.symlink(target, link);
+
+  const stats = await fsp.statfs(scratch);
+  eq(
+    Object.keys(stats).join(","),
+    "type,bsize,frsize,blocks,bfree,bavail,files,ffree",
+    "statfs keys match Node",
+  );
+  ok(stats.bsize > 0 && stats.blocks > 0, "statfs values are positive");
+  eq(typeof (await fsp.statfs(scratch, { bigint: true })).blocks, "bigint", "statfs bigint option");
+
+  const targetBefore = (await fsp.stat(target)).mtimeMs;
+  await fsp.lutimes(link, 1000000, 2000000);
+  eq(Math.round((await fsp.lstat(link)).mtimeMs / 1000), 2000000, "lutimes changes the link");
+  eq((await fsp.stat(target)).mtimeMs, targetBefore, "lutimes leaves the target alone");
+
+  if (process.platform === "darwin") {
+    await fsp.lchmod(link, 0o600);
+    eq(((await fsp.lstat(link)).mode & 0o777), 0o600, "lchmod changes the link mode");
+  }
+  await fsp.lchown(link, process.getuid(), process.getgid());
+  eq((await fsp.lstat(link)).isSymbolicLink(), true, "lchown keeps the link a link");
+
+  const disposable = await fsp.mkdtempDisposable(path.join(os.tmpdir(), "lite-fsp-disp-"));
+  ok(fs.existsSync(disposable.path), "mkdtempDisposable creates its directory");
+  await disposable.remove();
+  eq(fs.existsSync(disposable.path), false, "mkdtempDisposable remove deletes it");
+  await disposable.remove();
+  ok(true, "mkdtempDisposable remove is idempotent");
+}
+
 function finish() {
+  // Safety: only ever remove the suite's own scratch directory. Compare real paths (macOS
+  // maps /tmp to /private/tmp) and refuse the cwd or any ancestor of it outright.
+  if (typeof scratch !== "string" || !path.isAbsolute(scratch)) {
+    throw new Error("refusing to clean a non-absolute scratch path");
+  }
+  const resolvedScratch = path.resolve(scratch);
+  const resolvedCwd = process.cwd();
+  if (resolvedScratch === resolvedCwd || resolvedCwd.startsWith(resolvedScratch + path.sep)) {
+    throw new Error("refusing to clean the working directory");
+  }
+  let realScratch = resolvedScratch;
+  try {
+    realScratch = fs.realpathSync(resolvedScratch);
+  } catch (_) {
+    // The directory may already be gone; the lexical check above still holds.
+  }
+  const realTemp = fs.realpathSync(os.tmpdir());
+  if (!realScratch.startsWith(realTemp + path.sep)) {
+    throw new Error("refusing to clean a path outside the temp root");
+  }
   try {
     fs.rmSync(scratch, { recursive: true, force: true });
   } catch (_) {
@@ -372,6 +433,7 @@ function finish() {
   await directoryChecks();
   await handleChecks();
   await errorChecks();
+  await parityChecks();
 })()
   .then(finish)
   .catch((error) => {
