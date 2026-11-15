@@ -375,7 +375,10 @@ function normalizeConnectOptions(options) {
 }
 
 // `host, port, path, family, localAddress, localPort, noDelay, keepAliveMs, tls`
-function connectHostArgs(settings) {
+//
+// `tls` is the normalized client payload from `js/lib/tls.js` (`{ servername, rejectUnauthorized,
+// caPem, alpn }`) or `null` for plaintext; the bridge validates it synchronously.
+function connectHostArgs(settings, tls) {
   return [
     settings.host === undefined ? null : settings.host,
     settings.port === undefined ? null : settings.port,
@@ -385,7 +388,7 @@ function connectHostArgs(settings) {
     settings.localPort === undefined ? null : settings.localPort,
     settings.noDelay,
     settings.keepAliveMs,
-    null,
+    tls === undefined ? null : tls,
   ];
 }
 
@@ -457,7 +460,9 @@ function normalizeListenOptions(options) {
 }
 
 // `host, port, path, backlog, ipv6Only, exclusive, tls`
-function listenHostArgs(settings) {
+//
+// `tls` is the normalized server payload from `js/lib/tls.js` (`{ certPem, keyPem, alpn }`).
+function listenHostArgs(settings, tls) {
   return [
     settings.host === undefined ? null : settings.host,
     settings.port === undefined ? null : settings.port,
@@ -465,7 +470,7 @@ function listenHostArgs(settings) {
     settings.backlog,
     settings.ipv6Only,
     settings.exclusive,
-    null,
+    tls === undefined ? null : tls,
   ];
 }
 

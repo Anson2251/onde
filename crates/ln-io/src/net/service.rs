@@ -148,6 +148,7 @@ mod tests {
             },
             Command::End,
             Command::Destroy,
+            Command::Reset,
             Command::Detach,
             Command::SetNoDelay(true),
             Command::SetKeepAlive {

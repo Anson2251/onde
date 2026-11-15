@@ -1,0 +1,4 @@
+upgrade:websocket
+status:HTTP/1.1 101 Switching Protocols
+payload:echo:ping
+exit:0

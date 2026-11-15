@@ -162,6 +162,16 @@ class Socket extends Duplex {
     this._noDelay = null;
     this._keepAlive = null;
     this._server = null;
+    // TLS (m4-plan §2.5): the normalized payload the bridge carries, plus what `connected`
+    // reported. A plain socket has `_tlsOptions === null` and `encrypted === false`.
+    this._tlsOptions =
+      settings.tlsOptions === undefined || settings.tlsOptions === null
+        ? null
+        : settings.tlsOptions;
+    this._encrypted = settings.encrypted === true || this._tlsOptions !== null;
+    this._authorized = false;
+    this._authorizationError = null;
+    this._protocol = settings.protocol === undefined ? null : settings.protocol;
 
     // Internal constructor path: an accepted connection or a TLS-established socket. Not public
     // API; `new net.Socket()` never has a handle until `connect()`.
@@ -173,6 +183,13 @@ class Socket extends Duplex {
         // consumer may attach at once.
         connected: true,
       });
+      // An accepted TLS socket arrives with ALPN/TLS details already known (`Connection` is
+      // emitted after the handshake), so a `secureConnection` listener sees a complete socket.
+      if (settings.alpn !== undefined && settings.alpn !== null) this._alpn = settings.alpn;
+      // A server socket is never "authorized" without a verified client certificate, which M4
+      // does not support; Node reports `false` with a null error there too.
+      this._authorized = false;
+      this._authorizationError = null;
       if (settings.server !== undefined) this._server = settings.server;
       // Accepted connections hold their own loop ref in Node. The bridge does not take one for
       // a task-minted handle, so take it here (idempotent, H3).
@@ -208,6 +225,19 @@ class Socket extends Duplex {
         if (payload.local !== undefined) this._local = addressToNode(payload.local);
         if (payload.remote !== undefined) this._remote = addressToNode(payload.remote);
         this._alpn = payload.alpn === undefined ? null : payload.alpn;
+        this._protocol = payload.protocol === undefined ? null : payload.protocol;
+        if (this._encrypted) {
+          const tls = this._tlsOptions === null ? {} : this._tlsOptions;
+          // A server socket only becomes "authorized" with a verified *client* certificate, which
+          // M4 does not support; Node reports `authorized: false` there as well.
+          const serverSide = tls.certPem !== undefined;
+          this._authorized = serverSide ? false : tls.rejectUnauthorized !== false;
+          this._authorizationError = this._authorized
+            ? null
+            : serverSide
+              ? null
+              : "UNABLE_TO_VERIFY_LEAF_SIGNATURE";
+        }
         this._applyPendingOptions();
         this._touchIdle();
         this.emit("connect");
@@ -502,7 +532,7 @@ class Socket extends Duplex {
     const id = nextId();
     this._adopt(id, null);
     try {
-      command(id, "connect", connectHostArgs(settings));
+      command(id, "connect", connectHostArgs(settings, this._tlsOptions));
     } catch (error) {
       // Argument errors are synchronous (m4-plan §2.2); leave the socket usable for a retry.
       internal.release(id);
@@ -600,7 +630,11 @@ class Socket extends Duplex {
   }
 
   resetAndDestroy() {
-    // There is no SO_LINGER reset in the bridge; destroying is the observable behaviour.
+    // Node arms `SO_LINGER(0)` (so the close sends RST, not FIN) and then destroys the socket.
+    // The bridge has a dedicated command for exactly that: the peer observes `ECONNRESET`.
+    if (this._handleActive && !this._handleClosed && this._handleId > 0) {
+      this._send("reset", []);
+    }
     this.destroy();
     return this;
   }
@@ -662,8 +696,38 @@ class Socket extends Duplex {
     return this._bytesWritten;
   }
 
+  /// True for a TLS socket. Node's `net.Socket` has no such property; it is additive here so a
+  /// `net.Socket` reference can answer the same question as a `tls.TLSSocket`.
+  get encrypted() {
+    return this._encrypted;
+  }
+
+  /// Whether the peer certificate was verified. Always true for a handshake that used
+  /// `rejectUnauthorized` (rustls aborts the connection otherwise), false when it was disabled.
+  get authorized() {
+    return this._encrypted ? this._authorized : false;
+  }
+
+  /// `null` when authorized, else the code Node would report for an unverified peer.
+  get authorizationError() {
+    return this._encrypted ? this._authorizationError : null;
+  }
+
+  /// `"http/1.1"` when negotiated, `false` for a TLS socket without ALPN (Node's shape), `null`
+  /// for a plain socket.
   get alpnProtocol() {
-    return this._alpn;
+    if (!this._encrypted) return null;
+    return this._alpn === null || this._alpn === undefined ? false : this._alpn;
+  }
+
+  /// `"TLSv1.3"`/`"TLSv1.2"` for a TLS socket, `null` for a plain one.
+  getProtocol() {
+    return this._encrypted ? this._protocol : null;
+  }
+
+  /// No X.509 parser is linked in M4 (D41): the shape is an object, the fields are absent.
+  getPeerCertificate() {
+    return {};
   }
 
   get server() {
@@ -696,6 +760,9 @@ class Server extends EventEmitter {
     this._connections = new Set();
     this._refed = true;
     this._hadError = false;
+    // Set by a TLS subclass (`tls.Server`, `https.Server`) before `listen()`; plain `net.Server`
+    // leaves it null. Additive: the bridge treats null as "no TLS".
+    this._tlsOptions = settings.tlsOptions === undefined ? null : settings.tlsOptions;
     if (typeof connectionListener === "function") this.on("connection", connectionListener);
   }
 
@@ -721,7 +788,7 @@ class Server extends EventEmitter {
     setHandleId(this, id);
     internal.register(id, (name, payload) => this._onHandleEvent(name, payload));
     try {
-      command(id, "listen", listenHostArgs(settings));
+      command(id, "listen", listenHostArgs(settings, this._tlsOptions));
     } catch (error) {
       internal.release(id);
       this._handleActive = false;
@@ -748,6 +815,10 @@ class Server extends EventEmitter {
           local: this._address,
           allowHalfOpen: this.allowHalfOpen,
           server: this,
+          encrypted: this._tlsOptions !== null && this._tlsOptions !== undefined,
+          tlsOptions: this._tlsOptions,
+          alpn: payload.alpn === undefined ? null : payload.alpn,
+          protocol: payload.protocol === undefined ? null : payload.protocol,
         });
         this._connections.add(socket);
         socket.once("close", () => this._connections.delete(socket));

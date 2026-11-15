@@ -1,6 +1,13 @@
 # onde
 
-A small, embeddable Node.js-compatible JavaScript runtime: **QuickJS (quickjs-ng) as the engine, Rust as the host**.
+A small, embeddable Node-shaped JavaScript runtime: **QuickJS (quickjs-ng) as the engine, Rust as
+the host**.
+
+onde is for the code around the work: CLIs, build steps, config, request handlers with light
+logic, and the plugin layer inside another tool. It speaks Node's module system (`require`,
+`import`, `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`,
+`https`, `tls`, `dns`) and its globals — without a JIT, a 40 MB resident floor, or a V8-sized
+install.
 
 > **Naming:** the project is now **onde**. The `ln-*` crates and the `lite` binary keep
 > their names for now, so build commands below still use `target/debug/lite`.
@@ -11,12 +18,35 @@ native ES modules, resolves `node_modules` and `exports` maps, ships the Node co
 `querystring`, `punycode`, `module`), the M3 I/O core (`fs`, `fs/promises`, `stream`,
 `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio), and the globals Node provides
 (`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). M4 has landed `net`,
-`http` and `dns`: TCP and Unix sockets, an HTTP/1.1 server and client with keep-alive, chunking
-and `Agent`, and `dns.lookup` over the OS resolver. TLS is the remaining piece — `https` currently
-throws `ERR_FEATURE_UNAVAILABLE` rather than silently downgrading to plaintext — see
-[docs/m4-plan.md](docs/m4-plan.md), [ADR-0006](docs/adr/0006-handles-and-events.md) and
+`http`, `https`, `tls` and `dns`: TCP and Unix sockets, an HTTP/1.1 server and client with
+keep-alive, chunking and `Agent`, TLS through rustls with real certificate verification and ALPN,
+and `dns.lookup` over the OS resolver. The acceptance harnesses (throughput, interop, fd and
+slow-loris) are landing as the milestone closes — see [docs/m4-plan.md](docs/m4-plan.md),
+[ADR-0006](docs/adr/0006-handles-and-events.md) and
 [ADR-0007](docs/adr/0007-http-codec.md). The roadmap is [docs/roadmap.md](docs/roadmap.md); the M3
 contract is [docs/m3-plan.md](docs/m3-plan.md).
+
+## Where it sits
+
+One machine (M3 Macbook Air), release build, median of 25 runs, every row measured the same way
+(2026-11-14):
+
+| | onde | Node 26 | Bun 1.3 |
+|---|---|---|---|
+| install size | **4.8 MB** | 76 MB | 58 MB |
+| cold start, `lite -e '1+1'` | 12.3 ms | 89.4 ms | **8.4 ms** |
+| cold start, `require("http")` | 22.2 ms | 89.4 ms | — |
+| peak RSS, hello HTTP server | **8.6 MB** | 42.4 MB | 30.1 MB |
+
+Bun boots faster than onde does, and this README is not going to pretend otherwise: at this size
+startup is table stakes, not the product. The claim is **footprint per process** — 5 MB and 8.6 MB
+against 58–76 MB and 30–42 MB. That is the difference between a runtime you ship to users and one
+you can put *inside* something else, and between running ten of them and running hundreds.
+
+The trade is explicit. QuickJS has no JIT, so compute-bound JavaScript runs several times slower
+than on V8. onde is not the runtime for a bundler, a minifier, or a 10 MB JSON transform. It is the
+runtime for the glue around them — and for putting that glue inside your tool without shipping a
+second application alongside it.
 
 ## Try it
 
@@ -159,10 +189,11 @@ js/
   lib/           path, url, util, events, assert, buffer, os, console,
                  querystring, punycode, string_decoder, textcodec,
                  module, process, loader, fs, fs-promises, internal/fs,
-                 stream, stream-promises, crypto, tty, perf_hooks
+                 stream, stream-promises, crypto, tty, perf_hooks,
+                 net, internal/net, http, https, internal/http, tls, dns
 test/
-  conformance/   138 cases: scheduler (M1), modules, stdlib,
-                 fs, stream, divergences
+  conformance/   201 cases: scheduler (M1), modules, stdlib,
+                 fs, stream, net, http, https, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   stress/        RSS across timer create/clear
@@ -172,15 +203,15 @@ vendor/          quickjs-ng fork + rquickjs-sys patch queue             [M6]
 ## Build and test
 
 ```sh
-cargo test --all                                # 286 tests across the crates
+cargo test --all                                # 325 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 138/138 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 201/201 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (128)
+./test/differential.sh                          # node vs lite, same stdout + exit code (190)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 49 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 59 stdlib suites under node and lite + oracles
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
 ```

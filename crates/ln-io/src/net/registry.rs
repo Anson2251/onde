@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::{Command, Event, EventSink, HandleId, HandleIdSource};
 
@@ -109,12 +109,25 @@ impl Shared {
     }
 
     /// Spawn a connection task and make it addressable. Returns `false` when the id is taken.
+    ///
+    /// The registered channel exists *before* the task starts, so commands JS issues while the
+    /// task is still handshaking queue up instead of being dropped.
     pub(crate) fn spawn_connection(&self, id: HandleId, connection: Connection) -> bool {
+        self.spawn_connection_task(id, move |receiver| connection.run(receiver))
+    }
+
+    /// The general form of [`Shared::spawn_connection`]: a task that needs the handle's command
+    /// receiver, typically because a TLS handshake runs before the connection's run loop.
+    pub(crate) fn spawn_connection_task<F, Fut>(&self, id: HandleId, task: F) -> bool
+    where
+        F: FnOnce(UnboundedReceiver<Command>) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
         let (sender, receiver) = mpsc::unbounded_channel();
         if !self.register(id, sender) {
             return false;
         }
-        self.spawn_task(connection.run(receiver));
+        self.spawn_task(task(receiver));
         true
     }
 

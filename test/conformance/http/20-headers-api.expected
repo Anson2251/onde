@@ -1,0 +1,8 @@
+has:true
+get:["1","2"]
+names:["x-a"]
+all:["x-a"]
+after-remove:false
+name:ERR_INVALID_HTTP_TOKEN
+value:ERR_INVALID_CHAR
+exit:0

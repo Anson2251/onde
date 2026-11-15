@@ -34,6 +34,7 @@ pub const BUILTINS: &[&str] = &[
     "stream",
     "stream/promises",
     "string_decoder",
+    "tls",
     "tty",
     "url",
     "util",

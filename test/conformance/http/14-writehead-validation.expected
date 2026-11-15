@@ -1,0 +1,7 @@
+status-low:ERR_HTTP_INVALID_STATUS_CODE
+status-high:ERR_HTTP_INVALID_STATUS_CODE
+token:ERR_INVALID_HTTP_TOKEN
+char:ERR_INVALID_CHAR
+status:HTTP/1.1 200 OK
+body:still-ok
+exit:0

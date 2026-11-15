@@ -1595,13 +1595,22 @@ class Duplex extends Readable {
     initWritable(this, options);
     this.allowHalfOpen = options.allowHalfOpen !== false;
     if (options.allowHalfOpen === false) {
-      // Node ends the writable side when the readable side ends, not the other way round.
+      // Node ends the writable side when the readable side ends, not the other way round. The
+      // automatic `end()` is deferred to the next tick (Node's `onend`/`onEndNT` pair): an `'end'`
+      // listener registered by the user runs while the emit is still in progress, and a reply it
+      // writes from there must reach the peer before the writable side is closed.
       const stream = this;
       this.once("end", function onEndHalfOpen() {
-        if (!stream._writableState.ending) stream.end();
+        scheduleTick(onEndHalfOpenNextTick, stream);
       });
     }
   }
+}
+
+function onEndHalfOpenNextTick(stream) {
+  // Node re-checks `allowHalfOpen` at the event, so flipping it after construction opts out.
+  if (stream.allowHalfOpen) return;
+  if (!stream._writableState.ending) stream.end();
 }
 
 // The writable half of a duplex lives on the same prototype chain; copy the accessors and

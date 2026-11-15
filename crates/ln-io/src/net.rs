@@ -24,6 +24,7 @@ mod error;
 mod listener;
 mod registry;
 mod service;
+mod tls;
 mod transport;
 
 pub use service::NetService;
@@ -227,6 +228,9 @@ pub enum Command {
     End,
     /// Close immediately. `closed` is still emitted exactly once.
     Destroy,
+    /// Close immediately with a TCP reset (`SO_LINGER` on with a zero timeout) instead of a FIN,
+    /// like Node's `socket.resetAndDestroy()`. Queued writes are discarded, as in Node.
+    Reset,
     /// Leave parsed mode and go back to raw `data` events (`'upgrade'`, `CONNECT`).
     Detach,
     /// Start the HTTP codec on this connection (ADR-0007).
@@ -273,15 +277,26 @@ pub enum Event {
     },
     /// A server accepted a connection. `handle` is minted by the task and observed by the id
     /// allocator before the event is dispatched.
+    ///
+    /// For a TLS listener the event is emitted by the connection's own child task **after** the
+    /// handshake, so a peer that never completes one never becomes a visible socket, and the
+    /// ALPN/TLS-version details are already known when JS builds the `net.Socket`.
     Connection {
         handle: HandleId,
         remote: Addr,
+        /// `"http/1.1"` when ALPN negotiated it, else `None`.
+        alpn: Option<String>,
+        /// The negotiated TLS version (`"TLSv1.3"`), or `None` for a plain transport.
+        protocol: Option<String>,
     },
     Connected {
         local: Addr,
         remote: Addr,
         /// `"http/1.1"` when ALPN negotiated it, else `None`.
         alpn: Option<String>,
+        /// The negotiated TLS version as `socket.getProtocol()` reports it (`"TLSv1.3"`), or
+        /// `None` for a plain transport.
+        protocol: Option<String>,
     },
     /// Raw-mode bytes.
     Data {

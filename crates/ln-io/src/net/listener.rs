@@ -23,6 +23,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::connection::Connection;
 use super::error::{from_errno, from_io, from_io_at, from_io_detail, not_found, resolve_error};
 use super::registry::Shared;
+use super::tls::{self, ServerTls};
 use super::transport::Transport;
 use super::{Addr, Command, Event, HandleId, ListenOptions, ListenTarget};
 
@@ -53,6 +54,9 @@ impl Bound {
         match self {
             Bound::Tcp { listener, .. } => {
                 let (stream, peer) = listener.accept().await?;
+                // Nagle off, matching Node's `server.noDelay` default: a response head and body
+                // written as separate segments otherwise wait for a delayed ACK (~40 ms).
+                let _ = stream.set_nodelay(true);
                 // The accepted socket's `localAddress` is the server's bound address, which
                 // `listening` already reported; the event only carries the peer.
                 Ok((Transport::Tcp(stream), Addr::Ip(peer)))
@@ -73,6 +77,18 @@ pub(crate) async fn run(
     target: ListenTarget,
     mut commands: UnboundedReceiver<Command>,
 ) {
+    // The TLS config is built once, before binding: a malformed chain is one server `error`, and
+    // every accepted connection then shares the cached config (m4-plan §2.5).
+    let tls = match tls_config(&target) {
+        Ok(tls) => tls,
+        Err(error) => {
+            shared.emit(id, Event::Error { error });
+            shared.emit(id, Event::Closed { had_error: true });
+            shared.unregister(id);
+            return;
+        }
+    };
+
     let bound = match bind(&target).await {
         Ok(bound) => bound,
         Err(error) => {
@@ -106,13 +122,50 @@ pub(crate) async fn run(
                         // `0` means "no handle" (ADR-0006 §2.1); never advertise one.
                         continue;
                     }
-                    let connection = Connection::new(shared.clone(), handle, transport);
-                    if !shared.spawn_connection(handle, connection) {
-                        // An id collision is an allocator bug; refusing to emit `connection` for a
-                        // handle nobody can address is the only safe answer.
-                        continue;
+                    match (tls.clone(), transport) {
+                        (None, transport) => {
+                            let connection = Connection::new(shared.clone(), handle, transport);
+                            if !shared.spawn_connection(handle, connection) {
+                                // An id collision is an allocator bug; refusing to emit
+                                // `connection` for a handle nobody can address is the safe answer.
+                                continue;
+                            }
+                            shared.emit(
+                                id,
+                                Event::Connection {
+                                    handle,
+                                    remote,
+                                    alpn: None,
+                                    protocol: None,
+                                },
+                            );
+                        }
+                        (Some(config), Transport::Tcp(stream)) => {
+                            // The handshake runs in the child task and the child emits
+                            // `connection` itself once TLS is up, so a slow handshake cannot stall
+                            // this loop and a failed one never shows JS a socket (see
+                            // `Connection::accept_tls`).
+                            let connection_shared = shared.clone();
+                            let remote = remote.clone();
+                            let spawned = shared.spawn_connection_task(handle, move |commands| {
+                                Connection::accept_tls(
+                                    connection_shared,
+                                    handle,
+                                    id,
+                                    stream,
+                                    config,
+                                    remote,
+                                    commands,
+                                )
+                            });
+                            if !spawned {
+                                continue;
+                            }
+                        }
+                        // A TLS listener is always TCP (`tls_config` refuses Unix), so there is no
+                        // third combination to handle.
+                        (Some(_), _) => continue,
                     }
-                    shared.emit(id, Event::Connection { handle, remote });
                 }
                 Err(error) => {
                     let errno = error.raw_os_error().unwrap_or(libc::EIO);
@@ -161,6 +214,25 @@ fn retryable_errno(errno: i32) -> bool {
             | libc::EHOSTUNREACH
             | libc::EHOSTDOWN
     )
+}
+
+/// The listener's TLS config, if it asked for one.
+///
+/// TLS over a Unix socket is refused rather than downgraded to plaintext: the transport halves are
+/// TCP-shaped, and a silent plaintext listener is a security bug, not a compatibility gap.
+fn tls_config(target: &ListenTarget) -> Result<Option<ServerTls>, NodeError> {
+    let (options, unix) = match target {
+        ListenTarget::Tcp { options, .. } => (options, false),
+        ListenTarget::Unix { options, .. } => (options, true),
+    };
+    match &options.tls {
+        None => Ok(None),
+        Some(_) if unix => Err(NodeError::new(
+            "ERR_TLS_UNSUPPORTED_TRANSPORT",
+            "TLS over a Unix socket is not supported",
+        )),
+        Some(options) => tls::server_tls(options).map(Some),
+    }
 }
 
 async fn bind(target: &ListenTarget) -> Result<Bound, NodeError> {

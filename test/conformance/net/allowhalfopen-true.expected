@@ -1,0 +1,3 @@
+server:connection,data:hi,end,close
+client:connect,data:bye,end,close
+exit:0

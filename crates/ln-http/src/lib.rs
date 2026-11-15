@@ -373,6 +373,26 @@ impl Conn {
         self.events.pop_front()
     }
 
+    /// Take the bytes this codec has buffered but not yet consumed, leaving the buffer empty.
+    ///
+    /// The result is the wire-ordered tail that [`Conn::feed`] could not parse into a complete
+    /// message yet: partly buffered body bytes (which [`Event::Body`] has not emitted) followed by
+    /// the unparsed head/chunked tail still in `inbuf`. Because the body bytes came *before* the
+    /// tail on the wire, they are returned first.
+    ///
+    /// This exists for [`crate::Event::Upgrade`]'s counterpart, the transport's `detach`: after an
+    /// upgrade handover the leftover bytes belong to the upgraded protocol, and a codec with no
+    /// accessor would silently lose them (m4-plan §9, D44). It is safe to call at any time; an
+    /// idle codec returns an empty vec. It does not reset `state`, so callers must not keep parsing
+    /// with this `Conn` afterwards (the transport drops it when it leaves parsed mode).
+    pub fn take_remainder(&mut self) -> Vec<u8> {
+        let mut bytes = std::mem::take(&mut self.body_buf);
+        bytes.append(&mut self.inbuf);
+        self.head_scan = 0;
+        self.chunk_scan = 0;
+        bytes
+    }
+
     /// Validate a head the caller is about to send and record the body framing it implies.
     ///
     /// The bytes are passed through untouched: header order, case and spacing stay exactly as the
@@ -1435,5 +1455,41 @@ mod tests {
     fn head_field_counting_ignores_continuations() {
         let head = b"GET / HTTP/1.1\r\nA: b\r\n c\r\nD: e\r\n\r\n";
         assert_eq!(count_head_fields(head), 2);
+    }
+
+    #[test]
+    fn take_remainder_is_empty_when_nothing_is_buffered() {
+        let mut server = Conn::new(Role::Server, Limits::default());
+        assert!(server.take_remainder().is_empty());
+        let mut client = Conn::new(Role::Client, Limits::default());
+        assert!(client.take_remainder().is_empty());
+    }
+
+    #[test]
+    fn take_remainder_returns_a_partial_head_and_clears_it() {
+        let mut conn = Conn::new(Role::Server, Limits::default());
+        let partial_head = b"GET / HTTP/1.1\r\nHost: ex";
+        conn.feed(partial_head).expect("a partial head buffers");
+        assert_eq!(conn.take_remainder(), partial_head);
+        assert!(
+            conn.take_remainder().is_empty(),
+            "the remainder is handed over exactly once"
+        );
+    }
+
+    #[test]
+    fn take_remainder_returns_body_bytes_buffered_for_the_current_message() {
+        let mut conn = Conn::new(Role::Server, Limits::default());
+        // The head completes, but only two of the five declared body bytes arrived: the codec
+        // holds them in its body block rather than emitting a short `Event::Body`.
+        conn.feed(b"POST / HTTP/1.1\r\nHost: ex\r\nContent-Length: 5\r\n\r\nab")
+            .expect("a head and a partial body buffer");
+        assert!(
+            matches!(conn.next_event(), Some(Event::Request { .. })),
+            "the complete head is delivered"
+        );
+        assert!(conn.next_event().is_none(), "no event for a partial body");
+        assert_eq!(conn.take_remainder(), b"ab");
+        assert!(conn.take_remainder().is_empty());
     }
 }

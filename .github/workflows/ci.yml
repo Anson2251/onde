@@ -48,7 +48,8 @@ jobs:
   # The corpus is the contract. This job proves the .expected files still describe real Node
   # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
   # differential harness (node vs lite, same stdout + exit code) from scratch.
-  corpus-selftest:    name: corpus is still Node-valid
+  corpus-selftest:
+    name: corpus is still Node-valid
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,3 +80,22 @@ jobs:
           command: check
           arguments: licenses bans sources
 
+  # WP7 network acceptance harness. Performance thresholds are soft in CI (a shared runner is not
+  # the reference machine): req/s, latency and cold-start misses are informational. Interop, the
+  # fd/RSS leak check and the slow-loris memory bound are functional and block the job. The corpus
+  # itself is graded by the `test` and `corpus-selftest` jobs.
+  acceptance:
+    name: M4 network acceptance (soft perf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: build debug and release
+        run: |
+          cargo build
+          cargo build --release -p ln-cli
+      - name: network acceptance (soft performance thresholds)
+        run: NET_BENCH_SOFT=1 ./test/net/run.sh

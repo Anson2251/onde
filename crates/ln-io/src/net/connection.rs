@@ -26,6 +26,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::error::{from_io, from_io_at, from_io_detail, not_found, resolve_error};
 use super::registry::Shared;
+use super::tls::{self, ServerTls};
 use super::transport::{set_tcp_keep_alive, Reader, Transport, Writer};
 use super::{
     family_matches, Addr, Command, ConnectOptions, ConnectTarget, Event, HandleId, IpFamily,
@@ -110,42 +111,79 @@ impl Connection {
         }
     }
 
-    /// The connect half of a handle: resolve, connect, apply socket options, then become a task.
+    /// The connect half of a handle: resolve, connect, apply socket options, perform the TLS
+    /// handshake if the caller asked for one, then become a task.
     ///
-    /// A failed connect emits `error` and then `closed { hadError: true }`, never panics and never
-    /// leaves the id registered.
+    /// A failed connect (including a failed handshake) emits `error` and then
+    /// `closed { hadError: true }`, never panics and never leaves the id registered.
     pub(crate) async fn connect(
         shared: Arc<Shared>,
         id: HandleId,
         target: ConnectTarget,
         commands: UnboundedReceiver<Command>,
     ) {
-        let result = match &target {
-            ConnectTarget::Tcp {
-                host,
-                port,
-                options,
-            } => connect_tcp(host, *port, options).await,
-            ConnectTarget::Unix { path, options } => connect_unix(path, options).await,
-        };
-        match result {
-            Ok((transport, local, remote)) => {
+        match establish(&target).await {
+            Ok(established) => {
                 shared.emit(
                     id,
                     Event::Connected {
-                        local,
-                        remote,
-                        // ALPN is negotiated by TLS, which is WP6: a plain transport has none.
-                        alpn: None,
+                        local: established.local,
+                        remote: established.remote,
+                        alpn: established.alpn,
+                        protocol: established.protocol,
                     },
                 );
-                Connection::new(shared, id, transport).run(commands).await;
+                Connection::new(shared, id, established.transport)
+                    .run(commands)
+                    .await;
             }
             Err(error) => {
                 shared.emit(id, Event::Error { error });
                 shared.emit(id, Event::Closed { had_error: true });
                 shared.unregister(id);
             }
+        }
+    }
+
+    /// The TLS half of a server accept: handshake in **this** connection's child task (never the
+    /// accept loop, so a slow or hostile handshake cannot stall it), then the ordinary run loop.
+    ///
+    /// The listener has already minted and registered `id`, so commands JS issues against the
+    /// handle queue up while the handshake runs. `connection` is emitted only once the handshake
+    /// has succeeded: a peer that never completes one never becomes a socket JS can see, and a
+    /// failed handshake is reported on the (invisible) child handle as `error` + `closed`, never as
+    /// a `connection` event.
+    pub(crate) async fn accept_tls(
+        shared: Arc<Shared>,
+        id: HandleId,
+        server: HandleId,
+        stream: TcpStream,
+        config: ServerTls,
+        remote: Addr,
+        commands: UnboundedReceiver<Command>,
+    ) {
+        match tls::accept(stream, config).await {
+            Ok(accepted) => {
+                // The server may have been destroyed while the handshake was in flight; a socket
+                // nobody owns must not start a run loop that outlives the process's interest.
+                if !shared.contains(server) {
+                    shared.unregister(id);
+                    return;
+                }
+                shared.emit(
+                    server,
+                    Event::Connection {
+                        handle: id,
+                        remote,
+                        alpn: accepted.alpn,
+                        protocol: accepted.protocol,
+                    },
+                );
+                Connection::new(shared, id, accepted.transport)
+                    .run(commands)
+                    .await;
+            }
+            Err(error) => fail_before_connected(&shared, id, error),
         }
     }
 
@@ -298,6 +336,19 @@ impl Connection {
             }
             Command::End => self.ending = true,
             Command::Destroy => self.finished = true,
+            Command::Reset => {
+                // Node's `resetAndDestroy()`: arm `SO_LINGER` with a zero timeout so dropping the
+                // socket sends RST (the peer sees ECONNRESET, not a clean EOF), then close now.
+                // Queued writes are discarded, as they are in Node's immediate destroy.
+                if let Some(writer) = self.writer.as_ref() {
+                    if let Err(error) = writer.set_reset_on_close() {
+                        self.report(from_io(&error, "setsockopt"));
+                    }
+                }
+                self.write_queue.clear();
+                self.write_offset = 0;
+                self.finished = true;
+            }
             Command::Detach => self.detach(),
             Command::HttpAttach { role, limits } => {
                 self.mode = Mode::Http {
@@ -390,6 +441,19 @@ impl Connection {
         }
         self.peer_eof = true;
         self.read_request = None;
+
+        // Some kernels report a peer RST as a zero-length read rather than `ECONNRESET`. `SO_ERROR`
+        // is the race-free second chance to tell the reset from a clean FIN: a pending socket error
+        // wins over EOF, so the peer sees `'error'` + `'close'` like Node instead of `'end'`.
+        let pending = self
+            .writer
+            .as_ref()
+            .and_then(|writer| writer.take_error().ok().flatten())
+            .filter(|error| error.raw_os_error() != Some(0));
+        if let Some(error) = pending {
+            self.fail(from_io(&error, "read"));
+            return;
+        }
 
         if matches!(self.mode, Mode::Http { .. }) {
             // The codec has to see the end of the byte stream: it flushes an EOF-delimited body
@@ -695,36 +759,106 @@ impl Connection {
     }
 
     fn detach(&mut self) {
-        if !matches!(self.mode, Mode::Http { .. }) {
-            return;
-        }
-        // Every byte the transport read past the last head is either in `http_surplus` (below) or
-        // was handed over on `Event::Upgrade`. The codec's own unparsed tail (bytes `feed`
-        // buffered without completing a message) still has no accessor on the locked `Conn`, so
-        // JS should detach at a message boundary; that gap is in the WP1 report.
+        let remainder = match &mut self.mode {
+            Mode::Http { conn, .. } => conn.take_remainder(),
+            Mode::Raw => return,
+        };
+        // Bytes the transport read past the last completed message are either in the codec's own
+        // buffers (`remainder`, e.g. a frame sent in the same segment as an upgrade request) or in
+        // `http_surplus` (read between messages before JS started the next one). Both belong to
+        // the upgraded protocol once parsed mode ends, so they are handed to JS as `data`.
         self.mode = Mode::Raw;
         self.http_idle = false;
         self.http_paused = false;
         self.http_awaiting_outbound = false;
         self.read_request = None;
-        // H6: a manual detach hands over whatever was read past the last head, as the first
-        // `data` on the now-raw handle. (An upgrade already carried its bytes on `Event::Upgrade`.)
+        // H6: a manual detach hands over the wire-order tail, codec first and transport surplus
+        // second. (An upgrade already carried it on `Event::Upgrade` when the codec completed the
+        // handover itself, in which case both buffers are empty.)
         let surplus = std::mem::take(&mut self.http_surplus);
+        if !remainder.is_empty() {
+            self.emit(Event::Data { bytes: remainder });
+        }
         if !surplus.is_empty() {
             self.emit(Event::Data { bytes: surplus });
         }
     }
 }
 
+/// Emit `error` then `closed` for a handle that never became visible to JS.
+fn fail_before_connected(shared: &Shared, id: HandleId, error: NodeError) {
+    shared.emit(id, Event::Error { error });
+    shared.emit(id, Event::Closed { had_error: true });
+    shared.unregister(id);
+}
+
 // ---------------------------------------------------------------------------
 // Connecting
 // ---------------------------------------------------------------------------
+
+/// One finished connection: the transport plus what `connected` reports about it.
+struct Established {
+    transport: Transport,
+    local: Addr,
+    remote: Addr,
+    alpn: Option<String>,
+    protocol: Option<String>,
+}
+
+/// Resolve, connect and, when the options ask for it, hand the TCP socket to rustls.
+async fn establish(target: &ConnectTarget) -> Result<Established, NodeError> {
+    match target {
+        ConnectTarget::Tcp {
+            host,
+            port,
+            options,
+        } => {
+            let (stream, local, remote) = connect_tcp(host, *port, options).await?;
+            let Some(tls_options) = &options.tls else {
+                return Ok(Established {
+                    transport: Transport::Tcp(stream),
+                    local,
+                    remote,
+                    alpn: None,
+                    protocol: None,
+                });
+            };
+            let accepted = tls::connect(stream, tls_options, host).await?;
+            Ok(Established {
+                transport: accepted.transport,
+                local,
+                remote,
+                alpn: accepted.alpn,
+                protocol: accepted.protocol,
+            })
+        }
+        ConnectTarget::Unix { path, options } => {
+            if options.tls.is_some() {
+                // TLS over a Unix socket needs a rustls stream generic over the IO type; the
+                // transport halves are TCP-shaped, so M4 refuses rather than silently connecting
+                // in plaintext (the same rule the pre-WP6 bridge enforced). D41 records it.
+                return Err(NodeError::new(
+                    "ERR_TLS_UNSUPPORTED_TRANSPORT",
+                    "TLS over a Unix socket is not supported",
+                ));
+            }
+            let (stream, local, remote) = connect_unix(path, options).await?;
+            Ok(Established {
+                transport: Transport::Unix(stream),
+                local,
+                remote,
+                alpn: None,
+                protocol: None,
+            })
+        }
+    }
+}
 
 async fn connect_tcp(
     host: &str,
     port: u16,
     options: &ConnectOptions,
-) -> Result<(Transport, Addr, Addr), NodeError> {
+) -> Result<(TcpStream, Addr, Addr), NodeError> {
     let addresses = resolve_connect(host, port, options.family).await?;
     let mut last_error = None;
     for address in addresses {
@@ -734,7 +868,7 @@ async fn connect_tcp(
                     .local_addr()
                     .map_or_else(|_| Addr::Ip(SocketAddr::from(([0, 0, 0, 0], 0))), Addr::Ip);
                 let remote = stream.peer_addr().map_or(Addr::Ip(address), Addr::Ip);
-                return Ok((Transport::Tcp(stream), local, remote));
+                return Ok((stream, local, remote));
             }
             // Node tries each resolved address in turn and reports the last failure.
             Err(error) => last_error = Some(error),
@@ -840,7 +974,7 @@ async fn local_endpoint(
 async fn connect_unix(
     path: &Path,
     options: &ConnectOptions,
-) -> Result<(Transport, Addr, Addr), NodeError> {
+) -> Result<(UnixStream, Addr, Addr), NodeError> {
     // TCP socket options do not exist on a Unix socket; Node's `setNoDelay`/`setKeepAlive` are
     // no-ops there as well.
     let _ = options;
@@ -850,7 +984,7 @@ async fn connect_unix(
     let address = Addr::Unix(path.to_path_buf());
     // A connected Unix socket has no useful `peer_addr()`: Node reports the bound path on both
     // sides, and so does `Addr::Unix`.
-    Ok((Transport::Unix(stream), address.clone(), address))
+    Ok((stream, address.clone(), address))
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,8 @@ pub(crate) struct HostState {
     pub ops: Rc<OpBridge>,
     /// Cached engine heap size, refreshed between JS calls (see `Isolate::refresh_memory`).
     pub memory: Rc<Cell<usize>>,
+    /// Set when JS asks for `memoryUsage`; the loop takes one sample at the next turn.
+    pub memory_requested: Rc<Cell<bool>>,
     /// The isolate's single op/handle id sequence (ADR-0006 §2.1).
     pub ids: Arc<RequestIdAllocator>,
     /// The handle table: `host.net` submits commands through it (ADR-0006).
@@ -305,11 +307,15 @@ pub(crate) fn install<'js>(
 
     {
         let memory = state.memory.clone();
+        let memory_requested = state.memory_requested.clone();
         host.set(
             "memoryUsage",
             js::Function::new(
                 ctx.clone(),
                 move |ctx: js::Ctx<'js>| -> js::Result<js::Object<'js>> {
+                    // The sample is taken outside the callback (see `Isolate`); this call reports
+                    // the last one and asks for the next.
+                    memory_requested.set(true);
                     let used = memory.get();
                     let usage = js::Object::new(ctx.clone())?;
                     // RSS is the engine heap until M7 adds an OS-level measurement; the field exists

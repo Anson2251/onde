@@ -1,0 +1,4 @@
+no-host:HTTP/1.1 400 Bad Request
+with-host:HTTP/1.1 200 OK
+requests:1
+exit:0

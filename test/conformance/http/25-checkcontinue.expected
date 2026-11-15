@@ -1,0 +1,5 @@
+interim:HTTP/1.1 100 Continue
+final:HTTP/1.1 200 OK
+body:continued:abc
+events:checkContinue
+exit:0

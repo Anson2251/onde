@@ -1,0 +1,5 @@
+client:true:true:echo:true:localhost
+sessionReused:false
+echo:ping
+server:true:false:echo:true
+exit:0

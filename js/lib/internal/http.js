@@ -312,8 +312,10 @@ function normalizeHeaderValue(name, value) {
 
 /// Wire-order `[name, value, ...]` -> Node's lowercased `headers` map.
 ///
-/// `set-cookie` keeps every value as an array; every other duplicate is joined with `", "` in
-/// wire order (m4-plan §5). The map has a null prototype, like Node's.
+/// `set-cookie` keeps every value as an array. Every other duplicate is joined in wire order, but
+/// `cookie` joins with `"; "` rather than `", "`: the Cookie header's grammar is a semicolon list,
+/// and Node deliberately preserves that so `req.headers.cookie` can be split on `"; "` (m4-plan
+/// §5). The map has a null prototype, like Node's.
 function headersFromRaw(raw) {
   const headers = Object.create(null);
   if (!Array.isArray(raw)) return headers;
@@ -328,7 +330,7 @@ function headersFromRaw(raw) {
     } else if (headers[key] === undefined) {
       headers[key] = value;
     } else {
-      headers[key] = `${headers[key]}, ${value}`;
+      headers[key] = `${headers[key]}${key === "cookie" ? "; " : ", "}${value}`;
     }
   }
   return headers;
@@ -581,6 +583,19 @@ class OutgoingMessage extends Writable {
       callback = encoding;
       encoding = undefined;
     }
+    // Node's `OutgoingMessage` reports a write after `end()` asynchronously on the response and
+    // does not destroy it, so the `'finish'` already scheduled by the first `end()` still runs.
+    // The generic `Writable` path destroys the stream (correct for a socket, where no reply can
+    // follow a FIN), which would suppress `'finish'`; the message owns the rule here instead.
+    const state = this._writableState;
+    if (state !== undefined && state.ending) {
+      const error = codedError(Error, "ERR_STREAM_WRITE_AFTER_END", "write after end");
+      if (typeof callback === "function") process.nextTick(callback, error);
+      process.nextTick(() => {
+        if (!this.destroyed) this.emit("error", error);
+      });
+      return false;
+    }
     // A client request with a body and no declared length is chunked; the head has to say so
     // before the first chunk goes out. A server response has its own rule (chunked by default on
     // HTTP/1.1), so `_writeStarted` is only read by `ClientRequest`.
@@ -598,6 +613,8 @@ class OutgoingMessage extends Writable {
       callback = encoding;
       encoding = undefined;
     }
+    // A second `end()` with no chunk is a no-op in Node; with a chunk it is a write after end,
+    // which `write` reports (Writable.end forwards the chunk through it).
     if (!this._headerSent && !this.destroyed) this._prepareEnd(chunk, encoding);
     return super.end(chunk, encoding, callback);
   }
@@ -850,9 +867,13 @@ class ServerResponse extends OutgoingMessage {
 class ClientRequest extends OutgoingMessage {
   constructor(options) {
     super();
+    // `ClientRequest` owns `'close'`: it fires once the request is done with its socket (response
+    // complete, or the socket closed after an abort). The inherited Writable destroy path would
+    // emit a second one, so let `_emitClose` be the single authority.
+    this._writableState.emitClose = false;
     this.method = options.method;
     this.path = options.path;
-    this.protocol = "http:";
+    this.protocol = options.protocol === undefined ? "http:" : options.protocol;
     this.host = options.host;
     this.hostname = options.hostname;
     this._port = options.port;
@@ -873,6 +894,9 @@ class ClientRequest extends OutgoingMessage {
     this.aborted = false;
     this._closed = false;
     this._closeEmitted = false;
+    // A socket-level error already reported to the caller: the following `'close'` must not turn
+    // into a second, synthetic `ECONNRESET` ("socket hang up"). Node emits exactly one error.
+    this._socketErrored = false;
     this.shouldKeepAlive = options.keepAlive !== false;
     this._agent = options.agent;
     this._agentKey = null;
@@ -1130,14 +1154,21 @@ class ClientRequest extends OutgoingMessage {
 
   _onSocketError(error) {
     if (this._closed) return;
-    if (this._response === null && !this.aborted) this.emit("error", error);
+    if (this._response === null && !this.aborted) {
+      this._socketErrored = true;
+      this.emit("error", error);
+    }
   }
 
   _onSocketClose() {
     if (this._closed) return;
     this._closed = true;
     this._release();
-    if (!this.aborted && (this._response === null || !this._response.complete)) {
+    if (
+      !this.aborted &&
+      !this._socketErrored &&
+      (this._response === null || !this._response.complete)
+    ) {
       const error = codedError(Error, "ECONNRESET", "socket hang up");
       this.emit("error", error);
     }
@@ -1184,6 +1215,9 @@ class ClientRequest extends OutgoingMessage {
       this.emit("error", codedError(Error, "ECONNRESET", "socket hang up"));
     }
     this._release();
+    // Without a socket there will be no socket `'close'` to drive `_emitClose`; the request's
+    // close still has to happen exactly once (Node emits it on the next turn of the loop).
+    if (this.socket === null) process.nextTick(() => this._emitClose());
   }
 
   _destroy(error, callback) {
@@ -1576,6 +1610,16 @@ function onServerRequest(server, session, payload) {
     );
   }
 
+  // HTTP/1.1 requires `Host` (RFC 9112 §3.2). Node's HTTP server layer rejects a request without
+  // one before any `'request'` event with a canned 400 and closes the connection; unlike a parse
+  // failure this is not a `'clientError'` (the parser accepted the head). HTTP/1.0 is exempt.
+  if (req.httpVersion === "1.1" && req.headers.host === undefined) {
+    res.statusCode = 400;
+    res.shouldKeepAlive = false;
+    res.end();
+    return;
+  }
+
   if (isUpgradeRequest(req)) {
     if (server.listenerCount("upgrade") > 0) {
       // Node hands the socket to the user: leave parsed mode first so the upgraded protocol's
@@ -1610,7 +1654,7 @@ function setGlobalAgent(agent) {
   globalAgent = agent;
 }
 
-function parseUrlOptions(input, options) {
+function parseUrlOptions(input, options, protocol) {
   let url;
   if (typeof input === "string") {
     url = new URL(input);
@@ -1620,11 +1664,11 @@ function parseUrlOptions(input, options) {
   } else {
     return null;
   }
-  if (url.protocol !== "http:") {
+  if (url.protocol !== protocol) {
     throw codedError(
       TypeError,
       "ERR_INVALID_PROTOCOL",
-      `Protocol "${url.protocol}" not supported. Expected "http:"`,
+      `Protocol "${url.protocol}" not supported. Expected "${protocol}"`,
     );
   }
   return Object.assign(
@@ -1651,28 +1695,42 @@ function isUrlLike(value) {
   );
 }
 
-/// `http.request(options[, callback])`; `http.get` is this plus `end()`.
-function request(input, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
+/// Merge `(input, options)` into one options object, Node's overloads.
+///
+/// `protocol` and `defaultPort` are the only things `https` changes: a `https:` URL is a
+/// protocol error in `http.request` and the default port is 443. `opts._tls` (set by `https`) is
+/// the TLS option hook this module forwards to the agent without knowing its contents.
+function normalizeRequestOptions(input, options, protocol, defaultPort) {
+  const scheme = protocol === undefined ? "http:" : protocol;
   let opts;
   if (typeof input === "string" || isUrlLike(input)) {
-    opts = parseUrlOptions(input, options);
+    opts = parseUrlOptions(input, options, scheme);
   } else if (input !== null && typeof input === "object") {
     opts = Object.assign({}, input);
     if (options !== null && typeof options === "object") Object.assign(opts, options);
   } else {
     throw invalidArgType("options", "object or string", input);
   }
+  if (opts.port === undefined || opts.port === null) opts.port = defaultPort === undefined ? 80 : defaultPort;
+  return opts;
+}
 
+/// `http.request(options[, callback])`; `http.get` is this plus `end()`.
+function request(input, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  return sendRequest(normalizeRequestOptions(input, options, "http:", 80), callback);
+}
+
+/// The second half of `request`: everything that needs the finalized options object.
+function sendRequest(opts, callback) {
   const method = opts.method === undefined ? "GET" : String(opts.method).toUpperCase();
   const path = opts.path === undefined || opts.path === "" ? "/" : String(opts.path);
   const hostname = opts.hostname === undefined ? opts.host : opts.hostname;
   const host = hostname === undefined || hostname === null ? "localhost" : String(hostname);
   let port = opts.port;
-  if (port === undefined || port === null) port = 80;
   if (typeof port === "string") port = Number(port);
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) {
     throw codedError(
@@ -1711,6 +1769,8 @@ function request(input, options, callback) {
     headers,
     localAddress: opts.localAddress,
     family: opts.family,
+    protocol: opts._tls === undefined || opts._tls === null ? "http:" : "https:",
+    tlsOptions: opts._tls,
   };
 
   const req = new ClientRequest(requestOptions);
@@ -1730,6 +1790,9 @@ function request(input, options, callback) {
     family: opts.family,
     createConnection: opts.createConnection,
     timeout: opts.timeout,
+    // `https` sets this to the normalized TLS payload; `Agent.createConnection` hands it to
+    // `tls.connect`, so the options are never dropped on the way to the socket.
+    tlsOptions: opts._tls,
   });
   return req;
 }
@@ -1766,6 +1829,8 @@ module.exports = {
   ClientRequest,
   Agent,
   request,
+  normalizeRequestOptions,
+  sendRequest,
   setGlobalAgent,
   attachServerSocket,
   isUpgradeRequest,

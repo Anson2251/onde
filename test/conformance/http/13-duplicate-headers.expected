@@ -1,0 +1,4 @@
+headers:{"host":"example","x-dup":"a, b","cookie":"x=1; y=2","connection":"close"}
+raw:["Host","example","X-Dup","a","x-dup","b","Cookie","x=1","Cookie","y=2","Connection","close"]
+response-headers:set-cookie: a=1|set-cookie: b=2|x-merge: one|x-merge: two|connection: close|content-length: 2
+exit:0

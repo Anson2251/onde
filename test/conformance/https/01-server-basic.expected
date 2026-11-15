@@ -1,0 +1,14 @@
+status:200
+content-type:text/plain
+x-test:value
+connection:keep-alive
+content-length:14
+body:hello GET /tls
+protocol:https:
+encrypted:true
+authorized:true
+authorizationError:null
+alpn:http/1.1
+tlsVersion:true
+peerCertificate:object
+exit:0

@@ -181,8 +181,12 @@ ok(http.METHODS.indexOf("GET") !== -1, "METHODS contains GET");
 eq(http.maxHeaderSize, 16384, "maxHeaderSize is 16 KiB");
 throwsCode(() => http.validateHeaderName("bad name"), "ERR_INVALID_HTTP_TOKEN", "validateHeaderName rejects a space");
 throwsCode(() => http.validateHeaderValue("x", "a\r\nb"), "ERR_INVALID_CHAR", "validateHeaderValue rejects CRLF");
-throwsCode(() => https.request({ host: "127.0.0.1", port: 1 }), "ERR_FEATURE_UNAVAILABLE", "https.request refuses without TLS");
-throwsCode(() => https.createServer().listen(0), "ERR_FEATURE_UNAVAILABLE", "https.Server#listen refuses without TLS");
+// `https` is a real transport since WP6; its round trip lives in `https.test.js`. Only the
+// surface is asserted here, because `http` and `https` share the same `internal/http` client.
+ok(typeof https.request === "function", "https.request is a function");
+ok(typeof https.Agent === "function", "https.Agent is a function");
+ok(https.globalAgent instanceof https.Agent, "https.globalAgent is an https.Agent");
+throwsCode(() => https.createServer(), "ERR_INVALID_ARG_VALUE", "https.createServer requires cert and key");
 
 const WATCHDOG = setTimeout(() => {
   console.log("not ok: test watchdog expired");
@@ -465,13 +469,19 @@ async function main() {
   port = await listen(upgradeServer);
   const upgrade = await openSocket(port);
   let upgradeText = "";
+  // Record the close before the write: the socket can close faster than `waitFor` resolves, and a
+  // `once("close")` attached afterwards would never fire.
+  let upgradeClosed = false;
+  upgrade.on("close", () => {
+    upgradeClosed = true;
+  });
   upgrade.on("data", (chunk) => {
     upgradeText += chunk;
     if (upgradeText.includes("\r\n\r\n")) upgrade.write("ping");
   });
   upgrade.write("GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
   await waitFor(() => upgradeSeen, (value) => value === true, "the upgrade event");
-  await new Promise((resolve) => upgrade.once("close", resolve));
+  await waitFor(() => upgradeClosed, (value) => value === true, "the upgraded socket to close");
   await closeServer(upgradeServer);
 
   // --- 11. client abort ---------------------------------------------------------------------

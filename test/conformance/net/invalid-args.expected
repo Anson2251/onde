@@ -1,0 +1,7 @@
+connect-missing:ERR_MISSING_ARGS
+connect-port-range:ERR_SOCKET_BAD_PORT
+connect-port-string:ERR_SOCKET_BAD_PORT
+connect-family:ERR_INVALID_ARG_VALUE
+listen-empty:ERR_INVALID_ARG_VALUE
+listen-twice:ERR_SERVER_ALREADY_LISTEN
+exit:0

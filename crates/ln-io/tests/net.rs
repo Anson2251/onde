@@ -226,7 +226,7 @@ impl Harness {
 
     fn accept_remote(&mut self, server: HandleId) -> (HandleId, Addr) {
         match self.events.next_for(server) {
-            Event::Connection { handle, remote } => {
+            Event::Connection { handle, remote, .. } => {
                 assert_ne!(handle, 0, "0 means no handle");
                 (handle, remote)
             }

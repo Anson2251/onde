@@ -346,11 +346,13 @@ never removable).
 **Status: in progress (2026-11-14).** The implementation contract is
 [m4-plan.md](m4-plan.md); the protocol decisions are
 [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
-[ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0–WP5 have landed: `ln-io` runs live
-TCP/Unix connections, the HTTP/1.1 codec is complete, and `net`, `http` and `dns` are reachable
-from JS (7 net + 6 http corpus cases, 151 corpus cases total, 308 Rust tests). **Remaining: WP6
-(TLS — every entry point currently throws `ERR_FEATURE_UNAVAILABLE`) and WP7 (the bench, interop,
-slow-loris and fd-leak harnesses plus the rest of the corpus).**
+[ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0–WP6 have landed: `ln-io` runs live
+TCP/Unix/TLS connections, the HTTP/1.1 codec is complete, and `net`, `http`, `https`, `tls` and
+`dns` are reachable from JS, with node↔lite interop verified for both plaintext and TLS.
+WP7 has landed the bench, interop, fd-leak and slow-loris harnesses and a 57-case net/http corpus
+that already found seven real defects. The functional criteria are met; two §8 numbers —
+hello-world throughput (14.4k of 20k req/s) and the slow-loris footprint (67 MB at 2k connections)
+— are not, and the shortfall is analysed into M7 in [m4-plan §8.3](m4-plan.md#84-performance-fixes-landed-while-closing-m4).
 
 Two recorded reversals of the sketch below, both deliberate:
 

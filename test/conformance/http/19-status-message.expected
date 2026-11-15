@@ -1,0 +1,3 @@
+default:HTTP/1.1 201 Created
+custom:HTTP/1.1 418 Short And Stout
+exit:0

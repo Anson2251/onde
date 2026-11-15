@@ -1,0 +1,6 @@
+status:HTTP/1.1 304 Not Modified
+304-body:0
+second:HTTP/1.1 200 OK
+second-body:fresh
+same-connection:true
+exit:0

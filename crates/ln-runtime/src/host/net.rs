@@ -5,8 +5,9 @@
 //! call site like Node; a bind/connect failure that happens later is an `error` event.
 //!
 //! This module deliberately does not look at the task: `ref`/`unref` are loop-ref changes owned by
-//! [`HandleBridge`](crate::handles::HandleBridge), and TLS is not implemented until WP6, so a request that carries TLS options
-//! throws `ERR_FEATURE_UNAVAILABLE` instead of silently connecting in plaintext.
+//! [`HandleBridge`](crate::handles::HandleBridge). TLS options are plain data crossing the
+//! boundary (`docs/m4-plan.md` §2.5): PEM bytes, not paths, because the JS surface reads the files
+//! with `fs.readFileSync`, so there is one file-reading path and one error shape.
 
 use std::path::PathBuf;
 
@@ -14,7 +15,8 @@ use ln_engine::js;
 use ln_error::NodeError;
 use ln_http::{Limits, Role};
 use ln_io::net::{
-    Command, ConnectOptions, ConnectTarget, IpFamily, ListenOptions, ListenTarget, MAX_CHUNK,
+    Command, ConnectOptions, ConnectTarget, IpFamily, ListenOptions, ListenTarget,
+    TlsClientOptions, TlsServerOptions, MAX_CHUNK,
 };
 
 use crate::args;
@@ -76,12 +78,11 @@ pub(crate) fn build_net_command<'js>(
             let backlog = optional_i32(args, 3, "backlog", 511)?;
             let ipv6_only = optional_bool(args, 4, "ipv6Only", false)?;
             let exclusive = optional_bool(args, 5, "exclusive", false)?;
-            ensure_no_tls(args, 6, "listen")?;
             let options = ListenOptions {
                 backlog,
                 ipv6_only,
                 exclusive,
-                tls: None,
+                tls: tls_server_arg(args, 6)?,
             };
             Ok(Command::Listen(match path {
                 Some(path) => ListenTarget::Unix {
@@ -104,9 +105,8 @@ pub(crate) fn build_net_command<'js>(
                 local_port: optional_port(args, 5, "localPort")?,
                 no_delay: optional_bool(args, 6, "noDelay", true)?,
                 keep_alive_ms: optional_opt_u32(args, 7, "keepAliveMs")?,
-                tls: None,
+                tls: tls_client_arg(args, 8)?,
             };
-            ensure_no_tls(args, 8, "connect")?;
             Ok(Command::Connect(match path {
                 Some(path) => ConnectTarget::Unix {
                     path: PathBuf::from(path),
@@ -130,6 +130,7 @@ pub(crate) fn build_net_command<'js>(
         }),
         "end" => Ok(Command::End),
         "destroy" => Ok(Command::Destroy),
+        "reset" => Ok(Command::Reset),
         "detach" => Ok(Command::Detach),
         "httpAttach" => {
             let role = match required_string(args, 0, "role")?.as_str() {
@@ -140,7 +141,7 @@ pub(crate) fn build_net_command<'js>(
                         "role",
                         other,
                         "must be 'server' or 'client'",
-                    ))
+                    ));
                 }
             };
             let defaults = Limits::default();
@@ -312,23 +313,134 @@ fn family_arg<'js>(args: &[js::Value<'js>], index: usize) -> Result<IpFamily, No
     }
 }
 
-/// WP6 adds TLS. Until then a TLS request must fail loudly: a silent plaintext connection would be
-/// a security bug, not a compatibility gap.
-fn ensure_no_tls<'js>(
+// --- TLS options -----------------------------------------------------------------------------
+
+/// `client`'s TLS argument: `{ servername, rejectUnauthorized, caPem, alpn }`.
+///
+/// `null`/`undefined` means "plaintext". The shape is validated here so a bad argument throws at
+/// the call site; a bad *certificate* is a connection error (it needs PEM parsing, which happens
+/// lazily in `ln-io` when the config is first built).
+fn tls_client_arg<'js>(
     args: &[js::Value<'js>],
     index: usize,
-    command: &str,
-) -> Result<(), NodeError> {
-    if present(args, index).is_some() {
-        return Err(NodeError::new(
-            "ERR_FEATURE_UNAVAILABLE",
-            format!(
-                "TLS is not implemented yet: net {command} with TLS options would silently \
-                 connect in plaintext, so it is refused"
-            ),
-        ));
+) -> Result<Option<TlsClientOptions>, NodeError> {
+    let Some(object) = optional_object(args, index, "tls")? else {
+        return Ok(None);
+    };
+    Ok(Some(TlsClientOptions {
+        servername: optional_field_string(&object, "servername")?,
+        reject_unauthorized: optional_field_bool(&object, "rejectUnauthorized", true)?,
+        ca_pem: optional_field_bytes(&object, "caPem")?,
+        alpn: field_string_array(&object, "alpn")?,
+    }))
+}
+
+/// `listen`'s TLS argument: `{ certPem, keyPem, alpn }`.
+fn tls_server_arg<'js>(
+    args: &[js::Value<'js>],
+    index: usize,
+) -> Result<Option<TlsServerOptions>, NodeError> {
+    let Some(object) = optional_object(args, index, "tls")? else {
+        return Ok(None);
+    };
+    let cert_pem = optional_field_bytes(&object, "certPem")?.ok_or_else(|| {
+        NodeError::invalid_arg_value("tls.certPem", "undefined", "is required for a TLS server")
+    })?;
+    let key_pem = optional_field_bytes(&object, "keyPem")?.ok_or_else(|| {
+        NodeError::invalid_arg_value("tls.keyPem", "undefined", "is required for a TLS server")
+    })?;
+    Ok(Some(TlsServerOptions {
+        cert_pem,
+        key_pem,
+        alpn: field_string_array(&object, "alpn")?,
+    }))
+}
+
+fn optional_object<'js>(
+    args: &[js::Value<'js>],
+    index: usize,
+    argument: &str,
+) -> Result<Option<js::Object<'js>>, NodeError> {
+    let Some(value) = present(args, index) else {
+        return Ok(None);
+    };
+    match value.as_object() {
+        Some(object) => Ok(Some(object.clone())),
+        None => Err(NodeError::invalid_arg_type(
+            argument,
+            "object",
+            args::type_name(value),
+        )),
     }
-    Ok(())
+}
+
+fn field<'js>(object: &js::Object<'js>, name: &str) -> Result<js::Value<'js>, NodeError> {
+    object.get::<_, js::Value<'js>>(name).map_err(|_| {
+        NodeError::new(
+            "ERR_INVALID_ARG_TYPE",
+            format!("The \"{name}\" property could not be read from the TLS options"),
+        )
+    })
+}
+
+fn optional_field_string<'js>(
+    object: &js::Object<'js>,
+    name: &str,
+) -> Result<Option<String>, NodeError> {
+    let value = field(object, name)?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    args::string(Some(&value), name).map(Some)
+}
+
+fn optional_field_bool<'js>(
+    object: &js::Object<'js>,
+    name: &str,
+    default: bool,
+) -> Result<bool, NodeError> {
+    let value = field(object, name)?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(default);
+    }
+    args::bool_value(Some(&value), name)
+}
+
+fn optional_field_bytes<'js>(
+    object: &js::Object<'js>,
+    name: &str,
+) -> Result<Option<Vec<u8>>, NodeError> {
+    let value = field(object, name)?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    args::bytes(Some(&value), name).map(Some)
+}
+
+/// An ALPN protocol list: an array of strings in preference order (empty when omitted).
+fn field_string_array<'js>(object: &js::Object<'js>, name: &str) -> Result<Vec<String>, NodeError> {
+    let value = field(object, name)?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(Vec::new());
+    }
+    let Some(array) = value.as_array() else {
+        return Err(NodeError::invalid_arg_type(
+            name,
+            "Array",
+            args::type_name(&value),
+        ));
+    };
+    let mut protocols = Vec::with_capacity(array.len());
+    for index in 0..array.len() {
+        let item: js::Value = array.get(index).map_err(|_| {
+            NodeError::new(
+                "ERR_INVALID_ARG_TYPE",
+                format!("The \"{name}\" property could not be read from the TLS options"),
+            )
+        })?;
+        protocols.push(args::string(Some(&item), name)?);
+    }
+    Ok(protocols)
 }
 
 #[cfg(test)]
@@ -494,26 +606,66 @@ mod tests {
         });
     }
 
-    /// WP6 owns TLS. Until then a TLS request fails loudly instead of silently connecting in
-    /// plaintext.
+    /// TLS options are plain data (m4-plan §2.5): PEM bytes plus the knobs Node honours.
     #[test]
-    fn tls_options_are_refused_with_err_feature_unavailable() {
+    fn tls_options_are_carried_as_plain_data() {
         with_ctx(|ctx| {
-            let listen = build(
-                &ctx,
-                "listen",
-                r#"["127.0.0.1", 0, null, null, null, null, {}]"#,
-            )
-            .expect_err("listen with tls");
-            assert_eq!(listen.code, "ERR_FEATURE_UNAVAILABLE");
-
-            let connect = build(
+            match build(
                 &ctx,
                 "connect",
-                r#"["127.0.0.1", 443, null, null, null, null, null, null, {}]"#,
+                r#"["example.com", 443, null, null, null, null, null, null,
+                    {servername: "example.com", rejectUnauthorized: false,
+                     caPem: new Uint8Array([45, 45, 45]), alpn: ["http/1.1"]}]"#,
             )
-            .expect_err("connect with tls");
-            assert_eq!(connect.code, "ERR_FEATURE_UNAVAILABLE");
+            .expect("connect with tls")
+            {
+                Command::Connect(ConnectTarget::Tcp { options, .. }) => {
+                    let tls = options.tls.expect("tls options");
+                    assert_eq!(tls.servername.as_deref(), Some("example.com"));
+                    assert!(!tls.reject_unauthorized);
+                    assert_eq!(tls.ca_pem, Some(vec![45, 45, 45]));
+                    assert_eq!(tls.alpn, vec!["http/1.1".to_owned()]);
+                }
+                other => panic!("unexpected command: {other:?}"),
+            }
+
+            match build(
+                &ctx,
+                "listen",
+                r#"["127.0.0.1", 0, null, null, null, null,
+                    {certPem: new Uint8Array([1]), keyPem: new Uint8Array([2]), alpn: ["h2"]}]"#,
+            )
+            .expect("listen with tls")
+            {
+                Command::Listen(ListenTarget::Tcp { options, .. }) => {
+                    let tls = options.tls.expect("tls options");
+                    assert_eq!(tls.cert_pem, vec![1]);
+                    assert_eq!(tls.key_pem, vec![2]);
+                    assert_eq!(tls.alpn, vec!["h2".to_owned()]);
+                }
+                other => panic!("unexpected command: {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn a_tls_server_requires_cert_and_key() {
+        with_ctx(|ctx| {
+            let missing_key = build(
+                &ctx,
+                "listen",
+                r#"["127.0.0.1", 0, null, null, null, null, {certPem: new Uint8Array([1])}]"#,
+            )
+            .expect_err("missing key");
+            assert_eq!(missing_key.code, "ERR_INVALID_ARG_VALUE");
+
+            let malformed = build(
+                &ctx,
+                "connect",
+                r#"["127.0.0.1", 443, null, null, null, null, null, null, {alpn: "http/1.1"}]"#,
+            )
+            .expect_err("alpn must be an array");
+            assert_eq!(malformed.code, "ERR_INVALID_ARG_TYPE");
         });
     }
 

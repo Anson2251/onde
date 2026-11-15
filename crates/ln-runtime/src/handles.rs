@@ -262,15 +262,29 @@ pub(crate) fn event_to_js<'js>(
     let undefined = || js::Value::new_undefined(ctx.clone());
     Ok(match event {
         Event::Listening { local } => ("listening", addr_object(ctx, local)?.into_value()),
-        Event::Connection { handle, remote } => {
+        Event::Connection {
+            handle,
+            remote,
+            alpn,
+            protocol,
+        } => {
             let object = addr_object(ctx, remote)?;
             object.set("handle", *handle as f64)?;
+            match alpn {
+                Some(alpn) => object.set("alpn", alpn.as_str())?,
+                None => object.set("alpn", js::Value::new_null(ctx.clone()))?,
+            }
+            match protocol {
+                Some(protocol) => object.set("protocol", protocol.as_str())?,
+                None => object.set("protocol", js::Value::new_null(ctx.clone()))?,
+            }
             ("connection", object.into_value())
         }
         Event::Connected {
             local,
             remote,
             alpn,
+            protocol,
         } => {
             let object = js::Object::new(ctx.clone())?;
             object.set("local", addr_object(ctx, local)?)?;
@@ -278,6 +292,11 @@ pub(crate) fn event_to_js<'js>(
             match alpn {
                 Some(alpn) => object.set("alpn", alpn.as_str())?,
                 None => object.set("alpn", js::Value::new_null(ctx.clone()))?,
+            }
+            // `socket.getProtocol()`: `"TLSv1.3"` for a TLS transport, `null` for a plain one.
+            match protocol {
+                Some(protocol) => object.set("protocol", protocol.as_str())?,
+                None => object.set("protocol", js::Value::new_null(ctx.clone()))?,
             }
             ("connected", object.into_value())
         }
@@ -603,6 +622,8 @@ mod conversion_tests {
                 &Event::Connection {
                     handle: 7,
                     remote: address("[::1]:1234"),
+                    alpn: None,
+                    protocol: None,
                 },
             )
             .expect("event");
@@ -621,6 +642,7 @@ mod conversion_tests {
                 local: address("127.0.0.1:1000"),
                 remote: address("127.0.0.1:2000"),
                 alpn: Some("http/1.1".to_owned()),
+                protocol: Some("TLSv1.3".to_owned()),
             };
             let (name, payload) = event_to_js(&ctx, &event).expect("event");
             assert_eq!(name, "connected");
@@ -630,16 +652,23 @@ mod conversion_tests {
             let remote: js::Object = object.get("remote").expect("remote");
             assert_eq!(remote.get::<_, u16>("port").expect("port"), 2000);
             assert_eq!(object.get::<_, String>("alpn").expect("alpn"), "http/1.1");
+            assert_eq!(
+                object.get::<_, String>("protocol").expect("protocol"),
+                "TLSv1.3"
+            );
 
             let event = Event::Connected {
                 local: address("127.0.0.1:1000"),
                 remote: address("127.0.0.1:2000"),
                 alpn: None,
+                protocol: None,
             };
             let (_, payload) = event_to_js(&ctx, &event).expect("event");
             let object = payload.as_object().expect("object");
             let alpn: js::Value = object.get("alpn").expect("alpn");
             assert!(alpn.is_null());
+            let protocol: js::Value = object.get("protocol").expect("protocol");
+            assert!(protocol.is_null());
         });
     }
 

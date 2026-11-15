@@ -306,9 +306,13 @@ pub struct Isolate {
     /// The handle bridge: network tasks, parked events and loop refs (ADR-0006).
     handles: Rc<HandleBridge>,
     start: Instant,
-    /// Last engine heap measurement. Refreshed between JS calls: `Runtime::memory_usage`
-    /// re-borrows the runtime, which panics while a JS callback is on the stack.
+    /// Last engine heap measurement. `Runtime::memory_usage` re-borrows the runtime and panics
+    /// while a JS callback is on the stack, so it is sampled at the top of a turn — and only when
+    /// a `process.memoryUsage()` call asked for it. Sampling it every turn (as M0—M3 did) cost
+    /// ~25x network throughput: it walks the entire heap.
     memory: Rc<Cell<usize>>,
+    /// Set by the `memoryUsage` host call, cleared when the sample is taken.
+    memory_requested: Rc<Cell<bool>>,
     finished: bool,
 }
 
@@ -327,6 +331,7 @@ impl Isolate {
             ModuleRuntime::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         modules.install(&engine);
         let memory = Rc::new(Cell::new(0));
+        let memory_requested = Rc::new(Cell::new(false));
         let (reactor, sender) = ChannelReactor::new();
         // One id sequence for the whole isolate: ops and (M4) handles draw from it (ADR-0006).
         let ids = Arc::new(ops::RequestIdAllocator::new());
@@ -355,6 +360,7 @@ impl Isolate {
             handles,
             start: Instant::now(),
             memory,
+            memory_requested,
             finished: false,
         };
         isolate.install(&config)?;
@@ -376,6 +382,7 @@ impl Isolate {
             start: self.start,
             modules: self.modules.clone(),
             memory: self.memory.clone(),
+            memory_requested: self.memory_requested.clone(),
             ops: self.ops.clone(),
             ids: self.ops.ids().clone(),
             handles: self.handles.clone(),
@@ -704,7 +711,10 @@ impl Isolate {
             if self.should_stop() {
                 break;
             }
-            self.refresh_memory();
+            if self.memory_requested.get() {
+                self.memory.set(self.engine.memory_usage());
+                self.memory_requested.set(false);
+            }
             // Flush anything the previous callback left behind (including rejections created by
             // rejection event handlers) before deciding whether to block for a timer.
             self.checkpoint_all()?;
@@ -846,7 +856,6 @@ impl Isolate {
                 return Ok(());
             }
 
-            self.refresh_memory();
             self.sync_host();
 
             // Engine-created jobs are lower priority than nextTick but must be part of the

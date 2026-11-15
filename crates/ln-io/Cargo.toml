@@ -16,6 +16,16 @@ getrandom = "0.2"
 # at once. It is a tokio feature, not an extra dependency.
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util", "macros"] }
 
+# M4 TLS (WP6). The provider is pinned to `ring`: rustls' default `aws-lc-rs` needs cmake/nasm,
+# while `ring` needs only the C compiler the engine already requires (m4-plan §1).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+# Node's bundled Mozilla root store (`tls.rootCertificates` / the default client trust anchors).
+webpki-roots = "1"
+# PEM parsing for `ca`/`cert`/`key`.
+rustls-pemfile = "2"
+# Optional OS trust store (`ONDE_USE_SYSTEM_CA=1`), Node's `--use-system-ca` equivalent.
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # SO_KEEPALIVE timings (TCP_KEEPIDLE/TCP_KEEPINTVL) and the listener options tokio does not expose.
