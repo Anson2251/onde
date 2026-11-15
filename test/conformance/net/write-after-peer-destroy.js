@@ -12,15 +12,30 @@
 const net = require("net");
 
 const events = [];
-const server = net.createServer((socket) => socket.resetAndDestroy());
+const server = net.createServer((socket) => {
+  // A socket reset on accept can still emit an error afterwards (the peer's write lands on a
+  // destroyed socket). Without a listener that error is uncaught and takes the process down,
+  // which on a piped stdout loses the lines already printed. macOS rarely reaches this path,
+  // Linux on loopback does.
+  socket.on("error", () => {});
+  socket.resetAndDestroy();
+});
 server.listen(0, "127.0.0.1", () => {
-  const client = net.connect(server.address().port, "127.0.0.1", () => {
-    client.on("error", (error) => {
-      const family =
-        error.code === "EPIPE" || error.code === "ECONNRESET" ? "broken-pipe" : error.code;
-      events.push(`error-family:${family}`);
-    });
-    setTimeout(() => client.write(Buffer.alloc(64 * 1024, 0x62)), 150);
+  const client = net.connect(server.address().port, "127.0.0.1");
+  // Attached before the handshake: on a fast loopback the reset can beat `connect`, and an
+  // 'error' with no listener at that moment is fatal.
+  client.on("error", (error) => {
+    // First family only: the reset and the write can both report one, and the count depends on
+    // how the kernel orders them, while the family is what the case is about.
+    if (events.length > 0) return;
+    const family =
+      error.code === "EPIPE" || error.code === "ECONNRESET" ? "broken-pipe" : error.code;
+    events.push(`error-family:${family}`);
+  });
+  client.on("connect", () => {
+    setTimeout(() => {
+      if (!client.destroyed) client.write(Buffer.alloc(64 * 1024, 0x62));
+    }, 150);
   });
   client.on("close", () => {
     events.push("close");

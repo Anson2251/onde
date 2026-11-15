@@ -6,11 +6,15 @@
 const net = require("net");
 
 const server = net.createServer((socket) => {
-  console.log(`server-remote:${socket.remoteAddress === "127.0.0.1"}`);
-  console.log(`server-remote-family:${socket.remoteFamily}`);
-  console.log(`server-remote-port:${socket.remotePort > 0}`);
-  console.log(`server-local-address:${socket.localAddress}`);
-  socket.end("bye");
+  // Printed when the client's first byte arrives, not on 'connection': the two event streams
+  // interleave by loopback timing, and macOS and Linux do not agree on which fires first.
+  socket.once("data", () => {
+    console.log(`server-remote:${socket.remoteAddress === "127.0.0.1"}`);
+    console.log(`server-remote-family:${socket.remoteFamily}`);
+    console.log(`server-remote-port:${socket.remotePort > 0}`);
+    console.log(`server-local-address:${socket.localAddress}`);
+    socket.end("bye");
+  });
 });
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
@@ -20,6 +24,8 @@ server.listen(0, "127.0.0.1", () => {
     console.log(`client-remote-family:${client.remoteFamily}`);
     console.log(`client-local-port:${client.localPort > 0}`);
     console.log(`client-remote-port:${client.remotePort === port}`);
+    // The client's lines are already queued, so the server's block cannot land before them.
+    client.write("go");
   });
   client.resume();
   client.on("close", () => server.close());
