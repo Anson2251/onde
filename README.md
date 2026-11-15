@@ -89,11 +89,13 @@ of the claims above, because everything it executes is `require`, `fs`, `https`,
 
 ```sh
 cd tuckbox && pnpm install && pnpm build
+onde=$PWD/../target/debug/lite
+tuckbox=$PWD/bin/tuckbox.js
 
 mkdir /tmp/app && cd /tmp/app
 printf '{"name":"app","dependencies":{"debug":"^4.3.0"}}' > package.json
-/path/to/lite /path/to/tuckbox/bin/tuckbox.js install
-/path/to/lite /path/to/tuckbox/bin/tuckbox.js ls
+"$onde" "$tuckbox" install
+"$onde" "$tuckbox" ls
 ```
 
 `install`, `ci`, `add`, `remove` and `ls`. Tarballs are verified against `dist.integrity`, unpacked
