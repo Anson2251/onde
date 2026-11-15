@@ -45,6 +45,35 @@ jobs:
           printf 'const x = 1;\n' > /tmp/lite-check.js
           cargo run -q -p ln-cli -- --check /tmp/lite-check.js
 
+  # tuckbox is the demo that keeps the runtime honest: a real tool, in TypeScript, resolving and
+  # installing real npm packages with nothing but the modules onde implements. Each suite runs
+  # under node AND onde and the outputs are compared, so a module cannot quietly lean on either.
+  tuckbox:
+    name: tuckbox (a package installer on onde)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: build onde
+        run: cargo build
+      - name: install and build tuckbox
+        working-directory: tuckbox
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm build
+      - name: tests under node and onde
+        working-directory: tuckbox
+        run: node test/run.js
+        env:
+          TUCKBOX_LITE: ${{ github.workspace }}/target/debug/lite
+
   # The corpus is the contract. This job proves the .expected files still describe real Node
   # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
   # differential harness (node vs lite, same stdout + exit code) from scratch.
