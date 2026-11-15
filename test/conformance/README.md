@@ -14,6 +14,7 @@ uncaught/     uncaughtException dispatch and default fatal output
 rejections/   unhandledRejection / rejectionHandled protocol
 modules/      CJS/ESM entries, resolution, cycles, interop, import.meta, TLA
 stdlib/       path, url, util, assert, events, buffer, os, console, process, module, …
+zlib/         gzip/zlib/raw-deflate round trips, crc32 and coded errors
 divergences/  deliberate differences; expectations recorded from onde
 ```
 

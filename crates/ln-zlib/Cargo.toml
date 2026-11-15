@@ -1,0 +1,13 @@
+[package]
+name = "ln-zlib"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "gzip/zlib/raw-deflate and crc32 for onde, engine-free and tokio-free"
+publish = false
+
+[dependencies]
+ln-error = { path = "../ln-error" }
+# Pure-Rust backend (`miniz_oxide`): no new C toolchain, no `zlib` system dependency.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

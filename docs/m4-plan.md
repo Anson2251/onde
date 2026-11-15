@@ -379,3 +379,20 @@ Recorded gaps, deliberately not fixed in M4:
   `getPeerCertificate()` fields — see D41.
 - **`exclusive: true` disables `SO_REUSEADDR`** rather than reproducing `SO_REUSEPORT`/cluster fd
   sharing, and a Unix socket file is not unlinked on close (Node does not either).
+
+### 9.1 `zlib`, added after the M4 contract was frozen
+
+`zlib` is not in the M4 ladder (§6); it landed as an M4 addendum because tuckbox needs
+`gunzipSync` to read the registry's `.tgz` tarballs, and shelling out to `tar -xzf` would put a
+process dependency in the middle of the one workflow that is supposed to prove onde can run a
+Node-shaped tool.
+
+The shape follows the M3 `crypto` precedent rather than the M4 transport one: an engine-free,
+tokio-free crate (`crates/ln-zlib`) owns the bytes, `host/zlib.rs` exposes one synchronous host
+primitive, and `js/lib/zlib.js` is the Node-shaped surface. `flate2` runs with the pure-Rust
+`miniz_oxide` backend so the binary gains no C toolchain requirement and no link against the
+system zlib — the same reasoning that kept OpenSSL out of `crypto`.
+
+Deferred, and recorded as D47 rather than hidden: streams (`createGzip`/`createGunzip` and the
+`Zlib`/`Gzip`/`Deflate`/`Inflate` classes), `brotli*`, `zstd*`, the `crc32` running-seed form, and
+thread-pool dispatch for the callback forms (they compute inline and deliver on `nextTick`).

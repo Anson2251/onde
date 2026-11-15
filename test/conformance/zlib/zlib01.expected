@@ -1,0 +1,19 @@
+gzip -1: buffer=true roundtrip=true
+deflate -1: buffer=true roundtrip=true
+deflateRaw -1: buffer=true roundtrip=true
+gzip 0: buffer=true roundtrip=true
+deflate 0: buffer=true roundtrip=true
+deflateRaw 0: buffer=true roundtrip=true
+gzip 1: buffer=true roundtrip=true
+deflate 1: buffer=true roundtrip=true
+deflateRaw 1: buffer=true roundtrip=true
+gzip 9: buffer=true roundtrip=true
+deflate 9: buffer=true roundtrip=true
+deflateRaw 9: buffer=true roundtrip=true
+concat: hello world
+crc32: 3421780262 0
+corrupt: Error Z_DATA_ERROR
+too large: ERR_BUFFER_TOO_LARGE
+level: ERR_OUT_OF_RANGE
+callback: err=null buffer=true same=true
+exit:0

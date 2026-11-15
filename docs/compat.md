@@ -101,6 +101,7 @@ Measured on the pinned engine (2026-11-13):
 | `net` | 🟡 | `Socket` (extends `Duplex`), `Server`, `connect`/`createConnection`/`createServer`, `isIP`/`isIPv4`/`isIPv6`; TCP + Unix, IPv4/IPv6, half-close, `pause`/`resume`, `setTimeout`, `setNoDelay`/`setKeepAlive`, `ref`/`unref`, `bytesRead`/`bytesWritten`, `getConnections`, `maxConnections`, `allowHalfOpen`, `pauseOnConnect`; no JS-visible fd (D40), `write()` accounting differs (D45) |
 | `http`/`https` | 🟡 | `Server`/`createServer`/`request`/`get`/`Agent`/`globalAgent`, `STATUS_CODES`/`METHODS`/`maxHeaderSize`/`validateHeaderName`/`validateHeaderValue`; HTTP/1.1 server + client, chunked both ways, keep-alive, inbound trailers, `100-continue`, `clientError`, upgrade; `https` over real TLS with certificate verification and ALPN `http/1.1`. Outbound trailers are not written (D46); the upgrade `head` argument is bounded by what the transport can hand back (D44) |
 | `dns` | 🟡 | `lookup` (callback and `dns.promises.lookup`) over `getaddrinfo`, with `all` and `family`; no `resolve*`, `lookupService`, `getServers`/`setServers`; `hints` is accepted and ignored |
+| `zlib` | 🟡 | `gunzipSync`, `inflateSync`, `inflateRawSync`, `gzipSync`, `deflateSync`, `deflateRawSync`, their callback forms, `crc32` and `constants` (13 `Z_*` values), over a whole buffer at a time. `level` (`-1`..`9`) and `maxOutputLength` are honoured; `chunkSize`/`flush`/`finishFlush`/`windowBits`/`dictionary` are accepted and ignored. A string input is rejected where Node encodes it implicitly, and the callback forms compute inline before delivering on `nextTick` (D47). No streams (`createGzip`/`createGunzip`), no `brotli*`, no `zstd*` |
 | `tls` | 🟡 | rustls transport, client and server. Options honoured: `ca` (appended to the bundled roots), `cert`/`key` (PEM string/Buffer/array), `rejectUnauthorized`, `servername` (SNI, or IP-SAN check for a literal), `ALPNProtocols`; `tls.connect`/`createServer`/`setSecureContext`, `socket.encrypted`/`authorized`/`authorizationError`/`alpnProtocol`/`getProtocol()`. No renegotiation, session resumption, client certificates or X.509 parsing (`getPeerCertificate()` is `{}`) — see D41 |
 | `readline` | 🟡 | interface over stdin; no `readline/promises` in 1.0. Moved out of M3: it is a stdin consumer, not I/O core, and M3 is the densest milestone |
 | `child_process` | 🟡 | `spawn`/`exec`/`execFile`/`fork`, stdio pipes, `kill` |
@@ -111,7 +112,7 @@ Measured on the pinned engine (2026-11-13):
 | `vm` | ⚪ | non-goal (D6) |
 | `inspector` | ⚪ | non-goal |
 | `diagnostics_channel` | ⚪ | 1.1 candidate |
-| `cluster`, `dgram`, `http2`, `zlib`, `sqlite` | ⚪ | not in 1.0 |
+| `cluster`, `dgram`, `http2`, `sqlite` | ⚪ | not in 1.0 |
 | `node:test` | 🟡 M7 | onde runner powering our own conformance corpus |
 
 ## 3. Divergences (deliberate, tested)
@@ -127,7 +128,7 @@ Measured on the pinned engine (2026-11-13):
 | D7 | `Buffer` is a `Uint8Array` subclass without the pool allocator | simpler; `allocUnsafe` is zeroed, `Buffer.from(Buffer)` copies | `test/js/lib/buffer.oracle.js` |
 | D8 | Stack traces for async jobs are synthetic unless `--async-stack-traces` (M6) | engine has no async stacks | M6 |
 | D9 | `--max-microtasks`/`--microtask-timeout` exist; Node has no equivalent | bounded work for embedders; default off | `crates/ln-cli/tests/cli.rs` |
-| D10 | HTTP/2, `dgram`, `zlib` absent | scope | M4 |
+| D10 | HTTP/2 and `dgram` absent; `zlib` is present but whole-buffer only (no streams/`brotli`/`zstd`, see D47) | scope | M4 |
 | D11 | Non-`Error` thrown values are wrapped in an `Error` before `uncaughtException`/`unhandledRejection` | promise jobs cannot carry the raw value across the engine-free scheduler boundary before the M6 job patch | `divergences/d01` |
 | D12 | The engine's `queueMicrotask` `TypeError` has no `ERR_INVALID_ARG_TYPE` code | QuickJS owns the global; ADR-0002 forbids wrapping it because it shares the promise FIFO | `divergences/d02` |
 | D13 | Timer/immediate ids start at 1 (Node's first id is 2) | ids are an implementation detail; `Timeout`/`Immediate` objects are the API | `divergences/d03` |
@@ -164,6 +165,7 @@ Measured on the pinned engine (2026-11-13):
 | D44 | HTTP `'upgrade'` hands back a zero-length `head` Buffer: detaching at a request boundary cannot recover bytes the codec reserved without completing a message | `Conn` has no `take_remainder()`; the transport's own surplus is flushed as `data`, so no byte is lost, but Node's third argument is smaller | `test/js/lib/http.test.js` |
 | D45 | `net.Socket.write()` returns `false` at a 16 KiB JS-buffered high-water mark, and `writableLength` counts bytes handed to the task rather than libuv's 64 KiB queue | the M3 stream contract; the observable `false` + conditional `'drain'` shape matches Node, the byte counts do not | `test/js/lib/net.test.js` |
 | D46 | Outbound HTTP trailers are validated and stored by `addTrailers` but never written; `finish` emits `0\r\n\r\n` with no trailer fields | `ln-http::finish` has no trailer parameter (ADR-0007 §2.4, Tier B); inbound trailers are parsed and reported | `test/js/lib/http.test.js` |
+| D47 | `zlib` is whole-buffer only and its callback forms are synchronous underneath: `gzip(buf, cb)` compresses on the calling thread and delivers `(err, result)` from `process.nextTick`, where Node queues the job on the libuv thread pool. The callback contract (delivery after the current turn, no half-built result) is unchanged, so a caller cannot observe the difference except by timing the tick. Compressed bytes are also not byte-identical to Node's — same format, different encoder — so the corpus asserts round trips, checksums and error codes, never encoded lengths. `zlib`-module inputs must be Buffer/TypedArray/DataView/ArrayBuffer; a string is `ERR_INVALID_ARG_TYPE` where Node would UTF-8-encode it (`crc32` still accepts one, as in Node) | `flate2` with the pure-Rust `miniz_oxide` backend: no C toolchain, no system zlib, and no streaming state yet. A thread-pool dispatch for callbacks is a stream-milestone change, not a correctness fix, and pretending the work is off-thread would hide it from anyone tuning a CLI | `test/js/lib/zlib.test.js`, `test/conformance/zlib/**` |
 
 
 ## 4. Buffer strategy

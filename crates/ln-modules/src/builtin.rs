@@ -38,6 +38,7 @@ pub const BUILTINS: &[&str] = &[
     "tty",
     "url",
     "util",
+    "zlib",
 ];
 
 /// Resolve a specifier to a canonical builtin name.

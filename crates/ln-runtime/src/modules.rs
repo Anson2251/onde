@@ -54,6 +54,7 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "https" => include_str!("../../../js/lib/https.js"),
         "tls" => include_str!("../../../js/lib/tls.js"),
         "net" => include_str!("../../../js/lib/net.js"),
+        "zlib" => include_str!("../../../js/lib/zlib.js"),
         "internal/loader" | "loader" => include_str!("../../../js/lib/loader.js"),
         "internal/fs" => include_str!("../../../js/lib/internal/fs.js"),
         "internal/http" => include_str!("../../../js/lib/internal/http.js"),

@@ -6,8 +6,8 @@ the host**.
 onde is for the code around the work: CLIs, build steps, config, request handlers with light
 logic, and the plugin layer inside another tool. It speaks Node's module system (`require`,
 `import`, `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`,
-`https`, `tls`, `dns`) and its globals — without a JIT, a 40 MB resident floor, or a V8-sized
-install.
+`https`, `tls`, `dns`, `zlib`) and its globals — without a JIT, a 40 MB resident floor, or a
+V8-sized install.
 
 > **Naming:** the project is now **onde**. The `ln-*` crates and the `lite` binary keep
 > their names for now, so build commands below still use `target/debug/lite`.
@@ -18,10 +18,11 @@ native ES modules, resolves `node_modules` and `exports` maps, ships the Node co
 `querystring`, `punycode`, `module`), the M3 I/O core (`fs`, `fs/promises`, `stream`,
 `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio), and the globals Node provides
 (`URL`, `TextEncoder`, `AbortController`, `EventTarget`, `structuredClone`). M4 has landed `net`,
-`http`, `https`, `tls` and `dns`: TCP and Unix sockets, an HTTP/1.1 server and client with
+`http`, `https`, `tls`, `dns` and `zlib`: TCP and Unix sockets, an HTTP/1.1 server and client with
 keep-alive, chunking and `Agent`, TLS through rustls with real certificate verification and ALPN,
-and `dns.lookup` over the OS resolver. The acceptance harnesses (throughput, interop, fd and
-slow-loris) are landing as the milestone closes — see [docs/m4-plan.md](docs/m4-plan.md),
+`dns.lookup` over the OS resolver, and whole-buffer gzip/deflate with `crc32`. The acceptance
+harnesses (throughput, interop, fd and slow-loris) are landing as the milestone closes — see
+[docs/m4-plan.md](docs/m4-plan.md),
 [ADR-0006](docs/adr/0006-handles-and-events.md) and
 [ADR-0007](docs/adr/0007-http-codec.md). The roadmap is [docs/roadmap.md](docs/roadmap.md); the M3
 contract is [docs/m3-plan.md](docs/m3-plan.md).
@@ -182,6 +183,7 @@ crates/
   ln-io/         tokio pool, fs ops, the M4 net/TLS transports         [M3/M4]
   ln-http/       sans-io HTTP/1.1 codec: framing and limits            [M4]
   ln-crypto/     hash/HMAC/HKDF/random, engine-free and tokio-free      [M3]
+  ln-zlib/       gzip/deflate + crc32, engine-free and tokio-free     [M4]
   ln-error/      NodeError: errno→code and message tables               [M3]
   ln-sys/        bindgen FFI for vendored, patched quickjs-ng          [M6]
 js/
@@ -190,10 +192,11 @@ js/
                  querystring, punycode, string_decoder, textcodec,
                  module, process, loader, fs, fs-promises, internal/fs,
                  stream, stream-promises, crypto, tty, perf_hooks,
-                 net, internal/net, http, https, internal/http, tls, dns
+                 net, internal/net, http, https, internal/http, tls, dns,
+                 zlib
 test/
-  conformance/   201 cases: scheduler (M1), modules, stdlib,
-                 fs, stream, net, http, https, divergences
+  conformance/   202 cases: scheduler (M1), modules, stdlib,
+                 fs, stream, zlib, net, http, https, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   stress/        RSS across timer create/clear
@@ -207,11 +210,11 @@ cargo test --all                                # 325 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 201/201 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 202/202 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (190)
+./test/differential.sh                          # node vs lite, same stdout + exit code (191)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 59 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 61 stdlib suites under node and lite + oracles
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
 ```
