@@ -1,5 +1,5 @@
 write-returned:false
 drain
-server-received:1048576
+bytes-intact:true
 closed
 exit:0

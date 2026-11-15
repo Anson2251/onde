@@ -40,12 +40,43 @@ fail=0
 skipped=0
 failed_names=()
 
+# Wall-clock bound for one case. Node keeps its event loop alive while a server is still listening,
+# so a case that fails to close one never exits, and without a bound the corpus run hangs with no
+# line explaining why. 20 s is far above the slowest case (the fs and net suites finish in ms).
+CASE_TIMEOUT="${CONFORMANCE_CASE_TIMEOUT:-20}"
+
+# Run `runtime src` into `out`, killing it after CASE_TIMEOUT. The watchdog writes to /dev/null:
+# a background subshell that inherits the capture pipe makes the caller's `$(...)` wait for the
+# sleep even after the case has exited, which is indistinguishable from a hang.
+run_bounded() {
+  local runtime="$1" src="$2" out="$3" marker="$4"
+  "$runtime" "$src" >"$out" 2>/dev/null &
+  local pid=$!
+  (
+    sleep "$CASE_TIMEOUT"
+    : >"$marker"
+    kill -9 "$pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  local watchdog=$!
+  local code=0
+  wait "$pid" 2>/dev/null || code=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$code"
+}
+
 run_case() {
   local runtime="$1" src="$2"
-  local out
+  local out marker code=0
   out="$(mktemp)"
-  "$runtime" "$src" >"$out" 2>/dev/null
-  local code=$?
+  marker="$out.timeout"
+  run_bounded "$runtime" "$src" "$out" "$marker" || code=$?
+  if [ -f "$marker" ]; then
+    printf 'killed by the %ss case timeout\n' "$CASE_TIMEOUT" >"$out"
+    code=124
+    rm -f "$marker"
+    : >"$out.timedout"
+  fi
   printf 'exit:%d\n' "$code" >>"$out"
   printf '%s' "$out"
 }
@@ -89,13 +120,13 @@ for suite in "${suites[@]}"; do
         exit 2
       fi
       node_src="$(mktemp)"
-      node "$src" >"$node_src" 2>/dev/null
-      node_code=$?
+      node_code=0
+      run_bounded node "$src" "$node_src" "$node_src.timeout" || node_code=$?
       printf 'exit:%d\n' "$node_code" >>"$node_src"
 
       lite_src="$(mktemp)"
-      "$runner_path" "$src" >"$lite_src" 2>/dev/null
-      lite_code=$?
+      lite_code=0
+      run_bounded "$runner_path" "$src" "$lite_src" "$lite_src.timeout" || lite_code=$?
       printf 'exit:%d\n' "$lite_code" >>"$lite_src"
 
       if diff -u "$node_src" "$lite_src" >/dev/null 2>&1; then
@@ -107,12 +138,20 @@ for suite in "${suites[@]}"; do
         fail=$((fail + 1))
         failed_names+=("$name")
       fi
-      rm -f "$node_src" "$lite_src"
+      rm -f "$node_src" "$node_src.timeout" "$lite_src" "$lite_src.timeout"
       continue
     fi
 
     expected="$dir/$(basename "$src" .js).expected"
     actual="$(run_case "$runner_path" "$src")"
+
+    if [ -f "$actual.timedout" ]; then
+      printf 'TIMEOUT   %s (killed after %ss)\n' "$name" "$CASE_TIMEOUT"
+      fail=$((fail + 1))
+      failed_names+=("$name")
+      rm -f "$actual" "$actual.timedout"
+      continue
+    fi
 
     if [ "${REGEN:-0}" = "1" ]; then
       cp "$actual" "$expected"
