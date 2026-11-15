@@ -20,7 +20,9 @@ const { join } = require("node:path");
 
 const root = join(__dirname, "..", "..");
 const lite = process.env.LITE_RELEASE || join(root, "target", "release", "lite");
-const compute = join(__dirname, "compute.js");
+// compute.js is the engine-level comparison; codec.js is the byte-level one, and it is where the
+// stdlib's own implementation (rather than the engine) used to dominate.
+const scripts = ["compute.js", "codec.js"].map((name) => join(__dirname, name));
 const reps = Number(process.env.BENCH_REPS || 3);
 
 if (!existsSync(lite)) {
@@ -30,10 +32,10 @@ if (!existsSync(lite)) {
 }
 
 /** Run one runtime `reps` times and return { workload: medianMs }. */
-function measure(label, command, args = []) {
+function measure(label, command, script, args = []) {
   const samples = new Map();
   for (let i = 0; i < reps; i += 1) {
-    const result = spawnSync(command, [...args, compute], { encoding: "utf8" });
+    const result = spawnSync(command, [...args, script], { encoding: "utf8" });
     if (result.status !== 0) {
       console.error(`bench: ${label} failed (exit ${result.status})`);
       process.stderr.write(result.stderr || "");
@@ -57,24 +59,29 @@ function measure(label, command, args = []) {
   return medians;
 }
 
-const node = measure("node", process.execPath);
-const onde = measure("onde", lite);
+for (const script of scripts) {
+  const node = measure("node", process.execPath, script);
+  const onde = measure("onde", lite, script);
 
-const names = [...node.keys()];
-const width = Math.max(...names.map((name) => name.length)) + 2;
+  const names = [...node.keys()];
+  const width = Math.max(...names.map((name) => name.length)) + 2;
 
-console.log(`${"workload".padEnd(width)}${"node".padStart(10)}${"onde".padStart(10)}${"onde/node".padStart(12)}`);
-const ratios = [];
-for (const name of names) {
-  const a = node.get(name);
-  const b = onde.get(name);
-  const ratio = b / a;
-  ratios.push(ratio);
+  console.log(`\n${script.split("/").pop()}`);
   console.log(
-    `${name.padEnd(width)}${a.toFixed(1).padStart(10)}${b.toFixed(1).padStart(10)}${`${ratio.toFixed(1)}x`.padStart(12)}`,
+    `${"workload".padEnd(width)}${"node".padStart(10)}${"onde".padStart(10)}${"onde/node".padStart(12)}`,
   );
-}
+  const ratios = [];
+  for (const name of names) {
+    const a = node.get(name);
+    const b = onde.get(name);
+    const ratio = b / a;
+    ratios.push(ratio);
+    console.log(
+      `${name.padEnd(width)}${a.toFixed(1).padStart(10)}${b.toFixed(1).padStart(10)}${`${ratio.toFixed(1)}x`.padStart(12)}`,
+    );
+  }
 
-ratios.sort((a, b) => a - b);
-const median = ratios[Math.floor(ratios.length / 2)];
-console.log(`\nmedian ratio ${median.toFixed(1)}x across ${names.length} workloads, ${reps} repetitions each`);
+  ratios.sort((a, b) => a - b);
+  const median = ratios[Math.floor(ratios.length / 2)];
+  console.log(`median ratio ${median.toFixed(1)}x across ${names.length} workloads, ${reps} repetitions each`);
+}

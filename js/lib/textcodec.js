@@ -13,6 +13,14 @@
 
 const EMPTY = new Uint8Array(0);
 
+// The host does the whole-buffer conversion in Rust. It is absent under the node oracle (the shim
+// has no `text`), where the JavaScript paths below stay in use, so both implementations are
+// exercised: the oracle checks the JavaScript one against Node, and the corpus checks this one.
+const hostText = (() => {
+  const host = globalThis.__ln_host;
+  return host === undefined || host === null ? undefined : host.text;
+})();
+
 // ---------------------------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------------------------
@@ -67,6 +75,13 @@ function describe(value) {
 // Standard requires for both `TextEncoder.encode` and `Buffer.from(string, "utf8")`.
 function encodeUTF8(input) {
   const str = `${input}`;
+  if (hostText !== undefined && hostText !== null) {
+    // An unpaired surrogate cannot cross the boundary as UTF-8: the engine encodes it as WTF-8,
+    // which is not valid UTF-8 and which the host rejects. `isWellFormed` is a native scan, and
+    // `toWellFormed` performs exactly the U+FFFD replacement the loop below does, so the host only
+    // ever sees valid text.
+    return hostText.encode(str.isWellFormed() ? str : str.toWellFormed());
+  }
   const bytes = [];
   for (let i = 0; i < str.length; i++) {
     let codePoint = str.charCodeAt(i);
@@ -245,6 +260,7 @@ function decodeUtf8Into(state, bytes, stream, encoding, fatal) {
 
 function decodeUTF8(input) {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (hostText !== undefined && hostText !== null) return hostText.decode(bytes, false);
   return codePointsToString(decodeUtf8Into(newUtf8State(), bytes, false, "utf-8", false));
 }
 
@@ -430,6 +446,15 @@ class TextDecoder {
   _decode(bytes, stream) {
     const encoding = this._encoding;
     if (encoding === "utf-8") {
+      // A flush (`stream: false` with no new bytes) still has to report the partial sequence left
+      // by the previous streaming call, so the host path is only safe when no state is pending.
+      const noPendingBytes = this._state.bytesNeeded === 0;
+      if (!stream && noPendingBytes && hostText !== undefined && hostText !== null) {
+        const decoded = hostText.decode(bytes, this._fatal);
+        // `null` means the bytes were not valid UTF-8 and `fatal` was set.
+        if (decoded === null) throw encodingInvalid(encoding);
+        return decoded;
+      }
       return codePointsToString(
         decodeUtf8Into(this._state, bytes, stream, encoding, this._fatal),
       );

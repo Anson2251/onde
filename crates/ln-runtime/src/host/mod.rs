@@ -13,6 +13,7 @@
 //! * [`stdio`] — stdout/stderr writes and TTY queries;
 //! * [`fs`] — the `fs` op entry points;
 //! * [`crypto`] — the CPU-only crypto primitives;
+//! * [`text`] — UTF-8 encode/decode for `buffer` and `TextEncoder`/`TextDecoder`;
 //! * [`zlib`] — gzip/zlib/raw-deflate and crc32;
 //! * [`net`] — `host.net`: commands to live handles (ADR-0006) plus the handle registry;
 //! * [`dns`] — `host.dnsAsync`: `dns.lookup` as an op (ADR-0005).
@@ -44,6 +45,7 @@ mod dns;
 mod fs;
 mod net;
 mod stdio;
+mod text;
 mod zlib;
 
 /// All state a host function may touch.
@@ -567,6 +569,7 @@ pub(crate) fn install<'js>(
     // --- compression primitives -------------------------------------------------------------
 
     zlib::install(ctx, &host, state)?;
+    text::install(ctx, &host, state)?;
 
     // --- network handles (M4, ADR-0006) -----------------------------------------------------
 
