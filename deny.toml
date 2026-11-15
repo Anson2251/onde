@@ -1,8 +1,10 @@
 # cargo-deny policy for onde.
 #
 # The project ships binaries, so every dependency must be redistributable under a permissive or
-# weak-copyleft license. MPL-2.0 is allowed because `webpki-roots` (M4's bundled root store) is
-# MPL-2.0; it is file-level copyleft, not a linking restriction, and we do not modify it.
+# weak-copyleft license. CDLA-Permissive-2.0 is allowed because `webpki-roots` ships M4's bundled CA
+# store under it. It is a permissive data license (Apache-2.0-like, no copyleft) covering the
+# certificate bundle rather than code, which is why it is listed explicitly instead of being folded
+# into the code licenses.
 #
 # Run: cargo deny check
 
@@ -30,7 +32,7 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
-  "MPL-2.0",
+  "CDLA-Permissive-2.0",
   "Unicode-3.0",
   "Zlib",
   "CC0-1.0",

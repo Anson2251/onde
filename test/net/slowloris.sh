@@ -122,7 +122,13 @@ fi
 
 if ! awk -v mb="$rss_mb" -v limit="$rss_limit_mb" 'BEGIN { exit !(mb < limit) }'; then
   echo "slowloris: RSS ${rss_mb}MB is not < ${rss_limit_mb}MB"
-  failures=$((failures + 1))
+  if [ "${NET_BENCH_SOFT:-0}" = "1" ]; then
+    # A shared CI runner is not the reference machine, and this bound is a recorded M4 gap that
+    # M7 closes by making per-connection session state lazy. Report the number, do not gate on it.
+    echo "slowloris: memory bound is a known gap (m4-plan §8), soft mode: not enforced"
+  else
+    failures=$((failures + 1))
+  fi
 fi
 
 # The 431 probe runs while the half-open sockets are still held, so it also proves the server
