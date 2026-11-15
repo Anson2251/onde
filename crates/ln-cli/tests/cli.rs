@@ -142,6 +142,26 @@ fn runs_a_classic_script() {
     assert_eq!(stdout(&output), "hello 1 true\n");
 }
 
+/// Node hands the script everything after its path. A flag that lite also defines (`--check`) must
+/// still reach the script, or a CLI like `tuckbox` cannot use its own options.
+#[test]
+fn script_arguments_win_over_lite_flags() {
+    let path = script(
+        "args.js",
+        "console.log(JSON.stringify(process.argv.slice(2)));\n",
+    );
+    let path = path.to_str().expect("utf-8 path");
+
+    let output = lite(&[path, "--check", "--prod", "-x"]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "[\"--check\",\"--prod\",\"-x\"]\n");
+
+    // The same holds when lite's own options come first.
+    let output = lite(&["--io-threads", "2", path, "--max-microtasks", "1"]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "[\"--max-microtasks\",\"1\"]\n");
+}
+
 #[test]
 fn uncaught_error_has_a_node_shaped_header() {
     let path = script(

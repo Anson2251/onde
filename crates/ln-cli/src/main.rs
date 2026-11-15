@@ -79,8 +79,49 @@ fn main() {
     process::exit(real_main());
 }
 
+/// Node's rule for script arguments: everything after the script path belongs to the script, even
+/// when it is spelled like one of lite's own options.
+///
+/// clap cannot express this alone. A flag defined on the command keeps priority over a trailing
+/// positional, so `lite app.js --check` would enable the checker instead of handing `--check` to
+/// the script. Inserting the `--` terminator before the script path turns every later token into a
+/// positional, which is exactly Node's behaviour.
+fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    /// Options that consume the next token, so the token after them is not the script path.
+    const VALUED: [&str; 5] = [
+        "-e",
+        "--eval",
+        "--max-microtasks",
+        "--microtask-timeout",
+        "--io-threads",
+    ];
+
+    let mut argv = argv;
+    let mut index = 1; // argv[0] is the program name
+    while index < argv.len() {
+        let token = argv[index].to_string_lossy().into_owned();
+
+        if token == "--" {
+            // The caller already separated the script; clap will do the right thing.
+            return argv;
+        }
+        if VALUED.contains(&token.as_str()) {
+            index += 2; // the option and its value
+            continue;
+        }
+        if token.starts_with('-') {
+            index += 1; // a lite flag (or `--eval=...`), never the script path
+            continue;
+        }
+
+        argv.insert(index, std::ffi::OsString::from("--"));
+        return argv;
+    }
+    argv
+}
+
 fn real_main() -> i32 {
-    let cli = match Cli::try_parse() {
+    let cli = match Cli::try_parse_from(with_script_terminator(env::args_os().collect())) {
         Ok(cli) => cli,
         Err(error) => return cli_error(error),
     };
