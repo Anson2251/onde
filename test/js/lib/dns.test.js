@@ -37,6 +37,15 @@ function hasError(error) {
   return error !== null && error !== undefined;
 }
 
+// A name that cannot resolve must report a resolution failure. Which code surfaces depends on the
+// resolver rather than on the runtime: ENOTFOUND when the name does not exist, EAI_AGAIN when the
+// resolver itself is unreachable, which is the normal state of a GitHub Actions container.
+const RESOLUTION_FAILURES = ["ENOTFOUND", "EAI_AGAIN"];
+
+function isResolutionFailure(error) {
+  return hasError(error) && RESOLUTION_FAILURES.includes(error.code);
+}
+
 // --- shape -----------------------------------------------------------------------------------
 
 record(typeof dns.lookup === "function", "dns.lookup is a function");
@@ -47,9 +56,25 @@ record(
 record(typeof dns.promises.lookup === "function", "dns.promises.lookup is a function");
 
 // Node's numeric hint flags and error-name constants.
-record(dns.ADDRCONFIG === 1024, `ADDRCONFIG is 1024 (got ${dns.ADDRCONFIG})`);
-record(dns.V4MAPPED === 2048, `V4MAPPED is 2048 (got ${dns.V4MAPPED})`);
-record(dns.ALL === 256, `ALL is 256 (got ${dns.ALL})`);
+// `getaddrinfo` flags, so the values are the platform's: glibc (Linux) uses 0x20/0x08/0x10 and the
+// BSDs (macOS) and Windows use 0x400/0x800/0x100. Node reports the same numbers, which is what
+// makes this a differential check rather than a hardcoded one.
+const EXPECTED_HINTS =
+  process.platform === "linux"
+    ? { ADDRCONFIG: 32, V4MAPPED: 8, ALL: 16 }
+    : { ADDRCONFIG: 1024, V4MAPPED: 2048, ALL: 256 };
+record(
+  dns.ADDRCONFIG === EXPECTED_HINTS.ADDRCONFIG,
+  `ADDRCONFIG is ${EXPECTED_HINTS.ADDRCONFIG} on ${process.platform} (got ${dns.ADDRCONFIG})`,
+);
+record(
+  dns.V4MAPPED === EXPECTED_HINTS.V4MAPPED,
+  `V4MAPPED is ${EXPECTED_HINTS.V4MAPPED} on ${process.platform} (got ${dns.V4MAPPED})`,
+);
+record(
+  dns.ALL === EXPECTED_HINTS.ALL,
+  `ALL is ${EXPECTED_HINTS.ALL} on ${process.platform} (got ${dns.ALL})`,
+);
 record(dns.NODATA === "ENODATA", `NODATA is ENODATA (got ${dns.NODATA})`);
 record(dns.NOTFOUND === "ENOTFOUND", `NOTFOUND is ENOTFOUND (got ${dns.NOTFOUND})`);
 record(dns.CANCELLED === "ECANCELLED", `CANCELLED is ECANCELLED (got ${dns.CANCELLED})`);
@@ -91,8 +116,8 @@ dns.lookup("localhost", (error, address, family) => {
       dns.lookup("does-not-exist.invalid", (missingError, missingAddress) => {
         record(hasError(missingError), "an unresolvable host produces an error");
         record(
-          hasError(missingError) && missingError.code === "ENOTFOUND",
-          `the error code is ENOTFOUND (got ${missingError && missingError.code})`,
+          isResolutionFailure(missingError),
+          `the error code is a resolution failure, ENOTFOUND or EAI_AGAIN (got ${missingError && missingError.code})`,
         );
         record(
           missingAddress === undefined,
@@ -114,8 +139,8 @@ dns.lookup("localhost", (error, address, family) => {
               () => record(false, "dns.promises.lookup should reject for .invalid"),
               (promiseError) =>
                 record(
-                  promiseError !== null && promiseError.code === "ENOTFOUND",
-                  `promise rejection code is ENOTFOUND (got ${promiseError && promiseError.code})`,
+                  isResolutionFailure(promiseError),
+                  `promise rejection code is a resolution failure (got ${promiseError && promiseError.code})`,
                 ),
             );
           },

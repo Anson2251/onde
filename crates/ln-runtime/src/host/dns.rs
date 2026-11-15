@@ -21,6 +21,16 @@ pub(super) fn install<'js>(
     host: &js::Object<'js>,
     state: &HostState,
 ) -> js::Result<()> {
+    // The `hints` constants are `getaddrinfo` flags, so their values come from the platform's
+    // headers: glibc uses 0x20/0x08/0x10 for ADDRCONFIG/V4MAPPED/ALL, the BSDs and Windows use
+    // 0x400/0x800/0x100. Publishing them from `libc` keeps `dns.ADDRCONFIG` equal to what Node
+    // reports on the same machine instead of pinning one platform's numbers in JavaScript.
+    let hints = js::Object::new(ctx.clone())?;
+    hints.set("addrconfig", i64::from(libc::AI_ADDRCONFIG))?;
+    hints.set("v4mapped", i64::from(libc::AI_V4MAPPED))?;
+    hints.set("all", i64::from(libc::AI_ALL))?;
+    host.set("dnsHints", hints)?;
+
     let ops = state.ops.clone();
     host.set(
         "dnsAsync",

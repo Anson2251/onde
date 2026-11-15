@@ -38,6 +38,8 @@ run_case() {
   code=$?
   if [ "$code" -ne 0 ]; then
     echo "FAIL      $label (exit $code)"
+    # These tests print their failures to stdout and exit nonzero, so stdout is the diagnostic.
+    sed 's/^/          /' "$out" | head -20
     sed 's/^/          /' "$err" | head -20
     failures+=("$label")
     fail=$((fail + 1))

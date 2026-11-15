@@ -174,12 +174,26 @@ const constants = {
   CANCELLED: "ECANCELLED",
 };
 
+// Lookup hints. Accepted by `lookup` and currently ignored by the resolver, but the values are the
+// platform's own `getaddrinfo` flags, which is what Node reports: glibc uses 0x20/0x08/0x10 and the
+// BSDs 0x400/0x800/0x100. The host publishes them from libc; the fallback is the BSD set, for the
+// differential harness where the host is absent.
+const hints = (() => {
+  const host = globalThis.__ln_host;
+  const published = host === undefined || host === null ? undefined : host.dnsHints;
+  if (published !== undefined && published !== null) {
+    return {
+      ADDRCONFIG: published.addrconfig,
+      V4MAPPED: published.v4mapped,
+      ALL: published.all,
+    };
+  }
+  return { ADDRCONFIG: 1024, V4MAPPED: 2048, ALL: 256 };
+})();
+
 module.exports = {
   lookup,
   promises: { lookup: lookupAsync },
-  // Lookup hints. Accepted by `lookup` and currently ignored by the resolver.
-  ADDRCONFIG: 1024,
-  V4MAPPED: 2048,
-  ALL: 256,
+  ...hints,
   ...constants,
 };
