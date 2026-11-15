@@ -41,7 +41,7 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 `path` (posix + win32), `url` (WHATWG `URL`/`URLSearchParams` + legacy), `util` (`format`,
 `inspect`, `promisify`, `inherits`, `types`, `isDeepStrictEqual`), `events` (`EventEmitter`, `once`,
 `on`, `errorMonitor`, `captureRejections`), `assert` (+ `assert/strict`), `buffer`,
-`string_decoder`, `os`, `console`, `querystring`, `punycode`, `module`.
+`string_decoder`, `os`, `console`, `querystring`, `punycode`, `module`, `constants`.
 
 ### Tier 1 — M3
 

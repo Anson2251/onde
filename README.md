@@ -121,7 +121,7 @@ lifecycle scripts, `.bin` links, peer and native dependencies, and the full scop
 |---|---|
 | runtime | `console`, `process`, timers, `queueMicrotask`, Node-style uncaught errors |
 | modules | CommonJS and native ESM, `node_modules` walking, `exports`/`imports` maps, ESM to CJS interop |
-| M2 stdlib | `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`, `querystring`, `punycode`, `module` |
+| M2 stdlib | `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`, `querystring`, `punycode`, `module`, `constants` |
 | M3 I/O | `fs`, `fs/promises`, `stream`, `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio |
 | M4 network | `net`, `http`, `https`, `tls`, `dns`, `zlib` |
 | next | `child_process`, `worker_threads`, `readline` (M5); `async_hooks` (M6) |
