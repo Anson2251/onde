@@ -101,14 +101,14 @@ where two versions genuinely conflict, so the tree resolves the same way under n
 
 The install numbers come from `/usr/bin/time -l` on an empty cache in a fresh directory, for the
 same two packages (`debug`, `ms`): `"$onde" "$tuckbox" install` against `npm install
---no-audit --no-fund`, onde on a release build and npm 11.19.1. The rebuild row is `"$onde"
+--no-audit --no-fund`, onde on a release build and npm 11.20.0. The rebuild row is `"$onde"
 "$tuckbox" ci` on that tree, with the store warm.
 
 | | tuckbox on onde | `npm install` |
 |---|---|---|
-| wall time | 0.40 s | 0.44 s |
-| peak RSS | 21 MB | 108 MB |
-| rebuild from the store | 0.04 s, 10 MB | |
+| wall time | 0.23 s | 0.44 s |
+| peak RSS | 21 MB | 107 MB |
+| rebuild from the store | 0.03 s, 10 MB | |
 
 `pnpm test` in `tuckbox/` runs every suite under node and under onde and compares the output;
 `TUCKBOX_NET=1 pnpm test` adds the suite that installs real packages from the registry. It skips
