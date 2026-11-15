@@ -621,7 +621,9 @@ impl Scheduler {
     fn drain_mailbox(&mut self) {
         let injected: Vec<Injected> = {
             let mut mailbox = self.mailbox.queue.borrow_mut();
-            mailbox.drain(..).collect()
+            // The queue is a `VecDeque` and the jobs are processed in order, so the deque is moved
+            // out whole and converted rather than drained element by element.
+            std::mem::take(&mut *mailbox).into()
         };
         for (origin, name, body) in injected {
             let id = self.next_job_id;

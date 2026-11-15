@@ -1198,7 +1198,7 @@ fn drain_bridge(
 ) {
     let ticks: Vec<u64> = {
         let mut bridge = bridge.borrow_mut();
-        bridge.ticks.drain(..).collect()
+        std::mem::take(&mut bridge.ticks)
     };
     for callback in ticks {
         let engine = engine.clone();
@@ -1211,7 +1211,7 @@ fn drain_bridge(
 
     let rejections: Vec<RejectionEvent> = {
         let mut bridge = bridge.borrow_mut();
-        bridge.rejections.drain(..).collect()
+        std::mem::take(&mut bridge.rejections)
     };
     for event in rejections {
         match event {
