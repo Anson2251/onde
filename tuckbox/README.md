@@ -1,7 +1,7 @@
 # tuckbox
 
 A small npm. It reads a `package.json`, resolves the dependency graph against the npm registry, and
-writes a `node_modules` tree — using nothing but `fs`, `https`, `zlib`, `path` and `process`.
+writes a `node_modules` tree, using only `fs`, `https`, `zlib`, `path` and `process`.
 
 ```sh
 pnpm build
@@ -22,44 +22,48 @@ failure you can act on, `2` usage.
 
 ## Why it is shaped this way
 
-It is the honest test of onde's claims: a real tool, doing real work, on the runtime itself. Every
-dependency decision below exists to keep that honest rather than to be clever.
+### TypeScript, compiled to CommonJS
 
-**TypeScript, compiled to CommonJS.** The source is `src/`, the thing that runs is `dist/`. onde
-executes the compiled CJS output, so nothing about the demo depends on a loader feature onde does
-not have. `pnpm build` is the only build step.
+The source is `src/`, the thing that runs is `dist/`. onde executes the compiled CommonJS output, so
+the demo does not depend on a loader feature onde lacks. `pnpm build` is the only build step.
 
-**`node_modules`, not a store layout.** Onde's resolver walks `node_modules` upward and
-canonicalizes real paths, so the tree has to *be* a `node_modules` tree. A pnpm-style isolated
-layout would need a resolver change and a symlink farm, and buys a demo nothing.
+### node_modules, not a store layout
 
-**A content-addressed store with hardlinks.** Tarballs are unpacked once into
-`.tuckbox/store/<sha512>` and hardlinked into place. Hardlinks rather than symlinks keep `realpath`
-canonical, so resolution, `__dirname` and any bundler see an ordinary install. Across filesystems
-`link` fails with `EXDEV` and tuckbox copies instead.
+Onde's resolver walks `node_modules` upward and canonicalizes real paths, so the tree has to be a
+`node_modules` tree. A pnpm-style isolated layout would need a resolver change and a symlink farm,
+and buys this demo nothing.
 
-**The lockfile is the only input to `ci`.** Entries are keyed by install path, so replaying a tree
-needs no range lookup and no trust in today's registry metadata. `install` and `ci` both rebuild
-`node_modules` from scratch, which is why a stale package cannot survive a run.
+### A content-addressed store with hardlinks
 
-**Whole-buffer zlib.** `node:zlib` on onde has no streaming inflate yet, so peak memory for one
-package is its compressed size plus its unpacked size. That is tracked in
-[docs/tuckbox.md](../docs/tuckbox.md) rather than hidden; a streaming `Inflate` is the fix.
+Tarballs are unpacked once into `.tuckbox/store/<sha512>` and hardlinked into place. Hardlinks keep
+`realpath` canonical, so resolution, `__dirname` and any bundler see an ordinary install. A symlink
+farm would break all three. Across filesystems `link` fails with `EXDEV` and tuckbox copies instead.
+
+### The lockfile is the only input to `ci`
+
+Entries are keyed by install path, so replaying a tree needs no range lookup and no trust in the
+registry's current metadata. `install` and `ci` both rebuild `node_modules` from scratch, which is
+why a stale package cannot survive a run.
+
+### Whole-buffer zlib
+
+`node:zlib` on onde has no streaming inflate yet, so peak memory for one package is its compressed
+size plus its unpacked size. That is recorded in [docs/tuckbox.md](../docs/tuckbox.md), and a
+streaming `Inflate` is the fix.
 
 ## What it does not do
 
-No lifecycle scripts, no `.bin` links, no `peerDependencies` installation, no `optionalDependencies`
-installation, no native builds, no publishing, no workspaces. `file:`, `git:` and `http:` specs are
-rejected with a clear error instead of half-working. The full list, with the behaviour for each, is
-in [docs/tuckbox.md](../docs/tuckbox.md) §5.
+It skips lifecycle scripts, `.bin` links, peer and optional dependencies, native builds, publishing
+and workspaces. `file:`, `git:` and `http:` specs are rejected with a clear error. The full list,
+with the behaviour for each, is in [docs/tuckbox.md](../docs/tuckbox.md) §5.
 
 ## Tests
 
 ```sh
-pnpm test            # every test/*.test.js under node AND onde, outputs compared
-TUCKBOX_NET=1 pnpm test   # adds the real-registry suite
+pnpm test                  # every test/*.test.js under node AND onde, outputs compared
+TUCKBOX_NET=1 pnpm test    # adds the real-registry suite
 ```
 
 Each test is a plain CommonJS file that prints `ok <name> <n> assertions`. The harness runs it on
-both runtimes and requires identical output: a module that quietly used an onde-only behaviour
-would fail against node, and one that used a node-only behaviour would fail against onde.
+both runtimes and requires identical output, so a module that leaned on an onde-only behaviour fails
+against node, and one that leaned on a node-only behaviour fails against onde.
