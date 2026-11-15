@@ -1,5 +1,12 @@
 "use strict";
 
+// The search primitives run in the host: a byte loop over a megabyte costs 40 ms in JavaScript and
+// tens of microseconds natively. Absent under the node oracle, where the loops below still run.
+const hostBuffer = (() => {
+  const host = globalThis.__ln_host;
+  return host === undefined || host === null ? undefined : host.buffer;
+})();
+
 // Node-compatible `Buffer`, implemented as a `Uint8Array` subclass in pure JavaScript.
 //
 // Design (docs/compat.md §4, divergence D7): there is no pool allocator. `Buffer.allocUnsafe`
@@ -631,11 +638,7 @@ class Buffer extends Uint8Array {
     if (!(other instanceof Uint8Array)) {
       throw invalidArgType("otherBuffer", "an instance of Buffer or Uint8Array", other);
     }
-    if (this.length !== other.length) return false;
-    for (let i = 0; i < this.length; i++) {
-      if (this[i] !== other[i]) return false;
-    }
-    return true;
+    return compareBytes(this, other) === 0;
   }
 
   compare(target, targetStart, targetEnd, sourceStart, sourceEnd) {
@@ -656,7 +659,7 @@ class Buffer extends Uint8Array {
     if (sStart >= sEnd) return tStart >= tEnd ? 0 : -1;
     if (tStart >= tEnd) return 1;
 
-    return compareBytes(this.subarray(sStart, sEnd), target.subarray(tStart, tEnd));
+    return compareRanges(this, sStart, sEnd, target, tStart, tEnd);
   }
 
   copy(target, targetStart, sourceStart, sourceEnd) {
@@ -1182,12 +1185,21 @@ class Buffer extends Uint8Array {
 // ---------------------------------------------------------------------------------------------
 
 function compareBytes(a, b) {
-  const length = Math.min(a.length, b.length);
+  return compareRanges(a, 0, a.length, b, 0, b.length);
+}
+
+// The host compares two borrowed slices, so a range comparison does not allocate a pair of
+// subarray views. Argument validation stays with the callers.
+function compareRanges(a, aStart, aEnd, b, bStart, bEnd) {
+  if (hostBuffer !== undefined) return hostBuffer.compare(a, aStart, aEnd, b, bStart, bEnd);
+  const left = a.subarray(aStart, aEnd);
+  const right = b.subarray(bStart, bEnd);
+  const length = Math.min(left.length, right.length);
   for (let i = 0; i < length; i++) {
-    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
   }
-  if (a.length === b.length) return 0;
-  return a.length < b.length ? -1 : 1;
+  if (left.length === right.length) return 0;
+  return left.length < right.length ? -1 : 1;
 }
 
 function writeString(buffer, string, offset, length, encoding) {
@@ -1308,7 +1320,10 @@ function toLastIndexOffset(byteOffset, length) {
 }
 
 function indexOfByte(buffer, value, offset) {
-  for (let i = Math.max(offset, 0); i < buffer.length; i++) {
+  const start = Math.max(offset, 0);
+  if (start >= buffer.length) return -1;
+  if (hostBuffer !== undefined) return hostBuffer.indexOf(buffer, value, start);
+  for (let i = start; i < buffer.length; i++) {
     if (buffer[i] === value) return i;
   }
   return -1;
@@ -1318,7 +1333,9 @@ function indexOfBytes(buffer, needle, offset) {
   const length = buffer.length;
   if (needle.length === 0) return Math.min(Math.max(offset, 0), length);
   if (offset > length - needle.length) return -1;
-  outer: for (let i = Math.max(offset, 0); i <= length - needle.length; i++) {
+  const start = Math.max(offset, 0);
+  if (hostBuffer !== undefined) return hostBuffer.indexOf(buffer, needle, start);
+  outer: for (let i = start; i <= length - needle.length; i++) {
     for (let j = 0; j < needle.length; j++) {
       if (buffer[i + j] !== needle[j]) continue outer;
     }
@@ -1329,6 +1346,8 @@ function indexOfBytes(buffer, needle, offset) {
 
 function lastIndexOfByte(buffer, value, offset) {
   const start = Math.min(offset, buffer.length - 1);
+  if (start < 0) return -1;
+  if (hostBuffer !== undefined) return hostBuffer.lastIndexOf(buffer, value, start);
   for (let i = start; i >= 0; i--) {
     if (buffer[i] === value) return i;
   }
@@ -1339,6 +1358,8 @@ function lastIndexOfBytes(buffer, needle, offset) {
   const length = buffer.length;
   if (needle.length === 0) return Math.min(Math.max(offset, 0), length);
   let start = Math.min(offset, length - needle.length);
+  if (start < 0) return -1;
+  if (hostBuffer !== undefined) return hostBuffer.lastIndexOf(buffer, needle, start);
   for (let i = start; i >= 0; i--) {
     let match = true;
     for (let j = 0; j < needle.length; j++) {

@@ -417,6 +417,7 @@ dependencies = [
  "ln-modules",
  "ln-sched",
  "ln-zlib",
+ "memchr",
  "serde_json",
 ]
 

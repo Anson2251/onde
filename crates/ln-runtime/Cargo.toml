@@ -20,6 +20,8 @@ ln-sched = { path = "../ln-sched" }
 ln-modules = { path = "../ln-modules" }
 # `node:zlib`'s whole-buffer gzip/deflate/crc32 implementation (host/zlib.rs).
 ln-zlib = { path = "../ln-zlib" }
+# `memchr`-class byte search for Buffer.indexOf/lastIndexOf (already in the graph).
+memchr = "2"
 serde_json = "1"
 
 [target.'cfg(unix)'.dependencies]

@@ -12,11 +12,9 @@ of three.
 
 | module | operation | onde vs Node | onde per call | verdict |
 |---|---|---|---|---|
-| `buffer.js` | `indexOf` over 1 MB | 2204x | **40 ms** | move to the host |
 | `buffer.js` | `from(base64)` 1 KB | 1152x | 196 µs | move to the host |
 | `string_decoder.js` | `write` 1 KB | 580x | 133 µs | fix the scan, not the module |
 | `buffer.js` | `toString("base64")` 1 KB | 485x | 80 µs | move to the host |
-| `buffer.js` | `compare` 1 KB | 3535x | 28 µs | same primitive as `indexOf` |
 | `buffer.js` | `readUInt32LE` | 232x | 0.23 µs | cheap, low value |
 | `buffer.js` | `toString("hex")` 1 KB | 227x | 129 µs | move to the host |
 | `url.js` | `new URL()` parse | 78x | 20 µs | 1.2 |
@@ -28,14 +26,28 @@ of three.
 | `punycode.js` | `toASCII` | 17x | 13 µs | feeds `url` |
 
 Already moved: the UTF-8 codec (`textcodec.js`, `buffer.js` encode/decode), which took
-`readFileSync(path, "utf8")` on 1 MB from 142 ms to 0.4 ms.
+`readFileSync(path, "utf8")` on 1 MB from 142 ms to 0.4 ms; `Buffer.indexOf`/`lastIndexOf`, which
+took a 1 MB byte scan from 40 ms to 10 µs (now 0.6x Node, because the search is a borrowed slice
+rather than a copy); and `Buffer.compare`/`equals`, from 28 µs to 0.55 µs per 1 KB comparison
+(3449x to 69x Node, the remainder being six-argument host calls and the borrow setup).
+
+All three were checked against a randomized reference before being trusted: 12,016 assertions for
+search and comparison together (3,500 generated cases), and 3,011 for UTF-8 (1,500 generated strings
+and byte arrays). Each
+arm validates a different thing, Node's implementation validates the reference and lite's validates
+the host, and both were mutation-tested by breaking the host and watching them fail.
+
+**The streaming decoder is still JavaScript** and is the largest codec cost left: `TextDecoder`
+with `stream: true` keeps the state machine, and `string_decoder.js` finds the incomplete-sequence
+boundary with a JavaScript byte loop before calling the native decode, which is why `write` on a
+1 KB chunk measures 580x Node. Fixing it means returning `{ text, pending }` from one host call
+rather than a second pass in JS.
 
 ## Tier 1: worth doing now
 
-**`buffer.js` search and codecs.** `indexOf`/`includes`/`lastIndexOf` are JavaScript byte loops;
-40 ms to scan 1 MB is the single worst cost in the runtime, and `indexOf` on a buffer is ordinary
-code. base64 and hex are also byte-at-a-time loops with a lookup table. All of these are memchr,
-memcmp and a 64-entry table in Rust, and they share one host module.
+**`buffer.js` codecs.** base64 and hex are byte-at-a-time loops with a lookup table (1152x and
+227x Node). They are a 64-entry table and a memcpy in Rust. `compare` and `fill` belong in the same
+host module; `indexOf`/`lastIndexOf` already live there.
 
 **`string_decoder.js`.** Not a port: the module already calls the native decoder, but it scans the
 chunk in JavaScript to find how many trailing bytes form an incomplete sequence, which is 1024
