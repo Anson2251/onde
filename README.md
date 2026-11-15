@@ -115,6 +115,11 @@ same two packages (`debug`, `ms`): `"$onde" "$tuckbox" install` against `npm ins
 lifecycle scripts, `.bin` links, peer and native dependencies, and the full scope is in
 [docs/tuckbox.md](docs/tuckbox.md).
 
+The real npm gets further than a demo usually does: `lite "$(command -v npm)" --help` prints npm
+11.20's help with no version warning. A command that walks the tree, `npm ls`, stops at
+`node:diagnostics_channel`, which [docs/compat.md](docs/compat.md) lists as a 1.1 candidate. That
+is the honest line: the CLI loads and runs, the module it needs for real work is not there yet.
+
 ## What's in the box
 
 | Layer | What's there |

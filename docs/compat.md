@@ -112,7 +112,7 @@ Measured on the pinned engine (2026-11-13):
 | `v8` | ⚪ | no `getHeapSnapshot`; `--max-old-space-size` maps to the engine limit |
 | `vm` | ⚪ | non-goal (D6) |
 | `inspector` | ⚪ | non-goal |
-| `diagnostics_channel` | ⚪ | 1.1 candidate |
+| `diagnostics_channel` | ⚪ | 1.1 candidate. npm 11.20 needs it for any command that walks the tree (`npm ls` fails with `ERR_UNKNOWN_BUILTIN_MODULE`); its `--help` and `--version` paths do not |
 | `cluster`, `dgram`, `http2`, `sqlite` | ⚪ | not in 1.0 |
 | `node:test` | 🟡 M7 | onde runner powering our own conformance corpus |
 
