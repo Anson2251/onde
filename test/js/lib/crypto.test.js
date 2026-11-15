@@ -523,7 +523,13 @@ eq(crypto.hash("sha256", new Uint8Array([97, 98, 99])),
     "getRandomValues float array message");
   throwsCode(() => crypto.getRandomValues(new DataView(new ArrayBuffer(4))), 17,
     "getRandomValues DataView");
-  throwsCode(() => crypto.getRandomValues(5), 17, "getRandomValues non-view");
+  // Not a view at all: the WebIDL conversion rejects it before the algorithm runs.
+  const nonView = throwsCode(() => crypto.getRandomValues(5), "ERR_INVALID_ARG_TYPE",
+    "getRandomValues non-view");
+  eq(nonView.name, "TypeError", "getRandomValues non-view is a TypeError");
+  eq(nonView.message,
+    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView.",
+    "getRandomValues non-view message");
 
   const quota = throwsCode(() => crypto.getRandomValues(new Uint8Array(65537)), 22,
     "getRandomValues quota");

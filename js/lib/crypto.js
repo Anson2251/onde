@@ -537,13 +537,20 @@ function isSharedView(value) {
   );
 }
 
+// The WebIDL conversion runs first (`ArrayBufferView`, then the shared-buffer check) and only then
+// does the algorithm reject a view that is not an integer typed array. Node distinguishes the two:
+// a number or a plain object is a coded TypeError from the conversion, a `DataView` or a float
+// array is a `TypeMismatchError` from the algorithm.
+function notAViewError() {
+  const error = new TypeError(
+    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView.",
+  );
+  error.code = "ERR_INVALID_ARG_TYPE";
+  return error;
+}
+
 function getRandomValues(typedArray) {
-  if (!isIntegerTypedArray(typedArray)) {
-    throw new DOMException(
-      "The data argument must be an integer-type TypedArray",
-      "TypeMismatchError",
-    );
-  }
+  if (!ArrayBuffer.isView(typedArray)) throw notAViewError();
   if (isSharedView(typedArray)) {
     // Node's WebIDL layer reports this as a coded TypeError; the code comes from
     // `makeException`'s default because webcrypto passes `code: undefined`.
@@ -553,6 +560,12 @@ function getRandomValues(typedArray) {
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
+  }
+  if (!isIntegerTypedArray(typedArray)) {
+    throw new DOMException(
+      "The data argument must be an integer-type TypedArray",
+      "TypeMismatchError",
+    );
   }
   if (typedArray.byteLength > MAX_GET_RANDOM_VALUES_BYTES) {
     throw new DOMException(
