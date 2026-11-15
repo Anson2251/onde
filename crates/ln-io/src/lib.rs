@@ -8,14 +8,16 @@
 //! Two execution modes share the one lazily created runtime:
 //!
 //! - **Ops** (ADR-0005): one-shot work on the blocking pool, one completion. `fs`, `dns.lookup`.
-//! - **Handles** ([net], ADR-0006): long-lived async tasks that own a connection and emit events
-//!   until it closes. Sockets, TLS sessions, HTTP/1.1 connections.
+//! - **Handles** ([net], [proc], ADR-0006): long-lived async tasks that own a resource and emit
+//!   events until it closes. Sockets, TLS sessions, HTTP/1.1 connections, child processes.
 //!
 //! The public types in this file are the M3 contract shared with `ln-runtime` and with the plan
-//! in `docs/m3-plan.md`; the M4 contract is [`net`] and `docs/m4-plan.md`. Extend them, do not
-//! rename them.
+//! in `docs/m3-plan.md`; the M4 contract is [`net`] and `docs/m4-plan.md`; the M5 child-process
+//! contract is [`proc`] and `docs/m5-plan.md`. Extend them, do not rename them.
 
 pub mod net;
+pub mod proc;
+pub mod signal;
 
 use std::ffi::CString;
 use std::fs;

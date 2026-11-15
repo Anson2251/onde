@@ -77,11 +77,11 @@ Deviations from the plan below, all deliberate:
 - `ln-cli` parses arguments with `clap` 4 (derive). The CLI is a delivery mechanism, not the
   product: argument parsing, help and usage errors are exactly the kind of edge-case-heavy code
   we should not be writing by hand while the runtime semantics are unfinished.
-- `process.exit` unwinds by throwing a private sentinel so the current script stops immediately;
-  Node's `_exit` does not run `finally` blocks. M1 kept this mechanism (compat D15): QuickJS has
-  no uncatchable abort that also preserves the exit path, and the recorded code plus the
-  no-drain rule are what the contract depends on. The engine interrupt is used for the
-  `--microtask-timeout` budget, not for `process.exit`.
+- `process.exit` unwinds with QuickJS's **uncatchable-error** bit on an `Error` object, so a
+  script's `try { ... process.exit() } catch` cannot observe the exit as a failure and `finally`
+  blocks do not run, matching Node. M0–M4 used a catchable string sentinel; M5 replaced it once
+  the engine bit was confirmed (`test/conformance/loop/l10-exit-uncatchable`). The engine interrupt
+  is used for the `--microtask-timeout` budget, not for `process.exit`.
 
 **Build**
 
@@ -388,6 +388,11 @@ Two recorded reversals of the sketch below, both deliberate:
 
 ## M5 — Processes and threads (4 w)
 
+**Status: complete on 2026-11-15.** The implementation contract is [m5-plan.md](m5-plan.md); the
+structural decisions are [ADR-0008](adr/0008-processes-and-threads.md). The engine primitives the
+plan depends on (shared-memory allocation, cross-isolate serialization, cross-thread
+`Atomics.wait`/`notify`) were verified against the pinned engine before the plan was written.
+
 **Build**
 
 - `child_process`: `spawn`/`exec`/`execFile`/`fork`, stdio pipes, `kill`, `exit`/`close`
@@ -397,12 +402,39 @@ Two recorded reversals of the sketch below, both deliberate:
   `JS_SetSharedArrayBufferFunctions`, `Atomics` (requires `JS_SetCanBlock(true)`).
 - Worker lifecycle: `terminate` (cooperative unwind between jobs), `unref`, `workerData`,
   `parentPort`, `MessageChannel`/`MessagePort` (lite).
+- `readline`: a line-oriented interface over any stream (moved here from M3), plus
+  `readline/promises`.
+- `process`: `cpuUsage`, `kill`, and the catchable signals the CLI surface needs (see
+  [m5-plan.md](m5-plan.md) §3.4).
 
 **Exit criteria**
 
 - Worker echo benchmark: 1M round-trips, no message reordering.
 - Shared counter from 8 workers with `Atomics.add` is exact; `Atomics.wait` blocks and wakes.
 - `child_process` interop tests green on macOS and Linux; zombie-free on `kill -9`.
+
+**What shipped, and where it is proven:**
+
+| Criterion | Evidence |
+|---|---|
+| worker echo, 1M round-trips, no reordering | `FULL=1 ./test/proc/run.sh`: 1,000,000 sequential messages, zero failures (~23k/s lite on the dev machine) |
+| 8-worker `Atomics.add` is exact; `Atomics.wait` wakes | `test/proc/atomics.js`: exactly 400,000 after 8 × 50,000; a worker's `notify` woke a waiting worker (`"ok"`, not `"timed-out"`) |
+| `child_process` interop, zombie-free | `test/proc/run.sh` 12/12 (every case under node and lite); `signals.js` asserts `kill(pid, 0)` throws `ESRCH` after `SIGKILL` |
+| no regression | 230/230 conformance, 220/220 differential, 73/73 JS suites, 372 Rust tests; cold start 12.16 ms / 21.00 ms (limits 14/25) |
+
+**Recorded deviations** (full list in [m5-plan.md](m5-plan.md) §12 and D48–D53 in
+[compat.md](compat.md)):
+
+- The forked child's IPC channel is a singleton with a reserved completion id, not a proc-family
+  handle: `fork` hands the child exactly one descriptor on fd 3.
+- `terminate()` is cooperative: a worker in a tight JS loop stops at the next bytecode safepoint, a
+  worker blocked in `Atomics.wait` stops when the wait returns (D48).
+- `transferList` detaches an `ArrayBuffer` but the destination receives a copy; ports cannot be
+  transferred between threads (D49).
+- `child_process` has no `spawnSync` family, and `fork` IPC is JSON and lite-only (D50).
+- Signals are limited to the six a CLI uses, and workers cannot install process-wide handlers
+  (D51). `readline` is line-oriented (D52); worker resource limits and captured stdio are absent
+  (D53).
 
 ---
 
@@ -540,7 +572,8 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | [0005](adr/0005-ops-protocol.md) | Ops protocol: sync vs async, payload rules, cancellation, completion ids | accepted |
 | [0006](adr/0006-handles-and-events.md) | Handles and events: live connections as a second primitive; hyper rejected | accepted |
 | [0007](adr/0007-http-codec.md) | HTTP/1.1 as a sans-io `httparse`-based state machine, outbound heads authored in JS | accepted |
-| 0008 | Permissions model (deny-by-default `--allow-*`) | deferred to 1.1 (renumbered; 0006/0007 taken by M4) |
+| [0008](adr/0008-processes-and-threads.md) | Threads and processes: nested isolate per worker, engine-serialized messages with a SAB table, proc/worker handle families, cooperative termination | accepted (M5) |
+| 0009 | Permissions model (deny-by-default `--allow-*`) | deferred to 1.1 (renumbered; 0008 taken by M5) |
 
 ## 7. What we are explicitly not doing
 

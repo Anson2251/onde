@@ -34,6 +34,8 @@ jobs:
           node-version: "26"
       - name: stdlib tests (node + lite) and Node oracles
         run: ./test/js/run.sh
+      - name: M5 acceptance (children, workers, shared memory, signals)
+        run: ./test/proc/run.sh
       - name: M3 acceptance programs (cat, wc -l, cp -r)
         run: ./test/programs/run.sh
       - name: module smoke set (30 CJS + 10 ESM packages)

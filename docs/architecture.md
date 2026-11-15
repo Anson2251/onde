@@ -3,8 +3,11 @@
 ## 1. Isolate model
 
 One isolate = one OS thread = one `JSRuntime` + one or more `JSContext`s (realms) + one
-scheduler. There is no shared JS heap between threads. Workers are separate isolates; the only
-cross-thread channel is a queue of owned Rust payloads plus a waker.
+scheduler. There is no shared JS heap between threads. A worker is a separate isolate, constructed
+on its thread; the only cross-thread channel is a queue of owned Rust payloads plus a waker. A
+worker message is engine-serialized bytes plus a refcounted `SharedArrayBuffer` pointer table,
+reconstructed into a `JSValue` on the destination thread; no `JSValue` itself crosses (ADR-0008
+§2.3).
 
 ```
          ┌─────────────────────── isolate thread ───────────────────────┐
@@ -33,7 +36,7 @@ boundary at exactly one place: `OpDone` messages.
 ln-cli ──▶ ln-runtime ──┬─▶ ln-sched           (pure policy, no engine)
                         ├─▶ ln-engine ──▶ ln-sys (bindgen, vendored quickjs-ng)
                         ├─▶ ln-modules          (resolution, no engine)
-                        ├─▶ ln-io ──▶ ln-http   (M4 transports → sans-io codec)
+                        ├─▶ ln-io ──▶ ln-http   (net/TLS, child processes, signals)
                         ├─▶ ln-crypto
                         └─▶ js/                 (bootstrap + node: modules)
 
@@ -43,10 +46,10 @@ ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps
 | Crate | Owns | Must not |
 |---|---|---|
 | `ln-sched` | queues, checkpoint, timers, loop driver, events | know about QuickJS, allocate per job where avoidable |
-| `ln-engine` | `JSRuntime`/`JSContext` lifetime, value handles, class registry, promise hooks, interrupt, the `Job::Engine` adapter | contain Node semantics |
-| `ln-runtime` | bootstrap, the engine's resolver/loader callbacks, host primitives, op registry, event→JS mapping | call `execute_pending_job` directly |
+| `ln-engine` | `JSRuntime`/`JSContext` lifetime, value handles, class registry, promise hooks, interrupt/cancel, the `Job::Engine` adapter, the process-global `SharedArrayBuffer` allocator and cross-isolate serialization | contain Node semantics |
+| `ln-runtime` | bootstrap, the engine's resolver/loader callbacks, host primitives, op/handle/proc/worker registries, event→JS mapping, the worker thread lifecycle | call `execute_pending_job` directly |
 | `ln-modules` | CJS/ESM resolution, `package.json` maps, file URLs, CJS named-export scan | know about QuickJS, read a `JSValue`, decide runtime policy |
-| `ln-io` | fs syscalls, the tokio offload pool, and M4's transports (TCP/Unix/TLS) with their connection tasks; `Op` and handle execution | hold a `JSValue`, call into JS, decide HTTP or Node policy |
+| `ln-io` | fs syscalls, the tokio offload pool, net transports (TCP/Unix/TLS) with their connection tasks, child processes with pipes/IPC, and signal delivery; `Op` and handle execution | hold a `JSValue`, call into JS, decide HTTP or Node policy |
 | `ln-http` | HTTP/1.1 framing: head parsing, chunked codec, limits, the peer's keep-alive intent | own a socket, depend on tokio, decide JS-visible policy |
 | `ln-crypto` | hash/HMAC/HKDF state and random generation | do I/O, depend on `tokio`, hold a `JSValue` |
 | `ln-error` | `NodeError`, errno→code and message tables, argument-error constructors | know about QuickJS or any runtime policy |
@@ -193,6 +196,25 @@ enum Event { Listening { local }, Connection { handle, remote }, Connected { loc
 - A handle is in raw mode (`data`) or parsed mode (`request`/`response`/`body`, driven by
   `ln-http`); `detach` hands the socket back to raw mode for `'upgrade'` and `CONNECT`. This is
   why the raw socket in `'connection'` is the same object the HTTP layer reads from.
+
+### Processes, workers and signals
+
+M5 adds two more handle families and one singleton:
+
+- **proc** — one child process is one id and one task; its three pipes are stream-tagged events,
+  so the child holds one loop ref and `exit`/`close` ordering lives in one place. Commands go
+  through `host.proc(id, name, args)`, events through `__ln_proc_event`.
+- **worker** — a worker is a nested `Isolate` on its own thread. The parent creates the worker's
+  completion channel, keeps a sender to wake it, and parks events for `__ln_worker_event`.
+  `postMessage` values are engine-serialized bytes plus a SAB pointer table; the worker
+  reconstructs them on its thread.
+- **signals and the forked child's IPC** are process-level, not per-entity: signals use a reserved
+  completion id and a token sink per signal, and a forked child has exactly one IPC descriptor, so
+  it too uses a reserved id rather than a fourth table.
+
+The completion router is therefore: reserved ids (IPC, signals) → ops → net handles → proc →
+worker. Every id comes from the one `RequestIdAllocator`, so the order is only a lookup
+convenience, not a type tag.
 
 ## 6. Module system
 

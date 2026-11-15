@@ -65,6 +65,20 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 - `zlib`: `gzip`/`gunzip`/`deflate`/`inflate` (and `Raw`) in sync and callback forms,
   `crc32`, `constants`
 
+### Processes, threads and lines — M5
+
+- `child_process`: `spawn`/`exec`/`execFile`/`fork`; stdio `pipe`/`ignore`/`inherit`/fd, the
+  `ChildProcess` event set, streamed stdin/stdout/stderr with backpressure, `kill`, `exec`
+  `timeout`/`maxBuffer`/`killSignal`, `shell`, `cwd`/`env`/`argv0`/`detached`, and `fork` IPC
+  (`send`/`message`/`disconnect`, JSON frames over fd 3)
+- `worker_threads`: one isolate per OS thread, `Worker`, `parentPort`, `workerData`, `threadId`,
+  `MessageChannel`/`MessagePort`, `receiveMessageOnPort`, `transferList`, `SharedArrayBuffer` and
+  cross-thread `Atomics`, cooperative `terminate`, `ref`/`unref`
+- `readline` and `readline/promises`: `createInterface`, `Interface`, prompts, history, async
+  iteration, ANSI helpers, `emitKeypressEvents`
+- `process`: real `cpuUsage`, `kill`, the six catchable signals, and `send`/`message`/`disconnect`
+  in a forked child
+
 ### Globals
 
 `URL`, `URLSearchParams`, `TextEncoder`, `TextDecoder`, `AbortController`, `AbortSignal`,
@@ -78,7 +92,6 @@ rendering shared by scripts and modules.
 
 ### Not yet
 
-- **M5:** `child_process`, `worker_threads`, `readline`
 - **M6:** `async_hooks`/`AsyncLocalStorage` across `await`
 - **Non-goals:** native addons (N-API), `vm`, `cluster`, `inspector`, full `Intl` — see
   [compat.md](compat.md) §3
@@ -91,12 +104,13 @@ rendering shared by scripts and modules.
 crates/
   ln-cli/        `lite` binary: args, budget flags, eval vs file       [exists]
   ln-runtime/    isolate bootstrap, host primitives, ESM/CJS loading,
-                 loop, errors                                          [exists]
+                 loop, errors, worker/proc/signal bridges              [exists]
   ln-engine/     safe wrapper over the engine + the job pump step      [exists]
   ln-sched/      microtask/tick scheduler, timers, loop driver, budget [exists]
   ln-modules/    engine-free CJS/ESM resolution, package.json maps,
                  named-export scan                                     [exists]
-  ln-io/         tokio pool, fs ops, the net/TLS transports            [M3/M4]
+  ln-io/         tokio pool, fs ops, net/TLS transports, child
+                 processes and signals                                [M3/M4/M5]
   ln-http/       sans-io HTTP/1.1 codec: framing and limits            [M4]
   ln-crypto/     hash/HMAC/HKDF/random, engine-free and tokio-free     [M3]
   ln-zlib/       gzip/deflate + crc32, engine-free and tokio-free      [M4]
@@ -109,14 +123,18 @@ js/
                  module, process, loader, fs, fs-promises, internal/fs,
                  stream, stream-promises, crypto, tty, perf_hooks,
                  net, internal/net, http, https, internal/http, tls,
-                 dns, zlib
+                 dns, zlib, child_process, internal/pipe,
+                 worker_threads, internal/worker, readline,
+                 readline-promises
 test/
-  conformance/   202 cases: scheduler (M1), modules, stdlib,
-                 fs, stream, zlib, net, http, https, divergences
+  conformance/   230 cases: scheduler (M1), modules, stdlib,
+                 fs, stream, zlib, net, http, https, child_process,
+                 workers, readline, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   programs/      cat, wc -l, cp -r as real programs (M3 acceptance)
   net/           throughput, interop, fd-leak, slow-loris, cold start (M4)
+  proc/          M5 acceptance: children, workers, Atomics, signals
   stress/        RSS across timer create/clear
 tuckbox/         a small npm, in TypeScript, running on onde           [demo]
 vendor/          quickjs-ng fork + rquickjs-sys patch queue            [M6]
@@ -125,15 +143,17 @@ vendor/          quickjs-ng fork + rquickjs-sys patch queue            [M6]
 ## 3. Build and test
 
 ```sh
-cargo test --all                                # 335 tests across the crates
+cargo test --all                                # 372 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 202/202 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 230/230 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (191)
+./test/differential.sh                          # node vs lite, same stdout + exit code (220)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 61 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 73 stdlib suites under node and lite + oracles
+./test/proc/run.sh                              # M5 acceptance: children, workers, signals
+FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
 ./test/net/run.sh                               # M4 acceptance: bench, interop, fdleak, slowloris
@@ -158,6 +178,8 @@ both node and onde (see [tuckbox/README.md](../tuckbox/README.md)).
 - **smoke/** generates 30 CommonJS and 10 ESM packages and resolves them under both runtimes.
 - **net/** is the M4 acceptance set; `NET_BENCH_SOFT=1` makes its performance rows informational,
   which is the mode CI uses.
+- **proc/** is the M5 acceptance set: every case runs under node and under lite; the worker echo
+  case runs 20k round-trips by default and 1M with `FULL=1`.
 
 ### Why the corpus compares stdout and the exit code, not stderr
 
@@ -182,16 +204,20 @@ differential, smoke and stdlib harnesses.
 1. [roadmap.md](roadmap.md) — milestones, exit criteria, sequencing, risks.
 2. [m4-plan.md](m4-plan.md) — the milestone just closed: host boundary, WP ownership,
    exit criteria.
-3. [adr/0006-handles-and-events.md](adr/0006-handles-and-events.md) — ops vs handles, the
+3. [m5-plan.md](m5-plan.md) — the milestone being planned: process/worker host boundary, work
+   packages, tests, divergences.
+4. [adr/0008-processes-and-threads.md](adr/0008-processes-and-threads.md) — the M5 structural
+   decision: one isolate per thread, serialized messages plus a shared-memory pointer table.
+5. [adr/0006-handles-and-events.md](adr/0006-handles-and-events.md) — ops vs handles, the
    structural M4 decision.
-4. [adr/0007-http-codec.md](adr/0007-http-codec.md) — why the HTTP parser is a sans-io Rust state
+6. [adr/0007-http-codec.md](adr/0007-http-codec.md) — why the HTTP parser is a sans-io Rust state
    machine.
-5. [adr/0002-microtask-scheduler.md](adr/0002-microtask-scheduler.md) — the scheduler redesign
+7. [adr/0002-microtask-scheduler.md](adr/0002-microtask-scheduler.md) — the scheduler redesign
    (the load-bearing decision).
-6. [adr/0003-event-loop.md](adr/0003-event-loop.md) — loop phases, timers, I/O offload.
-7. [adr/0004-module-system.md](adr/0004-module-system.md) — ESM/CJS, interop, resolver.
-8. [architecture.md](architecture.md) — component map, crate graph, boot sequence.
-9. [adr/0001-engine-baseline.md](adr/0001-engine-baseline.md) — why quickjs-ng, how it is pinned
-   and patched.
-10. [compat.md](compat.md) — API matrix and known divergences.
-11. [tuckbox.md](tuckbox.md) — the demo that exercises all of it: a package installer on onde.
+8. [adr/0003-event-loop.md](adr/0003-event-loop.md) — loop phases, timers, I/O offload.
+9. [adr/0004-module-system.md](adr/0004-module-system.md) — ESM/CJS, interop, resolver.
+10. [architecture.md](architecture.md) — component map, crate graph, boot sequence.
+11. [adr/0001-engine-baseline.md](adr/0001-engine-baseline.md) — why quickjs-ng, how it is pinned
+    and patched.
+12. [compat.md](compat.md) — API matrix and known divergences.
+13. [tuckbox.md](tuckbox.md) — the demo that exercises all of it: a package installer on onde.

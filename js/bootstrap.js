@@ -45,6 +45,53 @@
     sink(name, payload);
   }
 
+  // --- internal worker registry (M5) ----------------------------------------------------------
+
+  // A worker is an id plus a thread; events arrive as `__ln_worker_event(id, name, payload)`.
+  // Same shape as the handle registry: JS owns the callbacks, Rust only calls by id.
+  const workerSinks = new Map();
+  const workerRegistry = host.workers;
+  if (workerRegistry !== undefined && workerRegistry !== null) {
+    workerRegistry.register = (id, sink) => {
+      if (typeof sink !== "function") {
+        throw invalidArgType("sink", "function", sink);
+      }
+      workerSinks.set(Number(id), sink);
+    };
+    workerRegistry.release = (id) => {
+      workerSinks.delete(Number(id));
+    };
+  }
+
+  function workerEvent(id, name, payload) {
+    const sink = workerSinks.get(Number(id));
+    if (sink === undefined) return;
+    sink(name, payload);
+  }
+
+  // --- internal process registry (M5) ---------------------------------------------------------
+
+  // A child process is an id plus a task; events arrive as `__ln_proc_event(id, name, payload)`.
+  const procSinks = new Map();
+  const procRegistry = host.procHandles;
+  if (procRegistry !== undefined && procRegistry !== null) {
+    procRegistry.register = (id, sink) => {
+      if (typeof sink !== "function") {
+        throw invalidArgType("sink", "function", sink);
+      }
+      procSinks.set(Number(id), sink);
+    };
+    procRegistry.release = (id) => {
+      procSinks.delete(Number(id));
+    };
+  }
+
+  function procEvent(id, name, payload) {
+    const sink = procSinks.get(Number(id));
+    if (sink === undefined) return;
+    sink(name, payload);
+  }
+
   // --- internal module evaluation -------------------------------------------------------------
 
   function evalInternal(name) {
@@ -639,6 +686,16 @@
     return require;
   }
 
+  // A worker isolate must be able to receive `parentPort` messages before its entry module runs;
+  // loading the module here registers the sink and creates the port.
+  let parentMessage = null;
+  let parentMessageError = null;
+  if (host.workerInfo !== null && host.workerInfo !== undefined) {
+    const workerRuntime = loader.requireBuiltin("internal/worker");
+    parentMessage = workerRuntime.onParentMessage;
+    parentMessageError = workerRuntime.onParentMessageError;
+  }
+
   // Rust calls these functions; define them as non-enumerable so they do not show up in user
   // reflection but remain callable across the boundary.
   for (const [name, value] of Object.entries({
@@ -655,6 +712,27 @@
     __ln_op_done: opDone,
     __ln_dns_op: dnsOp,
     __ln_handle_event: handleEvent,
+    __ln_worker_event: workerEvent,
+    __ln_proc_event: procEvent,
+    __ln_ipc_event: (name, payload) => {
+      const target = g.process;
+      if (target === undefined || target === null) return;
+      target._ipcEvent(name, payload);
+    },
+    __ln_parent_message: (value) => {
+      if (parentMessage !== null) parentMessage(value);
+    },
+    __ln_parent_message_error: (message) => {
+      if (parentMessageError !== null) parentMessageError(message);
+    },
+    __ln_detach_buffer: (value) => host.detachBuffer(value),
+    __ln_signal: (number) => {
+      const target = g.process;
+      if (target === undefined || target === null) return;
+      const name = host.signalName(number);
+      if (name === null || name === undefined) return;
+      target.emit(name);
+    },
     __ln_cjs_namespace: requireCjsNamespace,
     __ln_builtin_exports: requireBuiltinExports,
     __ln_builtin_export_names: builtinExportNames,

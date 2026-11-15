@@ -1,0 +1,4 @@
+stdout:abc
+stderr:err
+code:2
+exit:0

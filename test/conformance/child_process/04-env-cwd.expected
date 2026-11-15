@@ -1,0 +1,4 @@
+argv:["a","b"]
+base:tmp
+env:yes
+exit:0

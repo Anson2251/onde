@@ -13,6 +13,7 @@ pub const BUILTINS: &[&str] = &[
     "assert",
     "assert/strict",
     "buffer",
+    "child_process",
     "console",
     "constants",
     "crypto",
@@ -32,6 +33,8 @@ pub const BUILTINS: &[&str] = &[
     "process",
     "punycode",
     "querystring",
+    "readline",
+    "readline/promises",
     "stream",
     "stream/promises",
     "string_decoder",
@@ -39,6 +42,7 @@ pub const BUILTINS: &[&str] = &[
     "tty",
     "url",
     "util",
+    "worker_threads",
     "zlib",
 ];
 

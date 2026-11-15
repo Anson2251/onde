@@ -38,6 +38,7 @@ use crate::host_error::{
 };
 use crate::modules::{builtin_source, ModuleRuntime};
 use crate::ops::{OpBridge, RequestIdAllocator};
+use crate::workers::WorkerBridge;
 use crate::{Bridge, ExitState, RejectionEvent};
 use ln_error::NodeError;
 
@@ -46,12 +47,17 @@ mod crypto;
 mod dns;
 mod fs;
 mod net;
+mod proc;
+mod signal;
 mod stdio;
 mod text;
+mod worker;
 mod zlib;
 
 /// All state a host function may touch.
 pub(crate) struct HostState {
+    /// The isolate's engine: `process.exit` marks its sentinel uncatchable through this.
+    pub engine: Rc<ln_engine::Engine>,
     pub driver: Rc<RefCell<ln_sched::Driver>>,
     pub bridge: Rc<RefCell<Bridge>>,
     pub exit: Rc<ExitState>,
@@ -68,6 +74,18 @@ pub(crate) struct HostState {
     pub ids: Arc<RequestIdAllocator>,
     /// The handle table: `host.net` submits commands through it (ADR-0006).
     pub handles: Rc<HandleBridge>,
+    /// The worker table: `host.worker` submits spawns and messages through it (ADR-0008).
+    pub workers: Rc<WorkerBridge>,
+    /// Signal delivery for the main isolate.
+    pub signals: Rc<crate::signals::SignalBridge>,
+    /// Child processes and their pipes.
+    pub procs: Rc<crate::proc::ProcBridge>,
+    /// The forked child's IPC channel (if any).
+    pub ipc: Rc<crate::proc::IpcBridge>,
+    /// The descriptor named by `ONDE_IPC_FD`, if this is a forked child.
+    pub ipc_fd: Option<i32>,
+    /// `Some` when this isolate is a worker.
+    pub worker: Option<Rc<crate::WorkerRole>>,
 }
 
 pub(crate) fn install<'js>(
@@ -94,18 +112,34 @@ pub(crate) fn install<'js>(
     }
 
     {
+        // `JS_SetUncatchableError` for the `process.exit` sentinel. JS creates the Error so it
+        // has a normal stack, then marks it here; no user `catch` can intercept the unwind.
+        let engine = state.engine.clone();
+        host.set(
+            "setUncatchable",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, value: js::Value<'js>| {
+                    engine.set_uncatchable(&ctx, &value);
+                },
+            )?,
+        )?;
+    }
+
+    {
         let exit = state.exit.clone();
         let stop = state.stop.clone();
         host.set(
             "exit",
             js::Function::new(
                 ctx.clone(),
-                move |ctx: js::Ctx<'js>, code: i32| -> js::Result<js::Undefined> {
+                move |_ctx: js::Ctx<'js>, code: i32| -> js::Result<()> {
+                    // `process.exit` in JS throws the sentinel after this call. The host only
+                    // records the request and stops the loop; it no longer throws itself.
                     exit.requested.set(true);
                     exit.exit_code.set(code);
                     stop.set(true);
-                    let sentinel = js::String::from_str(ctx.clone(), crate::EXIT_SENTINEL)?;
-                    Err(ctx.throw(sentinel.into_value()))
+                    Ok(())
                 },
             )?,
         )?;
@@ -306,6 +340,15 @@ pub(crate) fn install<'js>(
                 })
             },
         )?,
+    )?;
+
+    // `MessagePort.postMessage` transfer lists are validated in JS; detaching is the one engine
+    // operation they need (ADR-0008 §2.3, D49).
+    host.set(
+        "detachBuffer",
+        js::Function::new(ctx.clone(), |ctx: js::Ctx<'js>, value: js::Value<'js>| {
+            ln_engine::detach_buffer(&ctx, &value);
+        })?,
     )?;
 
     let start = state.start;
@@ -563,6 +606,15 @@ pub(crate) fn install<'js>(
     // --- filesystem ops --------------------------------------------------------------------
 
     fs::install(ctx, &host, state)?;
+
+    // --- worker threads (M5, ADR-0008) ------------------------------------------------------
+
+    worker::install(ctx, &host, state)?;
+
+    // --- signals and process accounting (M5) ------------------------------------------------
+
+    signal::install(ctx, &host, state)?;
+    proc::install(ctx, &host, state)?;
 
     // --- crypto primitives -----------------------------------------------------------------
 

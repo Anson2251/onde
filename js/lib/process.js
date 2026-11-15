@@ -6,6 +6,18 @@
 // the host primitives and an EventEmitter class: process is an EventEmitter in Node, and driver
 // code (`uncaughtException` dispatch) relies on that.
 
+// `process.exit` unwinds JavaScript with an uncatchable error (D15): the host records the exit
+// code and stops the loop, and QuickJS skips user `catch` blocks during the unwind.
+const EXIT_MESSAGE = "onde:process.exit";
+
+function exitWith(host, code) {
+  host.exit(code);
+  const sentinel = new Error(EXIT_MESSAGE);
+  sentinel.code = "ERR_PROCESS_EXIT";
+  host.setUncatchable(sentinel);
+  throw sentinel;
+}
+
 function validateExitCode(value) {
   let code = value;
   if (typeof code === "string" && code.trim() !== "") code = Number(code);
@@ -149,6 +161,10 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       this.execArgv = [];
       this.execPath = host.argv[0];
       this.env = host.env();
+      // The IPC descriptor is an implementation detail of `fork`; Node does not expose it.
+      delete this.env.ONDE_IPC_FD;
+      // Signal name -> number for every signal this process currently listens to.
+      this._signals = new Map();
       this.platform = host.platform;
       this.arch = info.arch;
       this.pid = host.pid;
@@ -196,6 +212,85 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       return undefined;
     }
 
+    // --- fork IPC (only present when this process is a forked child) --------------------------
+    //
+    // `fork` gives the child fd 3 and the runtime attaches it before user code runs. The protocol
+    // is length-prefixed JSON frames; `process.send`/`message`/`disconnect` are the Node surface.
+
+    _ipcInstall() {
+      if (host.ipcFd === null || host.ipcFd === undefined) return;
+      this.connected = true;
+      this.channel = {
+        ref: () => host.ipc("ref", []),
+        unref: () => host.ipc("unref", []),
+      };
+      this.send = (message, sendHandle, options, callback) => {
+        let done = callback;
+        if (typeof sendHandle === "function") done = sendHandle;
+        else if (typeof options === "function") done = options;
+        if (!this.connected) {
+          if (typeof done === "function") {
+            const error = new Error("Channel closed");
+            error.code = "ERR_IPC_CHANNEL_CLOSED";
+            scheduler.nextTick(done, error);
+          }
+          return false;
+        }
+        let text;
+        try {
+          text = JSON.stringify(message);
+        } catch (error) {
+          const failure = new TypeError("The message cannot be serialized as JSON");
+          failure.code = "ERR_INVALID_ARG_TYPE";
+          throw failure;
+        }
+        if (text === undefined) {
+          const failure = new TypeError("The message cannot be serialized as JSON");
+          failure.code = "ERR_INVALID_ARG_TYPE";
+          throw failure;
+        }
+        try {
+          host.ipc("send", [text]);
+        } catch (error) {
+          if (typeof done === "function") scheduler.nextTick(done, error);
+          return false;
+        }
+        if (typeof done === "function") scheduler.nextTick(done, null);
+        return true;
+      };
+      this.disconnect = () => {
+        if (!this.connected) return;
+        host.ipc("disconnect", []);
+        this.connected = false;
+        this.emit("disconnect");
+      };
+      // Attaching reads fd 3 and starts the reader; messages are dispatched to `_ipcEvent`.
+      host.ipc("attach", []);
+    }
+
+    _ipcEvent(name, payload) {
+      if (name === "message") {
+        let value;
+        try {
+          value = JSON.parse(payload);
+        } catch (error) {
+          this.emit("messageerror", error);
+          return;
+        }
+        this.emit("message", value);
+        return;
+      }
+      if (name === "disconnect") {
+        this.connected = false;
+        this.emit("disconnect");
+        return;
+      }
+      if (name === "error") {
+        this.connected = false;
+        this.emit("error", payload);
+      }
+    }
+
     exit(code) {
       const value =
         code === undefined
@@ -203,7 +298,7 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
             ? 0
             : exitCodeValue
           : validateExitCode(code);
-      host.exit(value);
+      exitWith(host, value);
     }
 
     reallyExit(code) {
@@ -212,6 +307,9 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
 
     abort() {
       host.exit(134);
+      const sentinel = new Error(EXIT_MESSAGE);
+      host.setUncatchable(sentinel);
+      throw sentinel;
     }
 
     hrtime(previous) {
@@ -237,9 +335,104 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       return host.memoryUsage();
     }
 
-    cpuUsage() {
-      // No per-process CPU accounting before M5; zeroes keep the shape Node callers expect.
-      return { user: 0, system: 0 };
+    cpuUsage(previous) {
+      const current = host.cpuUsage();
+      if (previous === undefined) return current;
+      if (
+        previous === null ||
+        typeof previous !== "object" ||
+        typeof previous.user !== "number" ||
+        typeof previous.system !== "number"
+      ) {
+        const error = new TypeError(
+          'The "previousValue" argument must be an instance of Object',
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      return {
+        user: current.user - previous.user,
+        system: current.system - previous.system,
+      };
+    }
+
+    kill(pid, signal) {
+      return host.kill(pid, signal === undefined ? "SIGTERM" : signal);
+    }
+
+    // Signals are process-wide, so a listener is registered with the host when the first one for a
+    // name appears and released when the last one goes (ADR-0008 §2.7). Every EventEmitter entry
+    // point that can change the listener count must run `_updateSignal`.
+    // `once` listeners are removed by EventEmitter itself, after `emit`; this hook notices that
+    // and releases the host subscription (otherwise a second signal would be swallowed).
+    emit(event, ...args) {
+      const result = super.emit(event, ...args);
+      if (typeof event === "string" && event.startsWith("SIG")) this._updateSignal(event);
+      return result;
+    }
+
+    _updateSignal(event) {
+      if (typeof event !== "string" || !event.startsWith("SIG")) return;
+      const number = host.signalNumber(event);
+      if (typeof number !== "number") return;
+      const listening = this.listenerCount(event) > 0;
+      const registered = this._signals.has(event);
+      if (listening && !registered) {
+        this._signals.set(event, number);
+        host.signal(number, true);
+      } else if (!listening && registered) {
+        this._signals.delete(event);
+        host.signal(number, false);
+      }
+    }
+
+    on(event, listener) {
+      super.on(event, listener);
+      this._updateSignal(event);
+      return this;
+    }
+
+    addListener(event, listener) {
+      return this.on(event, listener);
+    }
+
+    prependListener(event, listener) {
+      super.prependListener(event, listener);
+      this._updateSignal(event);
+      return this;
+    }
+
+    once(event, listener) {
+      super.once(event, listener);
+      this._updateSignal(event);
+      return this;
+    }
+
+    prependOnceListener(event, listener) {
+      super.prependOnceListener(event, listener);
+      this._updateSignal(event);
+      return this;
+    }
+
+    removeListener(event, listener) {
+      super.removeListener(event, listener);
+      this._updateSignal(event);
+      return this;
+    }
+
+    off(event, listener) {
+      return this.removeListener(event, listener);
+    }
+
+    removeAllListeners(event) {
+      super.removeAllListeners(event);
+      if (event === undefined) {
+        for (const [name, number] of this._signals) host.signal(number, false);
+        this._signals.clear();
+      } else {
+        this._updateSignal(event);
+      }
+      return this;
     }
 
     getuid() {
@@ -286,6 +479,7 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
   }
 
   const process = new Process();
+  process._ipcInstall();
 
   // Lazy stdio. The slots are writable so tests and embedders can substitute a stream (Node's
   // properties are getter-only; being permissive here keeps the console test seam working).

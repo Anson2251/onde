@@ -1,0 +1,3 @@
+kill:true
+exit:null:SIGTERM
+exit:0

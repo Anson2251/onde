@@ -1,0 +1,5 @@
+line:a history:a
+line:a history:a
+line:b history:b,a
+line:a history:a,b
+exit:0

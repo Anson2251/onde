@@ -1,0 +1,6 @@
+message:{"ready":true}
+message:{"echo":"hi"}
+message:{"echo":"bye"}
+disconnect
+exit:0:null
+exit:0

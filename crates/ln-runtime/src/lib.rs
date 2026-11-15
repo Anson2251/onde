@@ -33,8 +33,8 @@ pub use ln_engine::{CaughtError, Completion, Engine, PumpOutcome};
 use ln_modules::Format;
 pub use ln_sched::Budget;
 use ln_sched::{
-    ChannelReactor, Checkpoint, Driver, ErrorInfo, Event, HandleOutcome, Origin, PromiseKey,
-    Reactor, Scheduler, SinkMailbox, Turn,
+    ChannelReactor, Checkpoint, CompletionSender, Driver, ErrorInfo, Event, HandleOutcome, Origin,
+    PromiseKey, Reactor, Scheduler, SinkMailbox, Turn,
 };
 
 mod args;
@@ -44,22 +44,22 @@ mod host_crypto;
 mod host_error;
 mod modules;
 pub mod ops;
+mod proc;
 mod report;
+mod signals;
+mod workers;
 pub use report::render_uncaught;
 
 use handles::HandleBridge;
 use host::HostState;
 use modules::ModuleRuntime;
 use ops::OpBridge;
+use proc::{IpcBridge, ProcBridge};
+use signals::SignalBridge;
 
 /// Compiled into the binary; evaluated once per isolate before the entry script.
 const BOOTSTRAP: &str = include_str!("../../../js/bootstrap.js");
 const BOOTSTRAP_NAME: &str = "<lite:bootstrap>";
-
-/// Private value thrown by `process.exit` so the host can unwind the current callback
-/// immediately. JS can catch it, but the recorded exit code is authoritative: the runtime stops
-/// at the next boundary and never drains the remaining queue (ADR-0002 R3).
-const EXIT_SENTINEL: &str = "onde:process.exit";
 
 /// Callback kinds understood by `bootstrap.js`'s `__ln_dispatch`.
 const KIND_TIMER: u8 = 0;
@@ -91,6 +91,37 @@ impl Config {
             io_threads: 4,
         }
     }
+}
+
+/// Whether an isolate is the process entry point or a worker (ADR-0008 §2.1).
+pub(crate) enum Role {
+    Main,
+    Worker(WorkerRole),
+}
+
+/// What a worker isolate needs from its parent beyond a normal [`Config`].
+///
+/// The parent mints the handle id and owns the sink, so every event the worker emits (message,
+/// error, exit) goes through [`WorkerSink`] into the parent's parked table. `worker_data` is
+/// consumed during host installation, on the worker thread.
+pub(crate) struct WorkerRole {
+    pub(crate) handle: u64,
+    pub(crate) thread_id: u32,
+    pub(crate) entry: WorkerEntry,
+    pub(crate) worker_data: RefCell<Option<ln_engine::Serialized>>,
+    pub(crate) inbound:
+        std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<ln_engine::Serialized>>>,
+    pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) sink: workers::WorkerSink,
+    /// True while this worker's own loop ref is held by `parentPort` (Node's port refcount).
+    pub(crate) self_ref: Cell<bool>,
+}
+
+/// How a worker was started: a file (resolved like any entry point) or evaluated source.
+#[derive(Debug, Clone)]
+pub(crate) enum WorkerEntry {
+    File(PathBuf),
+    Eval(String),
 }
 
 /// Why the isolate could not be created or could not evaluate the bootstrap.
@@ -153,6 +184,8 @@ pub(crate) struct RuntimeState {
     pub(crate) fatal: Cell<bool>,
     /// Which budget stopped the run, if any.
     pub(crate) budget: Cell<Option<BudgetHit>>,
+    /// The error that made the run fatal, kept so a worker can report it to its parent.
+    pub(crate) fatal_error: RefCell<Option<ErrorInfo>>,
 }
 
 /// Rejection events raised by the JS tracker and drained into the scheduler at safe points.
@@ -238,6 +271,7 @@ impl Dispatcher {
 
         self.exit.exit_code.set(1);
         self.state.fatal.set(true);
+        self.state.fatal_error.replace(Some(info.clone()));
         self.stop.set(true);
     }
 
@@ -305,6 +339,18 @@ pub struct Isolate {
     ops: Rc<OpBridge>,
     /// The handle bridge: network tasks, parked events and loop refs (ADR-0006).
     handles: Rc<HandleBridge>,
+    /// The worker bridge: worker threads, parked events and loop refs (ADR-0008).
+    workers: Rc<workers::WorkerBridge>,
+    /// Signal delivery: process-wide, created on the first listener (M5).
+    signals: Rc<SignalBridge>,
+    /// Child processes: spawned processes and their pipes (M5).
+    procs: Rc<ProcBridge>,
+    /// The forked child's IPC channel, if this process has one.
+    ipc: Rc<IpcBridge>,
+    /// The descriptor the parent passed (`ONDE_IPC_FD`), if any.
+    ipc_fd: Option<i32>,
+    /// `Some` when this isolate is a worker.
+    worker: Option<Rc<WorkerRole>>,
     start: Instant,
     /// Last engine heap measurement. `Runtime::memory_usage` re-borrows the runtime and panics
     /// while a JS callback is on the stack, so it is sampled at the top of a turn — and only when
@@ -318,7 +364,33 @@ pub struct Isolate {
 
 impl Isolate {
     pub fn new(config: Config) -> Result<Self, Failure> {
-        let engine = Rc::new(Engine::new().map_err(|e| Failure::Engine(e.to_string()))?);
+        let (reactor, sender) = ChannelReactor::new();
+        Self::with_channel(config, reactor, sender, Role::Main)
+    }
+
+    /// Build an isolate on an externally created completion channel.
+    ///
+    /// Worker threads use this: the parent creates the channel, keeps the sender to wake the
+    /// worker, and hands the reactor and a sender clone to the thread that builds the isolate
+    /// (ADR-0008 §2.2). The main isolate keeps the simpler [`Isolate::new`].
+    pub(crate) fn with_channel(
+        config: Config,
+        reactor: ChannelReactor,
+        sender: CompletionSender,
+        role: Role,
+    ) -> Result<Self, Failure> {
+        let role = match role {
+            Role::Main => None,
+            Role::Worker(worker) => Some(worker),
+        };
+        let cancel = role.as_ref().map(|worker| worker.cancel.clone());
+        let engine = Rc::new(
+            match cancel {
+                Some(cancel) => Engine::new_with_cancel(cancel),
+                None => Engine::new(),
+            }
+            .map_err(|e| Failure::Engine(e.to_string()))?,
+        );
         let mut sched = Scheduler::new();
         sched.set_budget(config.budget);
 
@@ -332,8 +404,7 @@ impl Isolate {
         modules.install(&engine);
         let memory = Rc::new(Cell::new(0));
         let memory_requested = Rc::new(Cell::new(false));
-        let (reactor, sender) = ChannelReactor::new();
-        // One id sequence for the whole isolate: ops and (M4) handles draw from it (ADR-0006).
+        // One id sequence for the whole isolate: ops, handles and workers draw from it.
         let ids = Arc::new(ops::RequestIdAllocator::new());
         let ops = Rc::new(OpBridge::new(
             driver.clone(),
@@ -341,7 +412,42 @@ impl Isolate {
             config.io_threads,
             ids.clone(),
         ));
-        let handles = Rc::new(HandleBridge::new(driver.clone(), sender, ops.clone()));
+        let handles = Rc::new(HandleBridge::new(
+            driver.clone(),
+            sender.clone(),
+            ops.clone(),
+        ));
+        let signals = Rc::new(signals::SignalBridge::new(
+            driver.clone(),
+            sender.clone(),
+            ops.clone(),
+        ));
+        let procs = Rc::new(ProcBridge::new(
+            driver.clone(),
+            sender.clone(),
+            ids.clone(),
+            ops.clone(),
+        ));
+        let ipc = Rc::new(IpcBridge::new(driver.clone(), sender.clone(), ops.clone()));
+        // Only the main isolate of a forked child owns fd 3. A worker shares the process's
+        // environment but must not attach the parent's channel.
+        let ipc_fd = if role.is_some() {
+            None
+        } else {
+            std::env::var("ONDE_IPC_FD")
+                .ok()
+                .and_then(|value| value.trim().parse::<i32>().ok())
+                .filter(|fd| *fd > 0)
+        };
+        let workers = Rc::new(workers::WorkerBridge::new(
+            driver.clone(),
+            sender,
+            ids.clone(),
+            config.argv.clone(),
+            config.io_threads,
+            config.budget,
+        ));
+        let worker = role.map(Rc::new);
 
         let isolate = Isolate {
             engine,
@@ -351,13 +457,19 @@ impl Isolate {
             exit,
             state,
             stop,
-            // The completion channel is the only wakeup the loop knows about; the op bridge's
-            // sink sends through it.
+            // The completion channel is the only wakeup the loop knows about; the op, handle and
+            // worker sinks all send through it.
             reactor: Box::new(reactor),
             dispatcher: None,
             modules,
             ops,
             handles,
+            workers,
+            signals,
+            procs,
+            ipc,
+            ipc_fd,
+            worker,
             start: Instant::now(),
             memory,
             memory_requested,
@@ -375,12 +487,19 @@ impl Isolate {
 
     fn install(&self, config: &Config) -> Result<(), Failure> {
         let host_state = HostState {
+            engine: self.engine.clone(),
             driver: self.driver.clone(),
             bridge: self.bridge.clone(),
             exit: self.exit.clone(),
             stop: self.stop.clone(),
             start: self.start,
             modules: self.modules.clone(),
+            workers: self.workers.clone(),
+            signals: self.signals.clone(),
+            procs: self.procs.clone(),
+            ipc: self.ipc.clone(),
+            ipc_fd: self.ipc_fd,
+            worker: self.worker.clone(),
             memory: self.memory.clone(),
             memory_requested: self.memory_requested.clone(),
             ops: self.ops.clone(),
@@ -629,6 +748,11 @@ impl Isolate {
     /// `uncaughtException` for it); a runtime error goes through the normal event path so an
     /// `uncaughtException` handler can absorb it.
     fn entry_error(&mut self, error: CaughtError) -> Option<RunOutcome> {
+        if self.engine.is_cancelled() {
+            // `terminate()` during the entry evaluation is a cancellation, not a user error.
+            self.exit.exit_code.set(1);
+            return Some(self.finish(None));
+        }
         if error.name == "SyntaxError" {
             let info = info_from_caught(&error);
             self.dispatcher
@@ -767,55 +891,7 @@ impl Isolate {
                     }
                 }
                 Turn::Completion(id) => {
-                    // One id space, two tables (ADR-0006 §2.1): the op table first, then the
-                    // handle table, then nothing. The slot is the payload; the channel only
-                    // carries the id (ADR-0005 §2.3).
-                    if let Some(done) = self.ops.take(id) {
-                        self.driver.borrow_mut().unref_external();
-                        if self.should_stop() {
-                            // process.exit/fatal: drop the parked result without invoking JS
-                            // (O4).
-                            continue;
-                        }
-                        let engine = self.engine.clone();
-                        let exit = self.exit.clone();
-                        let bridge = self.bridge.clone();
-                        self.sched
-                            .run_macrotask("completion", Origin::Completion, move |s| {
-                                run_op_done(&engine, &exit, &bridge, done, s)
-                            });
-                        // The exception path (if any) was already routed to `uncaughtException`
-                        // by the scheduler; this is the same single checkpoint other callbacks
-                        // get.
-                        self.checkpoint_all()?;
-                        continue;
-                    }
-
-                    let Some(events) = self.handles.take(id) else {
-                        // A duplicate completion, or one whose handle was shut down; ignoring an
-                        // unknown id is H5, not an error.
-                        continue;
-                    };
-                    // Bookkeeping happens before JS runs: a `closed` event releases the handle's
-                    // ref exactly here, and an accepted connection becomes addressable before its
-                    // `connection` handler can issue `read`.
-                    for event in &events {
-                        self.handles.observe_event(id, event);
-                    }
-                    if self.should_stop() {
-                        // No event may be dispatched after exit begins; `finish` releases
-                        // whatever refs are still held.
-                        continue;
-                    }
-                    let engine = self.engine.clone();
-                    let exit = self.exit.clone();
-                    let bridge = self.bridge.clone();
-                    self.sched
-                        .run_macrotask("handle", Origin::Completion, move |s| {
-                            run_handle_events(&engine, &exit, &bridge, id, events, s)
-                        });
-                    // One checkpoint per batch, exactly like an op completion (ADR-0006 §2.3).
-                    self.checkpoint_all()?;
+                    self.handle_completion(id)?;
                 }
                 Turn::BeforeExit => {
                     let code = self.exit.exit_code.get();
@@ -839,11 +915,141 @@ impl Isolate {
         Ok(())
     }
 
+    /// Route one completion id to the family that owns it (ADR-0006 §2.1 extended by ADR-0008).
+    ///
+    /// The order is load-bearing: reserved ids first, then ops, network handles, processes and
+    /// workers. Every table draws from the one allocator, so an id can only match one family.
+    fn handle_completion(&mut self, id: u64) -> Result<(), Failure> {
+        // The forked child's IPC channel has one reserved id.
+        if id == proc::IPC_COMPLETION_ID {
+            let events = self.ipc.take();
+            self.ipc.observe(&events);
+            if !events.is_empty() && !self.should_stop() {
+                let engine = self.engine.clone();
+                self.sched
+                    .run_macrotask("ipc", Origin::Completion, move |_| {
+                        proc::dispatch_ipc_events(&engine, events)
+                            .map_err(|caught| info_from_caught(&caught))
+                    });
+                self.checkpoint_all()?;
+            }
+            return Ok(());
+        }
+
+        // Signals have one reserved id: process-wide, no per-handle table.
+        if id == signals::SIGNAL_COMPLETION_ID {
+            let numbers = self.signals.take();
+            if !numbers.is_empty() && !self.should_stop() {
+                let engine = self.engine.clone();
+                self.sched.run_macrotask("signal", Origin::Host, move |_| {
+                    run_signal_events(&engine, numbers).map_err(|caught| info_from_caught(&caught))
+                });
+                self.checkpoint_all()?;
+            }
+            return Ok(());
+        }
+
+        // A worker's own id means "the parent sent me messages": drain and reconstruct them here,
+        // on the worker's isolate thread (H1′).
+        if let Some(worker) = self.worker.clone() {
+            if id == worker.handle {
+                let messages: Vec<ln_engine::Serialized> = {
+                    let mut queue = worker
+                        .inbound
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    queue.drain(..).collect()
+                };
+                if !messages.is_empty() && !self.should_stop() {
+                    let engine = self.engine.clone();
+                    self.sched
+                        .run_macrotask("worker message", Origin::Completion, move |_| {
+                            run_parent_messages(&engine, messages)
+                                .map_err(|caught| info_from_caught(&caught))
+                        });
+                    self.checkpoint_all()?;
+                }
+                return Ok(());
+            }
+        }
+
+        if let Some(done) = self.ops.take(id) {
+            self.driver.borrow_mut().unref_external();
+            if self.should_stop() {
+                // process.exit/fatal: drop the parked result without invoking JS (O4).
+                return Ok(());
+            }
+            let engine = self.engine.clone();
+            let exit = self.exit.clone();
+            let bridge = self.bridge.clone();
+            self.sched
+                .run_macrotask("completion", Origin::Completion, move |s| {
+                    run_op_done(&engine, &exit, &bridge, done, s)
+                });
+            self.checkpoint_all()?;
+            return Ok(());
+        }
+
+        if let Some(events) = self.handles.take(id) {
+            // Bookkeeping happens before JS runs: a `closed` event releases the handle's ref here,
+            // and an accepted connection becomes addressable before its `connection` handler can
+            // issue `read`.
+            for event in &events {
+                self.handles.observe_event(id, event);
+            }
+            if self.should_stop() {
+                return Ok(());
+            }
+            let engine = self.engine.clone();
+            let exit = self.exit.clone();
+            let bridge = self.bridge.clone();
+            self.sched
+                .run_macrotask("handle", Origin::Completion, move |s| {
+                    run_handle_events(&engine, &exit, &bridge, id, events, s)
+                });
+            self.checkpoint_all()?;
+            return Ok(());
+        }
+
+        if let Some(events) = self.procs.take(id) {
+            self.procs.observe(id, &events);
+            if self.should_stop() {
+                return Ok(());
+            }
+            let engine = self.engine.clone();
+            self.sched
+                .run_macrotask("process", Origin::Completion, move |_| {
+                    proc::dispatch_proc_events(&engine, id, events)
+                        .map_err(|caught| info_from_caught(&caught))
+                });
+            self.checkpoint_all()?;
+            return Ok(());
+        }
+
+        if let Some(events) = self.workers.take(id) {
+            self.workers.observe(id, &events);
+            if self.should_stop() {
+                return Ok(());
+            }
+            let engine = self.engine.clone();
+            self.sched
+                .run_macrotask("worker", Origin::Completion, move |_| {
+                    workers::dispatch_worker_events(&engine, id, events)
+                        .map_err(|caught| info_from_caught(&caught))
+                });
+            self.checkpoint_all()?;
+        }
+        Ok(())
+    }
+
     fn should_stop(&self) -> bool {
         self.stop.get()
             || self.state.fatal.get()
             || self.state.budget.get().is_some()
             || self.exit.requested.get()
+            // A worker whose parent asked it to stop unwinds at the next loop boundary; the
+            // interrupt handler covers a worker that is still executing bytecode (D48).
+            || self.engine.is_cancelled()
     }
 
     /// Run checkpoints until both microtask queues and the engine queue are empty. This is the
@@ -939,9 +1145,14 @@ impl Isolate {
         let exit_code = self.exit.exit_code.get();
 
         self.sched.shutdown();
-        // H4: no handle event after this point, and every held loop ref is released before the
-        // engine (a field of `Isolate`) is freed. Idempotent with `Drop`.
+        // H4 for every family: no handle or worker event after this point, and every held loop ref
+        // is released before the engine (a field of `Isolate`) is freed. Idempotent with `Drop`.
+        self.release_worker_self_ref();
+        self.signals.shutdown();
+        self.procs.shutdown();
+        self.ipc.shutdown();
         self.handles.shutdown();
+        self.workers.shutdown();
         // No completion may be delivered after shutdown (O4); release the refs of the parked
         // results the loop will never dispatch.
         let dropped = self.ops.discard_pending();
@@ -1016,6 +1227,118 @@ impl Isolate {
     pub fn handle_refs(&self) -> usize {
         self.handles.held_refs()
     }
+
+    /// Release the loop ref `parentPort` holds for this worker, once. Called before teardown, so
+    /// a worker that ends (exit, terminate, or a closed port) cannot leak a ref.
+    fn release_worker_self_ref(&self) {
+        let Some(worker) = &self.worker else {
+            return;
+        };
+        if worker.self_ref.replace(false) {
+            self.driver.borrow_mut().unref_external();
+        }
+    }
+
+    /// Children spawned by this isolate that have not closed (diagnostics/tests).
+    pub fn live_children(&self) -> usize {
+        self.procs.live_children()
+    }
+
+    /// External loop refs held by live children (diagnostics/tests).
+    pub fn child_refs(&self) -> usize {
+        self.procs.held_refs()
+    }
+
+    /// Workers started by this isolate that have not exited (diagnostics/tests).
+    pub fn live_workers(&self) -> usize {
+        self.workers.live_workers()
+    }
+
+    /// External loop refs held by live workers: 0 or 1 per worker (H3′, diagnostics/tests).
+    pub fn worker_refs(&self) -> usize {
+        self.workers.held_refs()
+    }
+
+    /// Run this isolate as a worker: announce, evaluate the entry, report the outcome.
+    ///
+    /// Called on the worker thread, after host installation and bootstrap. The parent sees
+    /// `online`, then optionally `error`, then exactly one `exit`.
+    pub(crate) fn run_worker(&mut self) -> i32 {
+        let Some(worker) = self.worker.clone() else {
+            return 1;
+        };
+        worker.sink.emit(workers::WorkerEvent::Online {
+            thread_id: worker.thread_id,
+        });
+
+        let outcome = match &worker.entry {
+            WorkerEntry::File(path) => self.run_file(path),
+            WorkerEntry::Eval(source) => self.run(source, "[worker eval]"),
+        };
+        let mut code = match outcome {
+            Ok(outcome) => outcome.exit_code,
+            Err(failure) => {
+                let mut err = io::stderr().lock();
+                let _ = writeln!(err, "lite: worker failure: {failure}");
+                let _ = err.flush();
+                1
+            }
+        };
+        if self.engine.is_cancelled() {
+            code = 1;
+        }
+
+        if let Some(info) = self.state.fatal_error.borrow_mut().take() {
+            worker.sink.emit(workers::WorkerEvent::Error {
+                name: info.name,
+                message: info.message,
+                stack: info.stack,
+                code: info.code.map(|code| code.to_string()),
+            });
+        }
+        worker.sink.emit(workers::WorkerEvent::Exit { code });
+        code
+    }
+}
+
+/// Deliver the signal numbers parked since the last drain through `__ln_signal`.
+fn run_signal_events(engine: &Engine, numbers: Vec<i32>) -> Result<(), CaughtError> {
+    engine.with_ctx(|ctx| {
+        let result: js::Result<()> = (|| {
+            let signal: js::Function = ctx.globals().get("__ln_signal")?;
+            for number in numbers {
+                signal.call::<_, ()>((number,))?;
+            }
+            Ok(())
+        })();
+        js::CatchResultExt::catch(result, &ctx)
+            .map_err(|error| ln_engine::caught_to_owned(&ctx, error))
+    })
+}
+
+/// Reconstruct and deliver every message the parent queued for this worker.
+///
+/// This runs as one macrotask, in queue order. A message that fails to deserialize becomes Node's
+/// `messageerror` event instead of an exception.
+fn run_parent_messages(
+    engine: &Engine,
+    messages: Vec<ln_engine::Serialized>,
+) -> Result<(), CaughtError> {
+    engine.with_ctx(|ctx| {
+        let result: js::Result<()> = (|| {
+            let message: js::Function = ctx.globals().get("__ln_parent_message")?;
+            let message_error: js::Function = ctx.globals().get("__ln_parent_message_error")?;
+            for serialized in messages {
+                match ln_engine::deserialize(&ctx, serialized) {
+                    Ok(value) => message.call::<_, ()>((value,))?,
+                    Err(error) => message_error.call::<_, ()>((error.message,))?,
+                }
+            }
+            Ok(())
+        })();
+        js::CatchResultExt::catch(result, &ctx)
+            .map_err(|error| ln_engine::caught_to_owned(&ctx, error))
+    })
 }
 
 impl Drop for Isolate {
@@ -1023,7 +1346,12 @@ impl Drop for Isolate {
         // The isolate is going away: stop the network tasks and release their refs *before* the
         // engine field is dropped, so no event can be dispatched into a freed context (H4).
         // `finish` normally did this already; `shutdown` is idempotent.
+        self.release_worker_self_ref();
+        self.signals.shutdown();
+        self.procs.shutdown();
+        self.ipc.shutdown();
         self.handles.shutdown();
+        self.workers.shutdown();
     }
 }
 
@@ -1175,6 +1503,11 @@ fn pump_job(
         }
         PumpOutcome::Threw(caught) => {
             if engine.take_interrupted() {
+                // A worker cancelled by its parent unwinds quietly: termination is not a budget
+                // trip and must not print a microtask-timeout diagnostic (D48).
+                if engine.is_cancelled() {
+                    return Ok(());
+                }
                 state.budget.set(Some(BudgetHit::Wall));
                 stop.set(true);
                 return Ok(());

@@ -5,13 +5,18 @@ A Node-compatible JavaScript runtime: QuickJS as the engine, Rust as the host.
 onde runs the code around the work: CLIs, build steps, config, request handlers with light logic,
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
-`dns`, `zlib`) and its globals, and it installs as a 4.9 MB binary.
+`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.7 MB
+binary.
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
 > commands below still say `target/debug/lite`.
 
-Status: M0 through M4 are done and M5 is next. Two M4 targets are still missed, HTTP throughput and
-the memory held by half-open connections; [docs/m4-plan.md](docs/m4-plan.md) §8 has both.
+Status: M0 through M5 are done; M6 is next. M5 shipped `child_process`, `worker_threads` with real
+shared memory and `Atomics`, `readline`, and the `process` additions they need (signals, `kill`,
+`cpuUsage`); [docs/m5-plan.md](docs/m5-plan.md) records the contract and its outcome, and
+[docs/adr/0008](docs/adr/0008-processes-and-threads.md) the structural decision. Two M4 targets are
+still missed, HTTP throughput and the memory held by half-open connections;
+[docs/m4-plan.md](docs/m4-plan.md) §8 has both.
 
 ## Roadmap
 
@@ -20,8 +25,8 @@ the memory held by half-open connections; [docs/m4-plan.md](docs/m4-plan.md) §8
 | M0 to M2, done | engine binding, scheduler and timers, CommonJS and ESM, `process`, stdlib tier 0 | nothing runs before these |
 | M3, done | `fs`, streams, `crypto`, `perf_hooks`, real stdio | files and streams are where a CLI spends its time |
 | M4, done | `net`, `http`/`https`, `tls`, `dns`, `zlib` | the server case, and what tuckbox needs |
-| M5, next | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline` | tools that shell out, and work that leaves the main thread |
-| M6 | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue | request-scoped state without passing a context through every call |
+| M5, done | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline`, process signals | tools that shell out, and work that leaves the main thread |
+| M6, next | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue | request-scoped state without passing a context through every call |
 | M7 | bytecode snapshot at build time, allocation fast paths, memory limits, `--trace-events`, a `node:test` runner | closes the startup, throughput and memory gap measured below |
 | M8 | compatibility sweep, packaging, publish | 1.0 |
 
@@ -34,14 +39,14 @@ compute figures are medians of five repetitions per workload. Harnesses: `test/n
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---|---|---|
-| install size | 4.9 MB | 76 MB | 58 MB |
+| install size | 5.7 MB | 76 MB | 58 MB |
 | cold start, `-e '1+1'` | 10.8 ms | 82.0 ms | 6.9 ms |
 | cold start, `require("http")` | 19.0 ms | 84.3 ms | 13.6 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.3 MB | 38.1 MB |
 | HTTP throughput, 100 keep-alive connections | 13.4k req/s | 29.9k req/s | 32.1k req/s |
 | HTTP p99 at that load | 42.5 ms | 6.6 ms | 5.9 ms |
 
-onde ships as one 4.9 MB binary against a 76 MB Node install, and it holds a fifth of the memory
+onde ships as one 5.7 MB binary against a 76 MB Node install, and it holds a fifth of the memory
 for the same server. Startup is not where onde wins: Bun opens in 6.9 ms against onde's 10.8, and
 that gap will stay, because QuickJS has an engine to initialize as well. What changes a deployment
 is the resident figure: at 9 MB per process, embedding a runtime costs less than the tool around
@@ -129,9 +134,10 @@ is the honest line: the CLI loads and runs, the module it needs for real work is
 | M2 stdlib | `path`, `url`, `util`, `events`, `assert`, `buffer`, `string_decoder`, `os`, `console`, `querystring`, `punycode`, `module`, `constants` |
 | M3 I/O | `fs`, `fs/promises`, `stream`, `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio |
 | M4 network | `net`, `http`, `https`, `tls`, `dns`, `zlib` |
-| next | `child_process`, `worker_threads`, `readline` (M5); `async_hooks` (M6) |
+| M5 processes and threads | `child_process`, `worker_threads` with `SharedArrayBuffer`/`Atomics`, `readline`, signals |
+| next | `async_hooks` and `AsyncLocalStorage` (M6) |
 
-Per-module detail and all 47 deliberate divergences are in [docs/compat.md](docs/compat.md). The
+Per-module detail and all 52 deliberate divergences are in [docs/compat.md](docs/compat.md). The
 full inventory, repo layout and every harness are in [docs/internals.md](docs/internals.md).
 
 ## Why

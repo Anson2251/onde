@@ -26,8 +26,14 @@ js/
     console.js        Console + the global console
     module.js         Module/createRequire/builtinModules/isBuiltin
     globals.js        EventTarget, Event, AbortController, AbortSignal, structuredClone
-    process.js        the process object (created by bootstrap.js)
+    process.js        the process object (created by bootstrap.js), IPC in a forked child
     loader.js         CJS cache, require(), builtin registry, runMain
+    child_process.js  spawn/exec/execFile/fork over the proc handle family
+    internal/pipe.js  child stdio pipes as Readable/Writable
+    worker_threads.js Worker, MessageChannel, parentPort, workerData
+    internal/worker.js the shared core under worker_threads (ports, Worker, parentPort)
+    readline.js       line-oriented Interface + ANSI helpers
+    readline-promises.js readline/promises
 ```
 
 Each `lib/*.js` is a **CommonJS module**: `"use strict";`, `module.exports = ...`, no top-level
@@ -67,15 +73,29 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `evalCjs` | `(filename, source, exports, require, module, dirname) => void` | compiles the CJS wrapper with the real filename (stack traces) and calls it with `this === exports` |
 | `cjsNamespace` | `(path) => any` | load a CJS file and return `module.exports` (ESM interop) |
 | `builtinExports` | `(name) => any` | load a builtin and return its exports (ESM interop) |
+| `detachBuffer` | `(buffer) => void` | `JS_DetachArrayBuffer`, for `transferList` |
+| `workers` | registry object | `register(id, sink)` / `release(id)`, filled by `bootstrap.js` |
+| `workerInfo` | `null \| { id, threadId, workerData }` | `null` on the main isolate; workerData is deserialized on the worker thread |
+| `worker` | `(id, name, args) => any` | `spawn`, `postMessage`, `terminate`, `ref`, `unref`; worker role routes self messages to the parent |
+| `procHandles` | registry object | `register(id, sink)` / `release(id)`, filled by `bootstrap.js` |
+| `proc` | `(id, name, args) => void` | spawn/write/end/read/readStop/kill/send/disconnect/ref/unref |
+| `ipcFd` | `number \| null` | descriptor named by `ONDE_IPC_FD`, set only in a forked child |
+| `ipc` | `(name, args) => bool` | `attach`, `send`, `disconnect`, `ref`, `unref` on the forked child's channel |
+| `signal` | `(number, on) => void` | subscribe/unsubscribe a main-isolate signal listener |
+| `signalNumber` / `signalName` | `(name) => number \| null`, `(number) => string \| null` | platform signal table |
+| `kill` | `(pid, signal) => true` | throws `ESRCH`/`EPERM` like `process.kill` |
+| `cpuUsage` | `() => { user, system }` | `getrusage`, microseconds |
 
 `Resolved` is one of `{ type: "builtin", name }`, `{ type: "file", path }`,
 `{ type: "json", path }`, `{ type: "esm", path }`, `{ type: "addon", path }`. `"file"` always
 means CommonJS; `"esm"` is what makes `require()` throw `ERR_REQUIRE_ESM`.
 
 Internal modules (not part of the public builtin list) are addressed as `internal/loader`,
-`internal/process`, `internal/globals` and `internal/textcodec`; they are evaluated once by
-`bootstrap.js`, and stdlib modules can also `require("./sibling.js")` because the loader maps
-relative requires made from `<lite:...>` modules onto that registry.
+`internal/process`, `internal/globals`, `internal/textcodec`, `internal/net`, `internal/pipe` and
+`internal/worker`; they are evaluated once by `bootstrap.js`, and stdlib modules can also
+`require("./sibling.js")` because the loader maps relative requires made from `<lite:...>` modules
+onto that registry. `internal/worker` is loaded eagerly on a worker isolate so a parent message
+that arrives before user code is queued for `parentPort` rather than dropped.
 
 ## Testing the stdlib without the runtime
 

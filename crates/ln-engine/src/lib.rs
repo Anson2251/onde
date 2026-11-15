@@ -12,12 +12,19 @@
 use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub use rquickjs as js;
 
 use js::context::EvalOptions;
 use js::Ctx;
+
+pub mod sab;
+pub mod serialize;
+
+pub use serialize::{deserialize, detach_buffer, serialize, SerializeError, Serialized};
 
 /// Result of evaluating a script.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,26 +121,49 @@ pub struct Engine {
     /// Set by the interrupt handler when it aborted a job. The runtime turns this into a budget
     /// failure instead of an `uncaughtException`.
     interrupted: Rc<Cell<bool>>,
+    /// Set by the worker's parent to stop the isolate cooperatively (ADR-0008 §2.7). Shared with
+    /// the interrupt handler, so it is visible even while bytecode is running.
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Engine {
     /// Create a runtime and a full-intrinsics context.
     pub fn new() -> Result<Self, InitError> {
+        Self::new_with_cancel(Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Create an engine whose interrupt handler also trips when `cancelled` is set.
+    ///
+    /// Worker threads pass the token the parent will flip on `terminate()` (ADR-0008 §2.7). The
+    /// token is checked alongside the microtask deadline, so a worker in a tight JS loop stops at
+    /// the next bytecode safepoint.
+    pub fn new_with_cancel(cancelled: Arc<AtomicBool>) -> Result<Self, InitError> {
         let runtime = js::Runtime::new().map_err(|e| InitError(format!("create runtime: {e}")))?;
         let context =
             js::Context::full(&runtime).map_err(|e| InitError(format!("create context: {e}")))?;
+
+        // SharedArrayBuffer support and blocking atomics are process-wide engine settings; they
+        // must be installed before any JavaScript can construct a buffer (ADR-0008 §2.3, §2.4).
+        context.with(|ctx| sab::install(&ctx));
 
         let deadline: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
         let interrupted = Rc::new(Cell::new(false));
         {
             let deadline = deadline.clone();
             let interrupted = interrupted.clone();
-            runtime.set_interrupt_handler(Some(Box::new(move || match deadline.get() {
-                Some(deadline) if Instant::now() >= deadline => {
+            let cancelled = cancelled.clone();
+            runtime.set_interrupt_handler(Some(Box::new(move || {
+                if cancelled.load(Ordering::SeqCst) {
                     interrupted.set(true);
-                    true
+                    return true;
                 }
-                _ => false,
+                match deadline.get() {
+                    Some(deadline) if Instant::now() >= deadline => {
+                        interrupted.set(true);
+                        true
+                    }
+                    _ => false,
+                }
             })));
         }
 
@@ -142,7 +172,18 @@ impl Engine {
             context,
             deadline,
             interrupted,
+            cancelled,
         })
+    }
+
+    /// The cooperative-cancel token shared with the worker's parent.
+    pub fn cancel_token(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
+    }
+
+    /// True once the parent asked this isolate to stop.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 
     /// Install the engine's promise rejection tracker.
@@ -319,6 +360,20 @@ impl Engine {
     /// `JS_IsJobPending`: does the engine's queue still hold work?
     pub fn is_job_pending(&self) -> bool {
         self.runtime.is_job_pending()
+    }
+
+    /// Mark `value` as an uncatchable engine error.
+    ///
+    /// QuickJS skips every JavaScript `catch` block while such an error unwinds, which is what
+    /// `process.exit` needs: an application's own `try { ... process.exit(0) } catch (error)`
+    /// must not be able to observe the exit as a failure. The error is still visible to the host
+    /// (`CaughtError`), and `finally` blocks run as the engine unwinds.
+    pub fn set_uncatchable(&self, ctx: &Ctx<'_>, value: &js::Value<'_>) {
+        // SAFETY: both values belong to this engine's context, and the mark is a bit on the error
+        // object's header. The object stays owned by JavaScript.
+        unsafe {
+            js::qjs::JS_SetUncatchableError(ctx.as_raw().as_ptr(), value.as_raw());
+        }
     }
 }
 
