@@ -25,9 +25,27 @@ const lite = process.env.LITE_RELEASE || join(root, "target", "release", "lite")
 const scripts = ["compute.js", "codec.js", "lib.js"].map((name) => join(__dirname, name));
 const reps = Number(process.env.BENCH_REPS || 3);
 
+// A benchmark of a stale release binary is worse than no benchmark: it reports the speed of code
+// that is no longer in the tree. When the default release binary is in use, rebuild it first, the
+// same way test/net/bench.sh does. A caller who points LITE_RELEASE elsewhere is asserting that the
+// binary is current, and BENCH_NO_BUILD=1 is the explicit escape hatch for repeat runs.
+const defaultLite = process.env.LITE_RELEASE === undefined;
+if (!existsSync(lite) && !defaultLite) {
+  console.error(`bench: no runtime at ${lite} (from LITE_RELEASE)`);
+  process.exit(2);
+}
+if (defaultLite && process.env.BENCH_NO_BUILD !== "1") {
+  const build = spawnSync("cargo", ["build", "--release", "-p", "ln-cli"], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  if (build.status !== 0) {
+    console.error("bench: cargo build --release failed");
+    process.exit(2);
+  }
+}
 if (!existsSync(lite)) {
   console.error(`bench: no release runtime at ${lite}`);
-  console.error("bench: run `cargo build --release -p ln-cli` first");
   process.exit(2);
 }
 
@@ -58,6 +76,11 @@ function measure(label, command, script, args = []) {
   }
   return medians;
 }
+
+const { statSync } = require("node:fs");
+const built = statSync(lite).mtime.toISOString().replace("T", " ").slice(0, 19);
+console.log(`onde: ${lite}`);
+console.log(`built ${built}${defaultLite ? "" : " (LITE_RELEASE, not rebuilt)"}`);
 
 for (const script of scripts) {
   const node = measure("node", process.execPath, script);

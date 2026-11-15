@@ -137,7 +137,7 @@ RUN=node ./test/conformance/run.sh              # prove the expectations still d
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
 ./test/net/run.sh                               # M4 acceptance: bench, interop, fdleak, slowloris
-node test/bench/run.js                          # node vs onde: compute, codecs, remaining stdlib
+node test/bench/run.js                          # node vs onde: compute, codecs, stdlib (rebuilds release)
 node test/net/coldstart.js target/release/lite  # 25 spawns per expression, median
 ```
 
