@@ -528,12 +528,31 @@ function isIntegerTypedArray(value) {
   );
 }
 
+// A view on a `SharedArrayBuffer` is refused: filling it would race another agent reading the same
+// memory, and WebCrypto forbids it. Node started enforcing this inside v26; older builds filled the
+// view silently, which is why the oracle asserts this on lite alone rather than differentially.
+function isSharedView(value) {
+  return (
+    typeof SharedArrayBuffer !== "undefined" && value.buffer instanceof SharedArrayBuffer
+  );
+}
+
 function getRandomValues(typedArray) {
   if (!isIntegerTypedArray(typedArray)) {
     throw new DOMException(
       "The data argument must be an integer-type TypedArray",
       "TypeMismatchError",
     );
+  }
+  if (isSharedView(typedArray)) {
+    // Node's WebIDL layer reports this as a coded TypeError; the code comes from
+    // `makeException`'s default because webcrypto passes `code: undefined`.
+    const error = new TypeError(
+      "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is a view on a " +
+        "SharedArrayBuffer, which is not allowed.",
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   if (typedArray.byteLength > MAX_GET_RANDOM_VALUES_BYTES) {
     throw new DOMException(

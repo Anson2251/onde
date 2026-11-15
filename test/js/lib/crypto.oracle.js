@@ -557,7 +557,6 @@ function checkGetRandomValues() {
     () => new Int32Array(1),
     () => new Uint8ClampedArray(4),
     () => new BigInt64Array(1),
-    () => new Uint8Array(new SharedArrayBuffer(4)),
     () => new Uint8Array(65536),
     () => Buffer.alloc(4),
     () => {
@@ -580,6 +579,40 @@ function checkGetRandomValues() {
   ];
   for (const [label, call] of errorCases) {
     compare(label, () => call(liteCrypto), () => call(nodeCrypto));
+  }
+
+  // Node began rejecting shared backing stores inside v26: 26.10 fills the view, 26.13 throws.
+  // onde follows the current behaviour, so this is compared when the running Node agrees and
+  // otherwise asserted against the exact shape 26.13 produces (a coded TypeError).
+  const sharedView = () => new Uint8Array(new SharedArrayBuffer(4));
+  let nodeRejects = false;
+  try {
+    nodeCrypto.getRandomValues(sharedView());
+  } catch {
+    nodeRejects = true;
+  }
+  if (nodeRejects) {
+    compare(
+      "getRandomValues(SharedArrayBuffer view)",
+      () => liteCrypto.getRandomValues(sharedView()),
+      () => nodeCrypto.getRandomValues(sharedView()),
+    );
+  } else {
+    assert.throws(
+      () => liteCrypto.getRandomValues(sharedView()),
+      (error) => {
+        assert.strictEqual(error.name, "TypeError", "shared view: name");
+        assert.strictEqual(error.code, "ERR_INVALID_ARG_TYPE", "shared view: code");
+        assert.strictEqual(
+          error.message,
+          "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is a view on a " +
+            "SharedArrayBuffer, which is not allowed.",
+          "shared view: message",
+        );
+        return true;
+      },
+      "getRandomValues refuses a view on a SharedArrayBuffer",
+    );
   }
 }
 

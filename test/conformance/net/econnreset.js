@@ -13,7 +13,13 @@ server.listen(0, "127.0.0.1", () => {
   const client = net.connect(server.address().port, "127.0.0.1", () => client.write("hello"));
   client.on("data", () => events.push("data"));
   client.on("end", () => events.push("end"));
-  client.on("error", (error) => events.push(`error:${error.code}`));
+  // The family, not the exact code: a reset surfaces as ECONNRESET when it arrives while reading
+  // and as EPIPE when the pending write is the thing that fails, and which one wins depends on the
+  // kernel. Both mean the peer reset; a clean FIN would produce neither.
+  client.on("error", (error) => {
+    const family = error.code === "ECONNRESET" || error.code === "EPIPE" ? "reset" : error.code;
+    events.push(`error-family:${family}`);
+  });
   client.on("close", () => {
     events.push("close");
     setTimeout(() => {

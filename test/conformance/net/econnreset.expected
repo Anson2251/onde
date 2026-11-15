@@ -1,2 +1,2 @@
-error:ECONNRESET,close
+error-family:reset,close
 exit:0
