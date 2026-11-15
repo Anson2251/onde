@@ -256,6 +256,11 @@ pub(crate) fn install<'js>(
     host.set("pid", std::process::id())?;
     host.set("ppid", parent_pid())?;
     host.set("version", format!("v{}", env!("CARGO_PKG_VERSION")))?;
+    // The Node release onde claims compatibility with. Tools gate on `process.version` and refuse
+    // to run against an unknown major (npm prints a warning and takes a fallback path), so that
+    // field carries this instead of onde's own version. `process.versions.onde` keeps the real one,
+    // and docs/compat.md tracks where the claim is imperfect.
+    host.set("nodeVersion", "v22.14.0")?;
 
     host.set(
         "env",

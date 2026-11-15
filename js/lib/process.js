@@ -153,9 +153,16 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       this.arch = info.arch;
       this.pid = host.pid;
       this.ppid = host.ppid;
-      this.version = host.version;
-      this.versions = { lite: host.version.replace(/^v/, "") };
-      this.release = { name: "lite" };
+      // `version` is the Node release onde is compatible with, not onde's own version: tooling
+      // gates on it and cannot do anything useful with "v0.1.0". onde's identity stays visible in
+      // `versions.onde` (and `versions.lite`, which predates the rename).
+      this.version = host.nodeVersion;
+      this.versions = {
+        node: host.nodeVersion.replace(/^v/, ""),
+        onde: host.version.replace(/^v/, ""),
+        lite: host.version.replace(/^v/, ""),
+      };
+      this.release = { name: "node" };
       this.config = {};
       this.features = {};
       this.mainModule = undefined;
