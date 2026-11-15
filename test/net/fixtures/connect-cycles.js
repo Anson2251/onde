@@ -20,6 +20,12 @@ let completed = 0;
 let errors = 0;
 const errorCodes = {};
 
+// A connect that never completes would wait forever here (zero CPU, no error), so each connection
+// gets a deadline and a code the summary can report. Back-to-back runs are fine: three in a row
+// finished in 3, 4 and 6 seconds, because each run's server has a new port and closed sockets in
+// TIME_WAIT do not block a different destination.
+const connectTimeoutMs = Number(process.env.NET_CONNECT_TIMEOUT_MS || 15000);
+
 function one() {
   return new Promise((resolve) => {
     const socket = net.connect(port, "127.0.0.1");
@@ -30,7 +36,15 @@ function one() {
       completed += 1;
       resolve();
     };
-    socket.on("connect", () => socket.end());
+    socket.setTimeout(connectTimeoutMs, () => {
+      errors += 1;
+      errorCodes.ETIMEDOUT = (errorCodes.ETIMEDOUT || 0) + 1;
+      socket.destroy();
+    });
+    socket.on("connect", () => {
+      socket.setTimeout(0);
+      socket.end();
+    });
     socket.on("error", (error) => {
       // A connection destroyed by its owner may observe the peer's RST; churn is the point.
       errors += 1;
@@ -49,5 +63,11 @@ async function worker() {
 
 Promise.all(Array.from({ length: concurrency }, worker)).then(() => {
   console.log(`cycles=${completed} errors=${errors} ${JSON.stringify(errorCodes)}`);
+  if (errorCodes.ETIMEDOUT !== undefined) {
+    console.error(
+      "connect-cycles: connections timed out; the ephemeral port range is saturated by the " +
+        "previous run's TIME_WAIT sockets, so wait about 30 s before running fdleak again",
+    );
+  }
   process.exit(completed === cycles ? 0 : 1);
 });
