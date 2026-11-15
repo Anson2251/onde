@@ -423,7 +423,7 @@ Everything in §1 ships. The exit criteria and the gates that prove them:
 | Rust tests | **372** across the workspace, green (`cargo test --all`) |
 | Conformance corpus | **230/230** under lite, **220/220** re-validated under node (`RUN=node`), 10 divergence cases lite-only |
 | Differential harness | **220/220** byte-identical stdout + exit code (node vs lite) |
-| JS stdlib suites | **73/73** under node and lite |
+| JS stdlib suites | **75/75** under node and lite |
 | M5 acceptance (`test/proc/run.sh`) | **12/12** (six scripts, each under node and lite) |
 | Worker echo | **1,000,000** round-trips, zero ordering failures, ~23k/s under lite on this machine (node: ~168k/s) |
 | 8-worker counter | **exactly 400,000** with `Atomics.add`; `Atomics.wait` woke from a worker's `notify` |

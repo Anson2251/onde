@@ -1,7 +1,11 @@
 # `js/` — the Node surface written in JavaScript
 
-Everything user-visible that does not need a syscall lives here. Rust exposes a small, frozen
-`globalThis.__ln_host` object; these modules turn it into the Node API. The rule from
+Everything user-visible that does not need a syscall lives here. These files are the readable
+source: `crates/ln-runtime/build.rs` parses and compresses each one with oxc at build time (no name
+mangling, because class and function names are part of the Node surface and of stack traces) and
+embeds the artifacts from `OUT_DIR/js`. Setting `ONDE_NO_MINIFY=1` bundles the sources verbatim.
+
+Rust exposes a small, frozen `globalThis.__ln_host` object; these modules turn it into the Node API. The rule from
 [architecture.md](../docs/architecture.md) §2 applies: **no module here reaches into engine
 internals**, and no module here is allowed to be the only copy of a semantics decision that
 belongs in `ln-sched` or `ln-runtime`.

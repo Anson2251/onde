@@ -70,7 +70,8 @@ adapter is thin enough to review.
    `ln_io::net`, not an engine class).
 5. Install `ln-engine` hooks: job adapter, promise rejection tracker (M1), interrupt deadline
    for the checkpoint budget (M1).
-6. Evaluate `js/bootstrap.js` (bytecode snapshot in M7). It defines `console`, `process`,
+6. Evaluate the bundled, build-time-minified `js/bootstrap.js` (bytecode snapshot in M7). It
+   defines `console`, `process`,
    globals, and registers native modules. Bootstrap runs through the normal loop, so its
    microtasks obey the same rules — no special "before the loop" phase.
 7. Resolve the entry point. ESM: compile, link, evaluate, and let the loop settle the TLA

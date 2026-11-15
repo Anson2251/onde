@@ -5,7 +5,7 @@ A Node-compatible JavaScript runtime: QuickJS as the engine, Rust as the host.
 onde runs the code around the work: CLIs, build steps, config, request handlers with light logic,
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
-`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.7 MB
+`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.3 MB
 binary.
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
@@ -32,23 +32,25 @@ still missed, HTTP throughput and the memory held by half-open connections;
 
 ## What you trade
 
-Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-14, with onde on a release build,
+Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-15, with onde on a release build,
 Node 26.10.0 and Bun 1.3.10. Cold start and HTTP are medians of three runs of the same script; the
 compute figures are medians of five repetitions per workload. Harnesses: `test/net/bench.sh`,
 `test/net/coldstart.js` and `test/bench/run.js`, all in the repo.
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---|---|---|
-| install size | 5.7 MB | 76 MB | 58 MB |
+| install size | 5.3 MB | 76 MB | 58 MB |
 | cold start, `-e '1+1'` | 10.8 ms | 82.0 ms | 6.9 ms |
-| cold start, `require("http")` | 19.0 ms | 84.3 ms | 13.6 ms |
+| cold start, `require("http")` | 17.6 ms | 84.3 ms | 13.6 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.3 MB | 38.1 MB |
 | HTTP throughput, 100 keep-alive connections | 13.4k req/s | 29.9k req/s | 32.1k req/s |
 | HTTP p99 at that load | 42.5 ms | 6.6 ms | 5.9 ms |
 
-onde ships as one 5.7 MB binary against a 76 MB Node install, and it holds a fifth of the memory
-for the same server. Startup is not where onde wins: Bun opens in 6.9 ms against onde's 10.8, and
-that gap will stay, because QuickJS has an engine to initialize as well. What changes a deployment
+onde ships as one 5.3 MB binary against a 76 MB Node install, and it holds a fifth of the memory
+for the same server. The readable JS stdlib is minified at build time with oxc (names are not
+mangled): 906 KB of source becomes 559 KB embedded. Startup is not where onde wins: Bun opens in
+6.9 ms against onde's 10.8, and that gap will stay, because QuickJS has an engine to initialize as
+well. What changes a deployment
 is the resident figure: at 9 MB per process, embedding a runtime costs less than the tool around
 it, and a hundred of them take 930 MB where a hundred Node processes would need 4.4 GB.
 

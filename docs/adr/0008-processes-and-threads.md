@@ -265,7 +265,7 @@ serialize paths, `test/proc/atomics.js` for the 8-worker counter and the wait/wa
 the ordering, zombie and termination cases listed in [m5-plan.md](../m5-plan.md) §7.
 
 Final results (2026-11-15): 372 Rust tests, 230/230 conformance cases, 220/220 differential cases,
-73/73 JS stdlib suites, and 12/12 M5 acceptance cases. The worker echo path completed 1,000,000
+75/75 JS stdlib suites, and 12/12 M5 acceptance cases. The worker echo path completed 1,000,000
 sequential round-trips with zero reordering; eight workers reached exactly 400,000 `Atomics.add`
 operations; a cross-thread `Atomics.wait` woke with `"ok"`; `terminate()` on a busy loop reported
 exit 1; and `SIGKILL` left no live pid. The implementation notes that differ from this decision's

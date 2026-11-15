@@ -151,7 +151,7 @@ cargo fmt --all -- --check
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
 ./test/differential.sh                          # node vs lite, same stdout + exit code (220)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 73 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 75 stdlib suites under node and lite + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
@@ -164,6 +164,13 @@ node test/net/coldstart.js target/release/lite  # 25 spawns per expression, medi
 The README's comparison table comes from those three: `coldstart.js` for boot, `bench.sh` for HTTP
 (with `LITE_RELEASE="$(command -v node)"` to point the same harness at another runtime), and
 `bench/run.js` for compute.
+
+`crates/ln-runtime/build.rs` minifies `js/` into `OUT_DIR/js` before the Rust sources embed it:
+every file is parsed as a classic script, compressed with oxc, and emitted without name mangling.
+The readable sources and `test/js/run.sh` are unchanged; `ONDE_NO_MINIFY=1` bundles them verbatim
+when a minifier change needs bisecting. `cargo build` therefore needs no network after the first
+fetch, and a normal build sees the readable files again. Stack frames that point *into* the stdlib
+name minified lines; frames in user code keep their file, line and column.
 
 `tuckbox` has its own harness: `cd tuckbox && pnpm install && pnpm test` runs every suite under
 both node and onde (see [tuckbox/README.md](../tuckbox/README.md)).

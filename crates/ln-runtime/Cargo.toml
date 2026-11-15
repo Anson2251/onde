@@ -27,3 +27,12 @@ serde_json = "1"
 [target.'cfg(unix)'.dependencies]
 # Host identity (ppid, uid/gid, hostname, uname, memory totals) has no `std` equivalent.
 libc = "0.2"
+
+[build-dependencies]
+# Build-time only: the JS stdlib is minified into `OUT_DIR/js` (see build.rs). Pinned to the
+# series whose MSRV matches the workspace (1.80); newer oxc releases need a newer toolchain.
+oxc_allocator = "0.48.2"
+oxc_codegen = "0.48.2"
+oxc_minifier = "0.48.2"
+oxc_parser = "0.48.2"
+oxc_span = "0.48.2"

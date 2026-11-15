@@ -420,7 +420,7 @@ plan depends on (shared-memory allocation, cross-isolate serialization, cross-th
 | worker echo, 1M round-trips, no reordering | `FULL=1 ./test/proc/run.sh`: 1,000,000 sequential messages, zero failures (~23k/s lite on the dev machine) |
 | 8-worker `Atomics.add` is exact; `Atomics.wait` wakes | `test/proc/atomics.js`: exactly 400,000 after 8 × 50,000; a worker's `notify` woke a waiting worker (`"ok"`, not `"timed-out"`) |
 | `child_process` interop, zombie-free | `test/proc/run.sh` 12/12 (every case under node and lite); `signals.js` asserts `kill(pid, 0)` throws `ESRCH` after `SIGKILL` |
-| no regression | 230/230 conformance, 220/220 differential, 73/73 JS suites, 372 Rust tests; cold start 12.16 ms / 21.00 ms (limits 14/25) |
+| no regression | 230/230 conformance, 220/220 differential, 75/75 JS suites, 372 Rust tests; cold start 12.16 ms / 21.00 ms (limits 14/25) |
 
 **Recorded deviations** (full list in [m5-plan.md](m5-plan.md) §12 and D48–D53 in
 [compat.md](compat.md)):

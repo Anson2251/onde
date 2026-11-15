@@ -58,7 +58,7 @@ use proc::{IpcBridge, ProcBridge};
 use signals::SignalBridge;
 
 /// Compiled into the binary; evaluated once per isolate before the entry script.
-const BOOTSTRAP: &str = include_str!("../../../js/bootstrap.js");
+const BOOTSTRAP: &str = include_str!(concat!(env!("OUT_DIR"), "/js/bootstrap.js"));
 const BOOTSTRAP_NAME: &str = "<lite:bootstrap>";
 
 /// Callback kinds understood by `bootstrap.js`'s `__ln_dispatch`.
