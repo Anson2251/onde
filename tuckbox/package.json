@@ -1,0 +1,30 @@
+{
+  "name": "tuckbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small npm: resolves a package.json against the registry and installs into node_modules",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "bin": {
+    "tuckbox": "bin/tuckbox.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node test/run.js",
+    "test:net": "TUCKBOX_NET=1 node test/run.js",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

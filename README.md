@@ -81,6 +81,37 @@ events.once("ready", (value) => console.log(value, path.sep, import.meta.filenam
 events.emit("ready", answer);
 ```
 
+## Tuckbox
+
+`tuckbox/` is a small npm: TypeScript, compiled to CommonJS, and run by onde. It is the honest test
+of the claims above, because everything it executes is `require`, `fs`, `https`, `zlib`, `path` and
+`process` - no shortcuts, no native addons.
+
+```sh
+cd tuckbox && pnpm install && pnpm build
+
+mkdir /tmp/app && cd /tmp/app
+printf '{"name":"app","dependencies":{"debug":"^4.3.0"}}' > package.json
+/path/to/lite /path/to/tuckbox/bin/tuckbox.js install
+/path/to/lite /path/to/tuckbox/bin/tuckbox.js ls
+```
+
+`install`, `ci`, `add`, `remove` and `ls`. Tarballs are verified against `dist.integrity`, unpacked
+once into a content-addressed store, and hardlinked into `node_modules` - nested only where two
+versions genuinely conflict, which is why the tree resolves identically under node and onde.
+
+Installing the same two packages (`debug`, `ms`) cold, on this machine, tuckbox starting from an
+empty cache while npm reused its global one:
+
+| | tuckbox on onde | `npm install` |
+|---|---|---|
+| wall time | **0.40 s** | 0.58 s |
+| peak RSS | **27 MB** | 98 MB |
+| rebuild from the store | 0.08 s, 14 MB | — |
+
+Scope and deliberate gaps - no lifecycle scripts, no `.bin` links, no peer or native dependencies -
+are in [docs/tuckbox.md](docs/tuckbox.md).
+
 ## Works today (M0 + M1 + M2)
 
 **Runtime and scheduler**
