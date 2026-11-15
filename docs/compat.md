@@ -69,6 +69,7 @@ Measured on the pinned engine (2026-11-13):
 | `console` | 🟡 | `Console` class, log/info/debug/warn/error, dir/trace/assert/time/count/group/table/clear; no `profile*`/`timeStamp`/`createTask`, no color (D25) |
 | `querystring` | ✅ | parse/stringify/escape/unescape/decode/encode/unescapeBuffer |
 | `punycode` | ✅ | deprecated but complete |
+| `constants` | 🟡 | deprecated flat grab bag (DEP0008): forwards `fs.constants`, every object group of `os.constants` (onde has `signals`/`errno`/`priority`; Node also has `dlopen`) and `crypto.constants` when it exists. The flat shape and composition are Node's; the key set is whatever onde implements (fewer `UV_*`/errno values, no crypto constants yet). `zlib` constants are deliberately excluded, as in Node |
 | `module` | 🟡 | `createRequire`, `builtinModules`, `isBuiltin`, `_cache`, `syncBuiltinESMExports`; no internals (D33) |
 
 ### Globals — M2

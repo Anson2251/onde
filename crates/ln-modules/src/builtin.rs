@@ -14,6 +14,7 @@ pub const BUILTINS: &[&str] = &[
     "assert/strict",
     "buffer",
     "console",
+    "constants",
     "crypto",
     "dns",
     "events",
