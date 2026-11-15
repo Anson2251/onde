@@ -22,7 +22,7 @@ const root = join(__dirname, "..", "..");
 const lite = process.env.LITE_RELEASE || join(root, "target", "release", "lite");
 // compute.js is the engine-level comparison; codec.js is the byte-level one, and it is where the
 // stdlib's own implementation (rather than the engine) used to dominate.
-const scripts = ["compute.js", "codec.js"].map((name) => join(__dirname, name));
+const scripts = ["compute.js", "codec.js", "lib.js"].map((name) => join(__dirname, name));
 const reps = Number(process.env.BENCH_REPS || 3);
 
 if (!existsSync(lite)) {
