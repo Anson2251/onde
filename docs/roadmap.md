@@ -343,7 +343,7 @@ never removable).
 
 ## M4 — Network (6 w)
 
-**Status: in progress (2026-11-14).** The implementation contract is
+**Status: complete on 2026-11-15.** The implementation contract is
 [m4-plan.md](m4-plan.md); the protocol decisions are
 [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
 [ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0–WP6 have landed: `ln-io` runs live
@@ -439,6 +439,21 @@ plan depends on (shared-memory allocation, cross-isolate serialization, cross-th
 ---
 
 ## M6 — Engine patch and async context ★ (4 w)
+
+**Status: complete on 2026-11-21.** The implementation contract is [m6-plan.md](m6-plan.md); the
+runtime decision is [ADR-0009](adr/0009-async-context.md) and the engine delta is specified in
+[engine-patch.md](engine-patch.md). The engine is now *vendored and patched* (`vendor/`, quickjs-ng
+0.17.0 + `job-queue-hook.patch`), the host owns the job queue, and `async_hooks`/`AsyncLocalStorage`
+propagate across `await`, `then`, ticks, microtasks, timers, immediates, `fs`/`dns` callbacks and
+async function bodies: the 96-cell ALS matrix in `test/async/` is identical to Node 26. The M1
+scheduler corpus stayed byte-identical (232/232 conformance, 223/223 differential). Async stack
+traces ship opt-in behind `--async-stack-traces`. Cold start improved to 11.72 ms (`-e`) and
+18.43 ms (`require("http")`). Tracking starts only when `async_hooks` is loaded, so a program that
+never uses it pays nothing per callback: the HTTP rebench (100k requests, interleaved against the
+pre-M6 binary and Node) shows 13.9k vs 14.3k vs 29.9k req/s, i.e. no regression beyond noise.
+Divergences D54–D58 record the limits; D12 (the engine's
+`queueMicrotask` error code) is retired. Upgrading the vendor pin to quickjs-ng 0.18.0 needs an
+rquickjs that binds its dynamic-import API, and is tracked as M7 work.
 
 **Build**
 

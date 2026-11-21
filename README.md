@@ -11,11 +11,14 @@ binary.
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
 > commands below still say `target/debug/lite`.
 
-Status: M0 through M5 are done; M6 is next. M5 shipped `child_process`, `worker_threads` with real
-shared memory and `Atomics`, `readline`, and the `process` additions they need (signals, `kill`,
-`cpuUsage`); [docs/m5-plan.md](docs/m5-plan.md) records the contract and its outcome, and
-[docs/adr/0008](docs/adr/0008-processes-and-threads.md) the structural decision. Two M4 targets are
-still missed, HTTP throughput and the memory held by half-open connections;
+Status: M0 through M6 are done; M7 is next. M6 is the milestone that changes the engine: quickjs-ng
+is now vendored and patched (`vendor/`, 0.17.0 plus a ~260-line job-queue patch), the host owns the
+microtask queue, and `async_hooks`/`AsyncLocalStorage` propagate across `await`, `then`, ticks,
+microtasks, timers, `fs` callbacks and async function bodies. A 96-cell propagation matrix runs
+against Node 26 in `test/async/`; the scheduler corpus stayed byte-identical.
+[docs/m6-plan.md](docs/m6-plan.md) records the contract and its outcome,
+[docs/adr/0009](docs/adr/0009-async-context.md) the engine/host boundary. Two M4 targets are still
+missed, HTTP throughput and the memory held by half-open connections;
 [docs/m4-plan.md](docs/m4-plan.md) §8 has both.
 
 ## Roadmap
@@ -26,7 +29,7 @@ still missed, HTTP throughput and the memory held by half-open connections;
 | M3, done | `fs`, streams, `crypto`, `perf_hooks`, real stdio | files and streams are where a CLI spends its time |
 | M4, done | `net`, `http`/`https`, `tls`, `dns`, `zlib` | the server case, and what tuckbox needs |
 | M5, done | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline`, process signals | tools that shell out, and work that leaves the main thread |
-| M6, next | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue | request-scoped state without passing a context through every call |
+| M6, done | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue; the engine is vendored and patched | request-scoped state without passing a context through every call |
 | M7 | bytecode snapshot at build time, allocation fast paths, memory limits, `--trace-events`, a `node:test` runner | closes the startup, throughput and memory gap measured below |
 | M8 | compatibility sweep, packaging, publish | 1.0 |
 
@@ -45,6 +48,15 @@ compute figures are medians of five repetitions per workload. Harnesses: `test/n
 | peak RSS, hello HTTP server | 9.3 MB | 44.3 MB | 38.1 MB |
 | HTTP throughput, 100 keep-alive connections | 13.4k req/s | 29.9k req/s | 32.1k req/s |
 | HTTP p99 at that load | 42.5 ms | 6.6 ms | 5.9 ms |
+
+Re-measured after M6 (2026-11-21, same harness, release build, 100k requests per run, interleaved
+with a pre-M6 binary and Node): onde serves **13.9k req/s** against Node's **29.9k**, with the
+pre-M6 binary at 14.3k — M6's async-hooks plumbing costs nothing for a server that never loads
+`async_hooks` (docs/m6-plan.md §10.4). Cold start re-measured at 11.3 ms (`-e`) and 18.6 ms
+(`require("http")`) with `test/net/coldstart.js`; Node 26.12 at 89 ms for both. The HTTP p99 in
+this re-run was 100-150 ms for *both* onde binaries because the host was heavily loaded (the
+2026-11-15 figure below was taken on a quiet machine); that tail is the M4 single-isolate issue,
+not M6.
 
 onde ships as one 5.3 MB binary against a 76 MB Node install, and it holds a fifth of the memory
 for the same server. The readable JS stdlib is minified at build time with oxc (names are not
@@ -137,7 +149,8 @@ is the honest line: the CLI loads and runs, the module it needs for real work is
 | M3 I/O | `fs`, `fs/promises`, `stream`, `stream/promises`, `crypto`, `perf_hooks`, `tty`, real stdio |
 | M4 network | `net`, `http`, `https`, `tls`, `dns`, `zlib` |
 | M5 processes and threads | `child_process`, `worker_threads` with `SharedArrayBuffer`/`Atomics`, `readline`, signals |
-| next | `async_hooks` and `AsyncLocalStorage` (M6) |
+| M6 async context | `async_hooks`, `AsyncLocalStorage`, `AsyncResource`, `--async-stack-traces` |
+| next | performance and diagnostics (M7) |
 
 Per-module detail and all 52 deliberate divergences are in [docs/compat.md](docs/compat.md). The
 full inventory, repo layout and every harness are in [docs/internals.md](docs/internals.md).

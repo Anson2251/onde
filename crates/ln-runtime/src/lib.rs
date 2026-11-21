@@ -38,6 +38,7 @@ use ln_sched::{
 };
 
 mod args;
+mod async_hooks;
 mod handles;
 mod host;
 mod host_crypto;
@@ -50,6 +51,7 @@ mod signals;
 mod workers;
 pub use report::render_uncaught;
 
+use async_hooks::AsyncTracker;
 use handles::HandleBridge;
 use host::HostState;
 use modules::ModuleRuntime;
@@ -80,6 +82,9 @@ pub struct Config {
     /// Blocking pool size for async ops (`--io-threads`). The pool is created on the first
     /// async op, never at boot.
     pub io_threads: usize,
+    /// Append async ancestry to every Error stack (`--async-stack-traces`). Off by default:
+    /// recording a creation site per promise is measurable, and M6 ships it opt-in.
+    pub async_stack_traces: bool,
 }
 
 impl Config {
@@ -89,6 +94,7 @@ impl Config {
             budget: Budget::UNBOUNDED,
             expose_require: false,
             io_threads: 4,
+            async_stack_traces: false,
         }
     }
 }
@@ -215,6 +221,8 @@ struct Dispatcher {
     stop: Rc<Cell<bool>>,
     bridge: Rc<RefCell<Bridge>>,
     mailbox: SinkMailbox,
+    /// async_hooks ids, so a handler that throws or pumps can enter the right context.
+    async_hooks: Rc<AsyncTracker>,
     filename: Rc<str>,
     source: Rc<str>,
     /// CJS wrapper columns for line 1 (0 for scripts and ESM).
@@ -240,7 +248,7 @@ impl Dispatcher {
     /// If a handler queued promise jobs, hand the scheduler a pump for them. The pump joins the
     /// tail of the current microtask pass, which is where a job enqueued by a running job runs.
     fn maybe_pump(&self) {
-        if !self.engine.is_job_pending() {
+        if !self.engine.has_jobs() {
             return;
         }
         let engine = self.engine.clone();
@@ -248,9 +256,10 @@ impl Dispatcher {
         let bridge = self.bridge.clone();
         let state = self.state.clone();
         let stop = self.stop.clone();
+        let hooks = self.async_hooks.clone();
         self.mailbox
             .push(Origin::Microtask, "engine job", move |s| {
-                pump_job(&engine, &exit, &bridge, &state, &stop, s)
+                pump_job(&engine, &exit, &bridge, &state, &stop, &hooks, s)
             });
     }
 
@@ -345,6 +354,8 @@ pub struct Isolate {
     signals: Rc<SignalBridge>,
     /// Child processes: spawned processes and their pipes (M5).
     procs: Rc<ProcBridge>,
+    /// async_hooks ids and the execution context (M6).
+    async_hooks: Rc<AsyncTracker>,
     /// The forked child's IPC channel, if this process has one.
     ipc: Rc<IpcBridge>,
     /// The descriptor the parent passed (`ONDE_IPC_FD`), if any.
@@ -439,6 +450,7 @@ impl Isolate {
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .filter(|fd| *fd > 0)
         };
+        let async_hooks = AsyncTracker::new();
         let workers = Rc::new(workers::WorkerBridge::new(
             driver.clone(),
             sender,
@@ -467,6 +479,7 @@ impl Isolate {
             workers,
             signals,
             procs,
+            async_hooks,
             ipc,
             ipc_fd,
             worker,
@@ -475,8 +488,14 @@ impl Isolate {
             memory_requested,
             finished: false,
         };
+        // `--async-stack-traces` needs ids even when the program never loads `async_hooks`, and
+        // the host object tells the stdlib whether to start minting them from the first callback.
+        if config.async_stack_traces {
+            isolate.async_hooks.start();
+        }
         isolate.install(&config)?;
         isolate.install_tracker();
+        isolate.install_async_hooks(config.async_stack_traces);
         Ok(isolate)
     }
 
@@ -505,6 +524,8 @@ impl Isolate {
             ops: self.ops.clone(),
             ids: self.ops.ids().clone(),
             handles: self.handles.clone(),
+            async_hooks: self.async_hooks.clone(),
+            async_forced: self.async_hooks.is_started(),
         };
 
         self.engine
@@ -539,6 +560,23 @@ impl Isolate {
                 expose.call::<_, ()>((cwd,))
             })
             .map_err(|error| Failure::Engine(format!("install require: {error}")))
+    }
+
+    /// Turn on async stack traces (`--async-stack-traces`), if the flag was passed.
+    ///
+    /// The engine hooks that mint ids are installed later, by `host.asyncStart`, the first time
+    /// JavaScript loads `node:async_hooks` (see `async_hooks::start_tracking`). Until then the
+    /// runtime does no async bookkeeping at all, which is what keeps a program that never asks
+    /// for `async_hooks` at the pre-M6 cost per callback. The stack hook is installed here
+    /// because it only runs while an `Error` is built and is inert until ids exist.
+    fn install_async_hooks(&self, async_stack_traces: bool) {
+        crate::async_hooks::install_engine_hooks(&self.engine, &self.async_hooks);
+        if async_stack_traces {
+            self.async_hooks.set_async_stacks(true);
+            let frames = self.async_hooks.clone();
+            self.engine
+                .set_async_stack_hook(move || frames.render_async_frames());
+        }
     }
 
     /// Install the engine's rejection tracker. It forwards to the JS table, which keeps the
@@ -730,6 +768,7 @@ impl Isolate {
             stop: self.stop.clone(),
             bridge: self.bridge.clone(),
             mailbox: self.sched.sink_mailbox(),
+            async_hooks: self.async_hooks.clone(),
             filename: Rc::from(filename),
             source: Rc::from(source),
             first_line_offset,
@@ -1068,14 +1107,14 @@ impl Isolate {
             // *same* checkpoint, otherwise a tick followed only by promise jobs would end the
             // checkpoint early and flush rejections before the promise jobs ran (C3).
             let (_, queued_micros) = self.sched.pending();
-            if queued_micros == 0 && self.engine.is_job_pending() {
+            if queued_micros == 0 && self.engine.has_jobs() {
                 self.seed_pump();
             }
 
             let (ticks, micros) = self.sched.pending();
             if ticks == 0
                 && micros == 0
-                && !self.engine.is_job_pending()
+                && !self.engine.has_jobs()
                 && !self.sched.has_pending_rejections()
                 && ran
             {
@@ -1090,6 +1129,14 @@ impl Isolate {
             let outcome = self.sched.checkpoint();
             self.engine.set_interrupt_deadline(None);
             ran = true;
+
+            // A throwing async hook must surface like any other uncaught error, but it happened
+            // inside an engine callback: report it here, between scheduler jobs.
+            if let Some(dispatcher) = self.dispatcher.clone() {
+                for info in self.async_hooks.take_errors() {
+                    dispatcher.route_uncaught(&info);
+                }
+            }
 
             match outcome {
                 Checkpoint::Drained { .. } | Checkpoint::Nested => {}
@@ -1109,8 +1156,9 @@ impl Isolate {
         let bridge = self.bridge.clone();
         let state = self.state.clone();
         let stop = self.stop.clone();
+        let hooks = self.async_hooks.clone();
         self.sched.queue_microtask("engine job", move |s| {
-            pump_job(&engine, &exit, &bridge, &state, &stop, s)
+            pump_job(&engine, &exit, &bridge, &state, &stop, &hooks, s)
         });
     }
 
@@ -1352,6 +1400,8 @@ impl Drop for Isolate {
         self.ipc.shutdown();
         self.handles.shutdown();
         self.workers.shutdown();
+        // The pinned dispatcher must not outlive the runtime it belongs to.
+        self.async_hooks.forget_dispatch();
     }
 }
 
@@ -1476,23 +1526,37 @@ fn pump_job(
     bridge: &Rc<RefCell<Bridge>>,
     state: &Rc<RuntimeState>,
     stop: &Rc<Cell<bool>>,
+    hooks: &Rc<AsyncTracker>,
     sched: &mut Scheduler,
 ) -> Result<(), ErrorInfo> {
     if exit.requested.get() {
         return Ok(());
     }
 
-    match engine.pump_one() {
-        PumpOutcome::Executed => {
+    // Read the tag first: `before` must run with executionAsyncId already set to it, and the tag
+    // is only available while the job is still queued. An untagged job (dynamic import, a
+    // finalizer callback) keeps the enclosing context, which is the closest thing to Node's
+    // "runs as whoever queued it".
+    let Some(tag) = engine.next_job_tag() else {
+        drain_bridge(bridge, sched, engine, exit);
+        return Ok(());
+    };
+    let previous = engine.with_ctx(|ctx| hooks.enter(&ctx, tag));
+    let outcome = engine.run_next_job();
+    engine.with_ctx(|ctx| hooks.leave(&ctx, tag, previous));
+
+    match outcome {
+        PumpOutcome::Executed { .. } => {
             drain_bridge(bridge, sched, engine, exit);
-            if engine.is_job_pending() && !exit.requested.get() && !stop.get() {
+            if engine.has_jobs() && !exit.requested.get() && !stop.get() {
                 let engine = engine.clone();
                 let exit = exit.clone();
                 let bridge = bridge.clone();
                 let state = state.clone();
                 let stop = stop.clone();
+                let hooks = hooks.clone();
                 sched.queue_microtask("engine job", move |s| {
-                    pump_job(&engine, &exit, &bridge, &state, &stop, s)
+                    pump_job(&engine, &exit, &bridge, &state, &stop, &hooks, s)
                 });
             }
             Ok(())
@@ -1501,7 +1565,7 @@ fn pump_job(
             drain_bridge(bridge, sched, engine, exit);
             Ok(())
         }
-        PumpOutcome::Threw(caught) => {
+        PumpOutcome::Threw { error: caught, .. } => {
             if engine.take_interrupted() {
                 // A worker cancelled by its parent unwinds quietly: termination is not a budget
                 // trip and must not print a microtask-timeout diagnostic (D48).
@@ -1663,7 +1727,7 @@ fn cjs_column_offset(format: Format) -> usize {
     }
 }
 
-fn info_from_caught(caught: &CaughtError) -> ErrorInfo {
+pub(crate) fn info_from_caught(caught: &CaughtError) -> ErrorInfo {
     ErrorInfo {
         name: caught.name.clone(),
         message: caught.message.clone(),

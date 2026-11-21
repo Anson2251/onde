@@ -1,0 +1,565 @@
+diff -ru a/quickjs/quickjs.c b/quickjs/quickjs.c
+--- a/quickjs/quickjs.c	2026-11-21 16:55:25
++++ b/quickjs/quickjs.c	2026-11-21 16:55:25
+@@ -391,8 +391,23 @@
+     JSHostPromiseRejectionTracker *host_promise_rejection_tracker;
+     void *host_promise_rejection_tracker_opaque;
+ 
+-    struct list_head job_list; /* list of JSJobEntry.link */
++    /* Host-owned job queue (onde patch). When job_queue_hook is set, every
++       enqueued job is offered to it before the internal list is touched; a
++       hook that returns true takes ownership of the job and must later call
++       JS_JobRun/JS_JobFree. The hook is never set from inside the engine. */
++    JSJobQueueHook *job_queue_hook;
++    void *job_queue_hook_opaque;
+ 
++    /* Async stack traces (onde patch): appended to every Error's stack when installed. */
++    JSAsyncStackHook *async_stack_hook;
++    void *async_stack_hook_opaque;
++
++    /* Async-function body tracking (onde patch): told which promise is running. */
++    JSAsyncFunctionHook *async_function_hook;
++    void *async_function_hook_opaque;
++
++    struct list_head job_list; /* list of JSJob.link */
++
+     bool module_normalize_has_attr;
+     union {
+         JSModuleNormalizeFunc *module_normalize_func;
+@@ -1070,13 +1085,16 @@
+     JSValue private_value; /* private value for C modules */
+ };
+ 
+-typedef struct JSJobEntry {
++/* Opaque to embedders (JSJob); the tag is the host's payload and is never
++   interpreted by the engine. */
++struct JSJob {
+     struct list_head link;
+     JSContext *ctx;
+     JSJobFunc *job_func;
++    int64_t tag;
+     int argc;
+     JSValue argv[];
+-} JSJobEntry;
++};
+ 
+ typedef struct JSProperty {
+     union {
+@@ -2485,12 +2503,13 @@
+     rt->sab_funcs = *sf;
+ }
+ 
+-/* return 0 if OK, < 0 if exception */
+-int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
+-                  int argc, JSValueConst *argv)
++/* Allocate a job, dup its arguments, and hand it to the host hook when one is
++   installed. Returns 0 if the job was queued or adopted, < 0 on OOM. */
++static int js_enqueue_job(JSContext *ctx, JSJobFunc *job_func, int argc,
++                          JSValueConst *argv, int64_t tag)
+ {
+     JSRuntime *rt = ctx->rt;
+-    JSJobEntry *e;
++    JSJob *e;
+     int i;
+ 
+     assert(!rt->in_free);
+@@ -2500,14 +2519,78 @@
+         return -1;
+     e->ctx = ctx;
+     e->job_func = job_func;
++    e->tag = tag;
+     e->argc = argc;
++    init_list_head(&e->link);
+     for(i = 0; i < argc; i++) {
+         e->argv[i] = js_dup(argv[i]);
+     }
++    if (rt->job_queue_hook &&
++        rt->job_queue_hook(rt, e, rt->job_queue_hook_opaque))
++        return 0; /* the host owns e now */
+     list_add_tail(&e->link, &rt->job_list);
+     return 0;
+ }
+ 
++/* return 0 if OK, < 0 if exception */
++int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
++                  int argc, JSValueConst *argv)
++{
++    return js_enqueue_job(ctx, job_func, argc, argv, 0);
++}
++
++void JS_SetJobQueueHook(JSRuntime *rt, JSJobQueueHook *hook, void *opaque)
++{
++    rt->job_queue_hook = hook;
++    rt->job_queue_hook_opaque = opaque;
++}
++
++JSContext *JS_JobContext(JSJob *job)
++{
++    return job->ctx;
++}
++
++int64_t JS_JobTag(JSJob *job)
++{
++    return job->tag;
++}
++
++void JS_JobSetTag(JSJob *job, int64_t tag)
++{
++    job->tag = tag;
++}
++
++/* Run one job. Mirrors the per-job body of JS_ExecutePendingJob: 1 = ran,
++   -1 = exception pending in *pctx. Arguments are released here, so a job is
++   run at most once (JS_JobFree frees only what a run did not consume). */
++int JS_JobRun(JSRuntime *rt, JSJob *e, JSContext **pctx)
++{
++    JSContext *ctx = e->ctx;
++    JSValue res;
++    int i, ret;
++
++    (void)rt;
++    res = e->job_func(ctx, e->argc, vc(e->argv));
++    for(i = 0; i < e->argc; i++)
++        JS_FreeValue(ctx, e->argv[i]);
++    e->argc = 0;
++    ret = JS_IsException(res) ? -1 : 1;
++    JS_FreeValue(ctx, res);
++    *pctx = ctx;
++    return ret;
++}
++
++void JS_JobFree(JSRuntime *rt, JSJob *e)
++{
++    JSContext *ctx = e->ctx;
++    int i;
++
++    (void)rt;
++    for(i = 0; i < e->argc; i++)
++        JS_FreeValue(ctx, e->argv[i]);
++    js_free(ctx, e);
++}
++
+ bool JS_IsJobPending(JSRuntime *rt)
+ {
+     return !list_empty(&rt->job_list);
+@@ -2516,7 +2599,7 @@
+ JSContext *JS_GetPendingJobContext(JSRuntime *rt)
+ {
+     if (JS_IsJobPending(rt)) {
+-        return list_entry(rt->job_list.next, JSJobEntry, link)->ctx;
++        return list_entry(rt->job_list.next, JSJob, link)->ctx;
+     }
+     return NULL;
+ }
+@@ -2525,10 +2608,8 @@
+    executed successfully. the context of the job is stored in '*pctx' */
+ int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx)
+ {
+-    JSContext *ctx;
+-    JSJobEntry *e;
+-    JSValue res;
+-    int i, ret;
++    JSJob *e;
++    int ret;
+ 
+     if (list_empty(&rt->job_list)) {
+         *pctx = NULL;
+@@ -2536,19 +2617,10 @@
+     }
+ 
+     /* get the first pending job and execute it */
+-    e = list_entry(rt->job_list.next, JSJobEntry, link);
++    e = list_entry(rt->job_list.next, JSJob, link);
+     list_del(&e->link);
+-    ctx = e->ctx;
+-    res = e->job_func(e->ctx, e->argc, vc(e->argv));
+-    for(i = 0; i < e->argc; i++)
+-        JS_FreeValue(ctx, e->argv[i]);
+-    if (JS_IsException(res))
+-        ret = -1;
+-    else
+-        ret = 1;
+-    JS_FreeValue(ctx, res);
+-    js_free(ctx, e);
+-    *pctx = ctx;
++    ret = JS_JobRun(rt, e, pctx);
++    JS_JobFree(rt, e);
+     return ret;
+ }
+ 
+@@ -2646,12 +2718,16 @@
+     JS_FreeValueRT(rt, rt->current_exception);
+ 
+     list_for_each_safe(el, el1, &rt->job_list) {
+-        JSJobEntry *e = list_entry(el, JSJobEntry, link);
++        JSJob *e = list_entry(el, JSJob, link);
+         for(i = 0; i < e->argc; i++)
+             JS_FreeValueRT(rt, e->argv[i]);
+         js_free_rt(rt, e);
+     }
+     init_list_head(&rt->job_list);
++    /* A host that installed the queue hook owns its jobs; clearing the hook
++       here keeps a stray job from being offered to a half-freed runtime. */
++    rt->job_queue_hook = NULL;
++    rt->job_queue_hook_opaque = NULL;
+ 
+     JS_RunGC(rt);
+ 
+@@ -8330,6 +8406,18 @@
+         if (backtrace_barrier)
+             break;
+     }
++    /* onde patch: let the host stitch the async ancestry onto the synchronous frames. The
++       callback returns an owned buffer ("    at async foo (file:1:2)\n"), freed here. Skipped
++       when Error.prepareStackTrace is in use: that path builds a callsite array, not text. */
++    if (!has_prepare && rt->async_stack_hook) {
++        char *extra = rt->async_stack_hook(ctx, rt->async_stack_hook_opaque);
++        if (extra) {
++            if (dbuf.size > 0 && dbuf.buf[dbuf.size - 1] != '\n')
++                dbuf_putc(&dbuf, '\n');
++            dbuf_putstr(&dbuf, extra);
++            js_free(ctx, extra);
++        }
++    }
+  done:
+     if (has_prepare) {
+         int j = 0, k;
+@@ -21499,8 +21587,34 @@
+     return 0;
+ }
+ 
++/* onde patch: bracket every async-function body with a host hook.
++ *
++ * `current` in quickjs has no idea that a function is async, so a promise created in the
++ * synchronous prefix of an async function is attributed to the caller. Node attributes it to the
++ * async function's own promise, which is what `executionAsyncId()`, async stack traces and
++ * AsyncLocalStorage inheritance all expect. The hook is told which promise is running; the
++ * wrapper below makes sure the host is told when the body stops (or throws). */
++static bool js_async_function_resume_inner(JSContext *ctx, JSAsyncFunctionData *s);
++static int64_t js_resolving_func_tag(JSContext *ctx, JSValueConst func);
++
+ static bool js_async_function_resume(JSContext *ctx, JSAsyncFunctionData *s)
+ {
++    JSRuntime *rt = ctx->rt;
++    int64_t tag = 0;
++    bool result;
++
++    if (rt->async_function_hook)
++        tag = js_resolving_func_tag(ctx, s->resolving_funcs[0]);
++    if (tag != 0)
++        rt->async_function_hook(ctx, tag, true, rt->async_function_hook_opaque);
++    result = js_async_function_resume_inner(ctx, s);
++    if (tag != 0)
++        rt->async_function_hook(ctx, tag, false, rt->async_function_hook_opaque);
++    return result;
++}
++
++static bool js_async_function_resume_inner(JSContext *ctx, JSAsyncFunctionData *s)
++{
+     bool is_success = true;
+     JSValue func_ret, ret2;
+ 
+@@ -31760,6 +31874,78 @@
+     return JS_DupAtom(ctx, b->filename);
+ }
+ 
++/* onde patch: the creation site of an async resource.
++ *
++ * Returns "name (file:line:col)" for the stack frame `level` levels above the running code, or
++ * NULL when there is no JavaScript frame there. The host calls this from the promise hook to
++ * remember where an `await`/`then` chain was suspended, which is all `--async-stack-traces`
++ * needs to stitch the chain back together. The buffer is owned by the caller and released with
++ * JS_FreeStackFrameDesc. */
++char *JS_DescribeStackFrame(JSContext *ctx, int level)
++{
++    JSRuntime *rt = ctx->rt;
++    JSStackFrame *sf = rt->current_stack_frame;
++    JSObject *p;
++    JSFunctionBytecode *b = NULL;
++    DynBuf dbuf;
++    const char *func_name_str;
++    int line_num1, col_num1;
++    uint32_t pc;
++
++    while (level-- > 0 && sf != NULL)
++        sf = sf->prev_frame;
++    if (sf == NULL || JS_VALUE_GET_TAG(sf->cur_func) != JS_TAG_OBJECT)
++        return NULL;
++    p = JS_VALUE_GET_OBJ(sf->cur_func);
++    if (js_class_has_bytecode(p->class_id))
++        b = p->u.func.function_bytecode;
++
++    js_dbuf_init(ctx, &dbuf);
++    func_name_str = get_func_name(ctx, sf->cur_func);
++    if (!func_name_str || func_name_str[0] == '\0')
++        dbuf_printf(&dbuf, "<anonymous>");
++    else
++        dbuf_printf(&dbuf, "%s", func_name_str);
++    JS_FreeCString(ctx, func_name_str);
++
++    if (b && sf->cur_pc) {
++        const char *atom_str;
++        pc = sf->cur_pc - b->byte_code_buf - 1;
++        line_num1 = find_line_num(ctx, b, pc, &col_num1);
++        atom_str = b->filename ? JS_AtomToCString(ctx, b->filename) : NULL;
++        if (atom_str && line_num1 != -1)
++            dbuf_printf(&dbuf, " (%s:%d:%d)", atom_str, line_num1, col_num1);
++        JS_FreeCString(ctx, atom_str);
++    }
++    if (dbuf_error(&dbuf)) {
++        dbuf_free(&dbuf);
++        return NULL;
++    }
++    dbuf_putc(&dbuf, '\0');
++    if (dbuf_error(&dbuf)) {
++        dbuf_free(&dbuf);
++        return NULL;
++    }
++    return (char *)dbuf.buf;
++}
++
++void JS_FreeStackFrameDesc(JSContext *ctx, char *desc)
++{
++    js_free(ctx, desc);
++}
++
++/* The runtime may use an embedder-supplied allocator (rquickjs does), so host code that hands a
++   buffer back to the engine must allocate it with the engine's allocator. */
++void *JS_Malloc(JSContext *ctx, size_t size)
++{
++    return js_malloc(ctx, size);
++}
++
++void JS_Free(JSContext *ctx, void *ptr)
++{
++    js_free(ctx, ptr);
++}
++
+ JSAtom JS_GetModuleName(JSContext *ctx, JSModuleDef *m)
+ {
+     return JS_DupAtom(ctx, m->module_name);
+@@ -55496,6 +55682,9 @@
+     struct list_head promise_reactions[2];
+     bool is_handled;
+     JSValue promise_result;
++    /* Host payload (async_hooks id). Copied into every job this promise
++       enqueues when it settles; 0 means "no host tag". */
++    int64_t async_tag;
+ } JSPromiseData;
+ 
+ typedef struct JSPromiseFunctionDataResolved {
+@@ -55642,6 +55831,36 @@
+     rt->promise_hook_opaque = opaque;
+ }
+ 
++void JS_SetAsyncStackHook(JSRuntime *rt, JSAsyncStackHook *hook, void *opaque)
++{
++    rt->async_stack_hook = hook;
++    rt->async_stack_hook_opaque = opaque;
++}
++
++void JS_SetAsyncFunctionHook(JSRuntime *rt, JSAsyncFunctionHook *hook, void *opaque)
++{
++    rt->async_function_hook = hook;
++    rt->async_function_hook_opaque = opaque;
++}
++
++/* The promise tag is opaque host data. Both accessors tolerate non-promises
++   (the tag reads as 0 and writes are dropped) so a host can call them on any
++   value it was handed by the promise hook. */
++void JS_SetPromiseTag(JSContext *ctx, JSValueConst promise, int64_t tag)
++{
++    JSPromiseData *s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
++    (void)ctx;
++    if (s)
++        s->async_tag = tag;
++}
++
++int64_t JS_GetPromiseTag(JSContext *ctx, JSValueConst promise)
++{
++    JSPromiseData *s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
++    (void)ctx;
++    return s ? s->async_tag : 0;
++}
++
+ void JS_SetHostPromiseRejectionTracker(JSRuntime *rt,
+                                        JSHostPromiseRejectionTracker *cb,
+                                        void *opaque)
+@@ -55650,9 +55869,45 @@
+     rt->host_promise_rejection_tracker_opaque = opaque;
+ }
+ 
++/* The async tag of the promise a resolving function settles, or 0.
++ *
++ * A promise reaction belongs to the promise `.then()` created, not to the one that settled:
++ * Node runs the reaction with executionAsyncId() equal to the derived promise's id. The derived
++ * promise is reachable from the resolving function the reaction will call.
++ */
++static int64_t js_resolving_func_tag(JSContext *ctx, JSValueConst func)
++{
++    JSObject *p;
++    JSPromiseFunctionData *fd;
++
++    if (!JS_IsObject(func))
++        return 0;
++    p = JS_VALUE_GET_OBJ(func);
++    if (p->class_id != JS_CLASS_PROMISE_RESOLVE_FUNCTION &&
++        p->class_id != JS_CLASS_PROMISE_REJECT_FUNCTION)
++        return 0;
++    fd = p->u.promise_function_data;
++    if (!fd || JS_IsUndefined(fd->promise))
++        return 0;
++    return JS_GetPromiseTag(ctx, fd->promise);
++}
++
++/* The tag a reaction job carries: the derived promise's id when the reaction has one (the
++   normal `.then`/`await` case), otherwise the settled promise's id. */
++static int64_t js_reaction_job_tag(JSContext *ctx,
++                                   const JSPromiseReactionData *rd,
++                                   const JSPromiseData *s)
++{
++    int64_t tag = js_resolving_func_tag(ctx, rd->resolving_funcs[0]);
++    if (tag == 0)
++        tag = s->async_tag;
++    return tag;
++}
++
+ static void fulfill_or_reject_promise(JSContext *ctx, JSValueConst promise,
+                                       JSValueConst value, bool is_reject)
+ {
++    JSRuntime *rt = ctx->rt;
+     JSPromiseData *s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+     struct list_head *el, *el1;
+     JSPromiseReactionData *rd;
+@@ -55665,12 +55920,12 @@
+ 
+     promise_trace(ctx, "fulfill_or_reject_promise: is_reject=%d\n", is_reject);
+ 
+-    if (s->promise_state == JS_PROMISE_FULFILLED) {
+-        JSRuntime *rt = ctx->rt;
+-        if (rt->promise_hook) {
+-            rt->promise_hook(ctx, JS_PROMISE_HOOK_RESOLVE, promise,
+-                             JS_UNDEFINED, rt->promise_hook_opaque);
+-        }
++    /* Unlike upstream 0.17, the hook fires for rejections too: Node's
++       promiseResolve means "settled", not "fulfilled", and async_hooks users
++       depend on it. */
++    if (rt->promise_hook) {
++        rt->promise_hook(ctx, JS_PROMISE_HOOK_RESOLVE, promise,
++                         JS_UNDEFINED, rt->promise_hook_opaque);
+     }
+ 
+     call_promise_rejection_tracker(ctx, promise, false);
+@@ -55682,7 +55937,8 @@
+         args[2] = rd->handler;
+         args[3] = js_bool(is_reject);
+         args[4] = value;
+-        JS_EnqueueJob(ctx, promise_reaction_job, 5, args);
++        js_enqueue_job(ctx, promise_reaction_job, 5, args,
++                       js_reaction_job_tag(ctx, rd, s));
+         list_del(&rd->link);
+         promise_reaction_data_free(ctx->rt, rd);
+     }
+@@ -55850,7 +56106,8 @@
+         args[0] = s->promise;
+         args[1] = resolution;
+         args[2] = then;
+-        JS_EnqueueJob(ctx, js_promise_resolve_thenable_job, 3, args);
++        js_enqueue_job(ctx, js_promise_resolve_thenable_job, 3, args,
++                       JS_GetPromiseTag(ctx, s->promise));
+         JS_FreeValue(ctx, then);
+     }
+     return JS_UNDEFINED;
+@@ -56504,7 +56761,8 @@
+         args[2] = rd->handler;
+         args[3] = js_bool(i);
+         args[4] = s->promise_result;
+-        JS_EnqueueJob(ctx, promise_reaction_job, 5, args);
++        js_enqueue_job(ctx, promise_reaction_job, 5, args,
++                       js_reaction_job_tag(ctx, rd, s));
+         for(i = 0; i < 2; i++)
+             promise_reaction_data_free(ctx->rt, rd_array[i]);
+     }
+diff -ru a/quickjs/quickjs.h b/quickjs/quickjs.h
+--- a/quickjs/quickjs.h	2026-11-21 16:55:25
++++ b/quickjs/quickjs.h	2026-11-21 16:55:25
+@@ -1164,7 +1164,7 @@
+     JS_PROMISE_HOOK_INIT,     // emitted when a new promise is created
+     JS_PROMISE_HOOK_BEFORE,   // runs right before promise.then is invoked
+     JS_PROMISE_HOOK_AFTER,    // runs right after promise.then is invoked
+-    JS_PROMISE_HOOK_RESOLVE,  // not emitted for rejected promises
++    JS_PROMISE_HOOK_RESOLVE,  // emitted for fulfilled and rejected promises (onde patch)
+ } JSPromiseHookType;
+ 
+ // parent_promise is only passed in when type == JS_PROMISE_HOOK_INIT and
+@@ -1177,6 +1177,40 @@
+ JS_EXTERN void JS_SetPromiseHook(JSRuntime *rt, JSPromiseHook promise_hook,
+                                  void *opaque);
+ 
++/* Opaque host payload attached to a promise. Every promise reaction job the
++   promise enqueues when it settles inherits the tag, which is how a host maps
++   a job back to the async resource that created it. Non-promise values read as
++   0 and writes to them are dropped. */
++JS_EXTERN void JS_SetPromiseTag(JSContext *ctx, JSValueConst promise,
++                                int64_t tag);
++JS_EXTERN int64_t JS_GetPromiseTag(JSContext *ctx, JSValueConst promise);
++
++/* One stack frame, for async stack traces: "name (file:line:col)", or NULL when there is no
++   JavaScript frame at that depth. Free with JS_FreeStackFrameDesc. */
++JS_EXTERN char *JS_DescribeStackFrame(JSContext *ctx, int level);
++JS_EXTERN void JS_FreeStackFrameDesc(JSContext *ctx, char *desc);
++
++/* Return an owned, NUL-terminated block of "    at async ..." lines to append to every Error
++   stack, or NULL. The buffer must come from JS_Malloc: the engine frees it with js_free, and
++   the runtime may use an embedder allocator. Called while the error is being constructed; must
++   not run JavaScript. */
++typedef char *JSAsyncStackHook(JSContext *ctx, void *opaque);
++JS_EXTERN void JS_SetAsyncStackHook(JSRuntime *rt, JSAsyncStackHook *hook,
++                                    void *opaque);
++
++/* The runtime's allocator, for host buffers that the engine will free. */
++JS_EXTERN void *JS_Malloc(JSContext *ctx, size_t size);
++JS_EXTERN void JS_Free(JSContext *ctx, void *ptr);
++
++/* Called when an async function's body starts (entering = true) and stops (false), with the host
++   tag of the promise that represents the invocation (0 when the host never tagged it). Lets the
++   host attribute execution to the async function instead of its caller. Must not run
++   JavaScript. */
++typedef void JSAsyncFunctionHook(JSContext *ctx, int64_t async_tag,
++                                 bool entering, void *opaque);
++JS_EXTERN void JS_SetAsyncFunctionHook(JSRuntime *rt, JSAsyncFunctionHook *hook,
++                                       void *opaque);
++
+ /* is_handled = true means that the rejection is handled */
+ typedef void JSHostPromiseRejectionTracker(JSContext *ctx, JSValueConst promise,
+                                            JSValueConst reason,
+@@ -1250,6 +1284,29 @@
+ JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
+ JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
+ JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);
++
++/* Host-owned job queue (onde patch, upstream candidate).
++ *
++ * A JSJob is opaque. With a hook installed the engine calls it for every job
++ * it enqueues, after the arguments are dupped and before the job reaches
++ * rt->job_list: return true to take ownership (the host must then call
++ * JS_JobRun and JS_JobFree exactly once each), false to let the engine queue
++ * it. Ordering is unchanged either way. */
++typedef struct JSJob JSJob;
++typedef bool JSJobQueueHook(JSRuntime *rt, JSJob *job, void *opaque);
++JS_EXTERN void JS_SetJobQueueHook(JSRuntime *rt, JSJobQueueHook *hook,
++                                  void *opaque);
++
++JS_EXTERN JSContext *JS_JobContext(JSJob *job);
++JS_EXTERN int64_t JS_JobTag(JSJob *job);
++JS_EXTERN void JS_JobSetTag(JSJob *job, int64_t tag);
++
++/* Run one host-owned job: 1 = ran, -1 = exception pending in *pctx (0 is not
++   possible). Releases the job's arguments. */
++JS_EXTERN int JS_JobRun(JSRuntime *rt, JSJob *job, JSContext **pctx);
++/* Release a job that was never run (or already run). Exactly one call per
++   owned job; JS_JobFree after JS_JobRun is the normal path. */
++JS_EXTERN void JS_JobFree(JSRuntime *rt, JSJob *job);
+ 
+ /* Structure to retrieve (de)serialized SharedArrayBuffer objects. */
+ typedef struct JSSABTab {

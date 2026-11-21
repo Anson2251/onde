@@ -34,7 +34,7 @@ boundary at exactly one place: `OpDone` messages.
 
 ```
 ln-cli ──▶ ln-runtime ──┬─▶ ln-sched           (pure policy, no engine)
-                        ├─▶ ln-engine ──▶ ln-sys (bindgen, vendored quickjs-ng)
+                        ├─▶ ln-engine ──▶ vendor/rquickjs-sys (patched quickjs-ng 0.17.0)
                         ├─▶ ln-modules          (resolution, no engine)
                         ├─▶ ln-io ──▶ ln-http   (net/TLS, child processes, signals)
                         ├─▶ ln-crypto
@@ -46,8 +46,8 @@ ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps
 | Crate | Owns | Must not |
 |---|---|---|
 | `ln-sched` | queues, checkpoint, timers, loop driver, events | know about QuickJS, allocate per job where avoidable |
-| `ln-engine` | `JSRuntime`/`JSContext` lifetime, value handles, class registry, promise hooks, interrupt/cancel, the `Job::Engine` adapter, the process-global `SharedArrayBuffer` allocator and cross-isolate serialization | contain Node semantics |
-| `ln-runtime` | bootstrap, the engine's resolver/loader callbacks, host primitives, op/handle/proc/worker registries, event→JS mapping, the worker thread lifecycle | call `execute_pending_job` directly |
+| `ln-engine` | `JSRuntime`/`JSContext` lifetime, value handles, class registry, promise/async-function/async-stack hooks, the host-owned job queue and its FFI, interrupt/cancel, the process-global `SharedArrayBuffer` allocator and cross-isolate serialization | contain Node semantics |
+| `ln-runtime` | bootstrap, the engine's resolver/loader callbacks, host primitives, async ids and the execution context, op/handle/proc/worker registries, event→JS mapping, the worker thread lifecycle | touch a raw `JSJob`, or run an engine job itself |
 | `ln-modules` | CJS/ESM resolution, `package.json` maps, file URLs, CJS named-export scan | know about QuickJS, read a `JSValue`, decide runtime policy |
 | `ln-io` | fs syscalls, the tokio offload pool, net transports (TCP/Unix/TLS) with their connection tasks, child processes with pipes/IPC, and signal delivery; `Op` and handle execution | hold a `JSValue`, call into JS, decide HTTP or Node policy |
 | `ln-http` | HTTP/1.1 framing: head parsing, chunked codec, limits, the peer's keep-alive intent | own a socket, depend on tokio, decide JS-visible policy |
@@ -86,23 +86,24 @@ error and a non-zero exit, and bootstrap-registered timers must behave like user
 
 ## 4. Engine boundary
 
-`ln-engine` exposes a narrow safe API:
+`ln-engine` wraps rquickjs and the patched entry points and exposes a narrow API:
 
 ```rust
-pub struct Runtime { /* JSRuntime, memory caps, hooks */ }
-pub struct Context { /* JSContext */ }
-pub struct Value<'js> { /* RAII JSValue */ }
-pub struct Persistent<T> { /* rooted across turns */ }
+pub struct Engine { /* JSRuntime, JSContext, JobQueue, hooks */ }
 
-impl Runtime {
-    pub fn new(cfg: &Config) -> Result<Self>;
-    pub fn set_job_sink(&mut self, sink: JobSink);          // patched build
-    pub fn pump_one(&mut self) -> PumpOutcome;              // unpatched build
-    pub fn set_async_hooks(&mut self, hooks: Option<AsyncHooks>);
-    pub fn set_rejection_tracker(&self, tracker: impl Fn(...)); // M1: settle/attach events
-    pub fn set_interrupt_deadline(&self, deadline: Option<Instant>); // M1: budget guard
-    pub fn run_gc(&mut self);
-    pub fn memory_usage(&self) -> MemoryUsage;
+impl Engine {
+    pub fn new() -> Result<Self, InitError>;
+    pub fn eval_global(&self, source: &str, filename: &str) -> Result<Completion, CaughtError>;
+    pub fn set_rejection_tracker(&self, tracker: impl Fn(...));      // M1
+    pub fn set_promise_hook(&self, hook: impl Fn(...));              // M6: async ids
+    pub fn set_async_function_hook(&self, hook: impl Fn(i64, bool)); // M6: async bodies
+    pub fn set_async_stack_hook(&self, hook: impl Fn() -> Option<String>); // M6: --async-stack-traces
+    pub fn next_job_tag(&self) -> Option<i64>;                       // M6
+    pub fn run_next_job(&self) -> PumpOutcome;                       // M6: the only way to run a job
+    pub fn has_jobs(&self) -> bool;                                  // M6, asserts the engine list is empty
+    pub fn promise_tag(&self, ctx: &Ctx, v: &Value) -> i64;          // M6
+    pub fn set_promise_tag(&self, ctx: &Ctx, v: &Value, tag: i64);   // M6
+    pub fn memory_usage(&self) -> usize;
 }
 ```
 
@@ -112,9 +113,13 @@ Rules at this boundary:
 - Calls that can throw return `Result<Value, Exception>`; the exception is converted to a
   `CaughtError` (message, stack, name) at the boundary, never stored as a pending engine
   exception across statements.
-- `ln-engine` never decides when to drain. It exposes `pump_one`/`JobSink`; `ln-sched` decides.
-- The unpatched and patched builds implement the same `JobSink` trait so `ln-sched` has no
-  `cfg` branches.
+- `ln-engine` never decides when to drain. It owns the queue and runs one job when asked;
+  `ln-sched` decides *when* the ask happens, and `ln-runtime` brackets the ask with the
+  async-hooks `before`/`after` pair.
+- Only `ln-engine` touches a `JSJob`. The queue's ownership rules (adopt once, run once, free
+  once) are enforced by move-only handles and asserted at teardown.
+- The patch is inert with no hook installed, which is why the whole corpus runs on the patched
+  engine rather than on a separate "upstream" build.
 
 ## 5. Ops protocol
 

@@ -1,0 +1,10 @@
+await-timer=A
+await=A
+fscb=A
+microtask=A
+outside=undefined
+stream=A
+then=A
+tick=A
+timeout=A
+exit:0

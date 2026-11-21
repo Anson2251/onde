@@ -1,0 +1,7 @@
+inits true
+before-after-pairs true
+before-context true
+after-context true
+resolve-after-init true
+root true true
+exit:0

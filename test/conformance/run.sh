@@ -25,7 +25,7 @@ fi
 runner_path="$(command -v "$runner" 2>/dev/null || printf '%s' "$runner")"
 runner_name="$(basename "$runner_path")"
 
-default_suites=(microtasks timers loop nexttick uncaught rejections modules stdlib fs stream zlib http https net child_process workers readline divergences)
+default_suites=(microtasks timers loop nexttick uncaught rejections modules stdlib fs stream zlib http https net child_process workers readline async_hooks divergences)
 suites=()
 if [ -n "${SUITES:-}" ]; then
   read -r -a suites <<<"${SUITES}"

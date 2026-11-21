@@ -36,6 +36,14 @@ jobs:
         run: ./test/js/run.sh
       - name: M5 acceptance (children, workers, shared memory, signals)
         run: ./test/proc/run.sh
+      - name: M6 acceptance (async_hooks, AsyncLocalStorage, 1M promises)
+        # The retention bound is only meaningful on an optimized build, so this leg runs the
+        # release binary; the debug suite above already covers the semantics.
+        run: cargo build --release -p ln-cli && LITE=target/release/lite ./test/async/run.sh
+      - name: vendored engine patch is exactly what the docs claim
+        # The vendored tree must be pristine quickjs-ng 0.17.0 plus this patch. Reversing it is
+        # the cheapest way to prove nobody hand-edited the vendor copy.
+        run: cd vendor/rquickjs-sys && patch -p1 -R --dry-run < ../job-queue-hook.patch
       - name: M3 acceptance programs (cat, wc -l, cp -r)
         run: ./test/programs/run.sh
       - name: module smoke set (30 CJS + 10 ESM packages)

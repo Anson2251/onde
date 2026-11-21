@@ -2,12 +2,24 @@
 //!
 //! This crate owns the [`rquickjs`] `Runtime`/`Context` pair and exposes the small surface the
 //! runtime needs. It deliberately contains **no Node semantics**: no globals are installed here,
-//! and it never decides when microtasks run. The only way to move the engine's job queue is
-//! [`Engine::pump_one`], which is a single `JS_ExecutePendingJob` step and is meant to be called
-//! from exactly one place: the scheduler pump body in `ln-runtime` (invariant I1 in ADR-0002).
+//! and it never decides when microtasks run.
 //!
-//! No `unsafe` is used: the safe rquickjs API is sufficient through M2. If the M6 job-queue
-//! patch needs raw handles, that unsafe code belongs here and must be justified at the call site.
+//! # The job queue (M6)
+//!
+//! Since M6 the engine does not own its pending jobs: the vendored quickjs-ng patch offers every
+//! job to [`Engine`] through the hook in [`jobs`], together with an opaque handle and an `int64_t`
+//! tag. The tag is where `async_hooks` identity comes from (a promise reaction job inherits the
+//! settled promise's tag, see `docs/engine-patch.md`).
+//!
+//! The runtime moves the queue with [`Engine::run_next_job`], one job at a time, from exactly one
+//! place: the scheduler pump body in `ln-runtime` (invariant I1 in ADR-0002). The engine's own
+//! `rt->job_list` is never used; [`Engine::has_jobs`] asserts that in debug builds.
+//!
+//! # Unsafe
+//!
+//! The safe rquickjs API covers everything except the patch's job and promise-tag entry points,
+//! which are declared in [`ffi`] and wrapped here. Every `unsafe` block names the invariant it
+//! relies on; the queue's ownership rules live in [`jobs`].
 
 use std::cell::Cell;
 use std::fmt;
@@ -21,8 +33,13 @@ pub use rquickjs as js;
 use js::context::EvalOptions;
 use js::Ctx;
 
+mod ffi;
+mod jobs;
+
 pub mod sab;
 pub mod serialize;
+
+use jobs::JobQueue;
 
 pub use serialize::{deserialize, detach_buffer, serialize, SerializeError, Serialized};
 
@@ -38,12 +55,13 @@ pub enum Completion {
 /// Outcome of one engine job step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PumpOutcome {
-    /// One job ran without throwing.
-    Executed,
+    /// One job ran without throwing. `tag` is the async id the job carried (0 when the host never
+    /// tagged it, e.g. an engine-internal dynamic-import job).
+    Executed { tag: i64 },
     /// Nothing was pending.
     Idle,
     /// The job threw. The engine exception was taken and cleared.
-    Threw(CaughtError),
+    Threw { tag: i64, error: CaughtError },
 }
 
 /// A caught JavaScript exception, converted to owned data at the engine boundary.
@@ -115,6 +133,15 @@ impl std::error::Error for InitError {}
 pub struct Engine {
     runtime: js::Runtime,
     context: js::Context,
+    /// The raw runtime, for the patched entry points that take it directly. Derived from the
+    /// context at construction and valid until `runtime` is dropped.
+    raw: *mut ffi::JSRuntime,
+    /// The installed async-stack hook, reclaimed by `Drop`.
+    async_stack_hook: std::cell::Cell<*mut AsyncStackHookCell>,
+    /// The installed async-function hook, reclaimed by `Drop`.
+    async_function_hook: std::cell::Cell<*mut AsyncFunctionHookCell>,
+    /// Pending engine jobs, owned by this engine (see [`jobs`]).
+    queue: Rc<JobQueue>,
     /// Wall-clock deadline for cooperative interruption (`--microtask-timeout`). The interrupt
     /// handler checks this and aborts bytecode with the engine's internal error.
     deadline: Rc<Cell<Option<Instant>>>,
@@ -146,6 +173,15 @@ impl Engine {
         // must be installed before any JavaScript can construct a buffer (ADR-0008 §2.3, §2.4).
         context.with(|ctx| sab::install(&ctx));
 
+        // Take the job queue before anything can enqueue a job: every later `await`/`then` lands
+        // in `queue`, so the engine's internal list stays empty for the whole isolate lifetime.
+        let raw = context.with(|ctx| {
+            // SAFETY: `ctx` is live and belongs to `runtime`; `JS_GetRuntime` only reads it.
+            unsafe { js::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) }
+        });
+        let queue = JobQueue::new(raw);
+        queue.install();
+
         let deadline: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
         let interrupted = Rc::new(Cell::new(false));
         {
@@ -170,6 +206,10 @@ impl Engine {
         Ok(Self {
             runtime,
             context,
+            raw,
+            async_stack_hook: std::cell::Cell::new(std::ptr::null_mut()),
+            async_function_hook: std::cell::Cell::new(std::ptr::null_mut()),
+            queue,
             deadline,
             interrupted,
             cancelled,
@@ -338,28 +378,138 @@ impl Engine {
         self.runtime.memory_usage().memory_used_size as usize
     }
 
-    /// Execute exactly one pending engine job.
+    /// Install the engine's promise hook: the only source of `async_hooks` identity.
     ///
-    /// This is the only call site of `JS_ExecutePendingJob` in the project (I1). The runtime
-    /// wraps it in a scheduler job; nothing else may call it.
-    pub fn pump_one(&self) -> PumpOutcome {
-        match self.runtime.execute_pending_job() {
-            Ok(true) => PumpOutcome::Executed,
-            Ok(false) => PumpOutcome::Idle,
-            Err(job_error) => {
-                // `JobException` owns a context handle; catch the pending exception there so it
-                // cannot leak into the next job.
-                PumpOutcome::Threw(job_error.0.with(|ctx| {
-                    let value = ctx.catch();
-                    caught_from_value(&ctx, value)
-                }))
-            }
+    /// The callback fires on promise creation (`INIT`, with the parent promise when there is one)
+    /// and at settlement (`RESOLVE`). `BEFORE`/`AFTER` also fire around thenable adoption, but the
+    /// runtime ignores them: per-job `before`/`after` belong to the job runner, which knows the
+    /// async id the job carries.
+    pub fn set_promise_hook<F>(&self, hook: F)
+    where
+        F: for<'js> Fn(Ctx<'js>, js::promise::PromiseHookType, js::Value<'js>, js::Value<'js>)
+            + 'static,
+    {
+        self.runtime.set_promise_hook(Some(Box::new(hook)));
+    }
+
+    /// Install the async-stack hook: called while the engine builds an `Error`'s stack, it
+    /// returns the `    at async ...` lines to append (opt-in, `--async-stack-traces`).
+    ///
+    /// The closure must not run JavaScript: the engine is mid-construction. It only walks the
+    /// host's own id table, which is why it can be cheap enough to run for every error.
+    pub fn set_async_stack_hook<F>(&self, hook: F)
+    where
+        F: Fn() -> Option<String> + 'static,
+    {
+        let cell = Box::into_raw(Box::new(AsyncStackHookCell(Box::new(hook))));
+        self.async_stack_hook.set(cell);
+        // SAFETY: `raw` is this engine's runtime and `cell` outlives the hook (reclaimed in
+        // `Drop`, after the hook is removed).
+        unsafe {
+            ffi::JS_SetAsyncStackHook(self.raw, Some(async_stack_trampoline), cell as *mut _);
         }
     }
 
-    /// `JS_IsJobPending`: does the engine's queue still hold work?
-    pub fn is_job_pending(&self) -> bool {
-        self.runtime.is_job_pending()
+    /// Install the async-function hook: called with `entering = true` when an async function's
+    /// body starts and `false` when it yields or returns, with the promise for the invocation.
+    ///
+    /// This is how the host knows that `current` should be the async function's promise while its
+    /// body runs, which is Node's model and what makes `executionAsyncId()` inside an `async`
+    /// function report that function rather than its caller.
+    pub fn set_async_function_hook<F>(&self, hook: F)
+    where
+        F: Fn(i64, bool) + 'static,
+    {
+        let cell = Box::into_raw(Box::new(AsyncFunctionHookCell(Box::new(hook))));
+        self.async_function_hook.set(cell);
+        // SAFETY: `raw` is this engine's runtime, and `cell` outlives the hook (reclaimed in
+        // `Drop`, after the hook is removed).
+        unsafe {
+            ffi::JS_SetAsyncFunctionHook(self.raw, Some(async_function_trampoline), cell as *mut _);
+        }
+    }
+
+    /// Describe the JavaScript frame `level` levels above the caller, for async stack traces.
+    ///
+    /// Returns `name (file:line:col)`, or `None` when the frame is native or absent.
+    pub fn describe_stack_frame(&self, ctx: &Ctx<'_>, level: u32) -> Option<String> {
+        // SAFETY: `ctx` is this engine's context. The returned buffer is owned by us until it is
+        // released with `JS_FreeStackFrameDesc`.
+        unsafe {
+            let raw = ffi::JS_DescribeStackFrame(ctx.as_raw().as_ptr(), level as i32);
+            if raw.is_null() {
+                return None;
+            }
+            let text = std::ffi::CStr::from_ptr(raw).to_string_lossy().into_owned();
+            ffi::JS_FreeStackFrameDesc(ctx.as_raw().as_ptr(), raw);
+            Some(text)
+        }
+    }
+
+    /// The host tag attached to a promise, or 0 when it has none (including non-promises).
+    pub fn promise_tag(&self, ctx: &Ctx<'_>, promise: &js::Value<'_>) -> i64 {
+        // SAFETY: both handles belong to this engine's context, and reading the tag has no side
+        // effects (a non-promise reads as 0).
+        unsafe { ffi::JS_GetPromiseTag(ctx.as_raw().as_ptr(), promise.as_raw()) }
+    }
+
+    /// Attach the host tag that promise reaction jobs will inherit when the promise settles.
+    pub fn set_promise_tag(&self, ctx: &Ctx<'_>, promise: &js::Value<'_>, tag: i64) {
+        // SAFETY: same as `promise_tag`; writing is dropped for non-promises.
+        unsafe { ffi::JS_SetPromiseTag(ctx.as_raw().as_ptr(), promise.as_raw(), tag) }
+    }
+
+    /// True when the host queue holds work. `JS_IsJobPending` must stay false: the hook owns
+    /// every job, so anything left in the engine's list means the hook was bypassed.
+    pub fn has_jobs(&self) -> bool {
+        debug_assert!(
+            !self.runtime.is_job_pending(),
+            "the engine queued a job while the host owns the queue"
+        );
+        !self.queue.is_empty()
+    }
+
+    /// The tag of the next job, without running it. `None` when the queue is empty.
+    ///
+    /// The runtime reads this first so it can emit `before` for the right async id *before* the
+    /// job's JavaScript starts running.
+    pub fn next_job_tag(&self) -> Option<i64> {
+        self.queue.next_tag()
+    }
+
+    /// Execute exactly one pending engine job, in enqueue order.
+    ///
+    /// This is the only path that runs a job (I1). The runtime wraps it in a scheduler job that
+    /// also emits the async-hooks `before`/`after` pair; nothing else may call it.
+    pub fn run_next_job(&self) -> PumpOutcome {
+        let Some(job) = self.queue.pop() else {
+            return PumpOutcome::Idle;
+        };
+        // SAFETY: `job` came from this engine's hook, has not been run, and is freed immediately
+        // after the run whether it threw or not.
+        let tag = unsafe { ffi::JS_JobTag(job) };
+        debug_assert_eq!(
+            unsafe { ffi::JS_JobContext(job) },
+            self.context.with(|ctx| ctx.as_raw().as_ptr()),
+            "a job from another context reached this engine"
+        );
+        let ran = self.queue.run(job);
+        self.queue.free(job);
+        if ran {
+            return PumpOutcome::Executed { tag };
+        }
+        // The job left an exception pending. Taking it here is what keeps it from leaking into
+        // the next job; `ctx.catch()` consumes it.
+        let error = self.with_ctx(|ctx| {
+            let value = ctx.catch();
+            caught_from_value(&ctx, value)
+        });
+        PumpOutcome::Threw { tag, error }
+    }
+
+    /// Pending jobs, for diagnostics (`--trace-events`) and the leak assertion at teardown.
+    pub fn queued_jobs(&self) -> usize {
+        self.queue.len()
     }
 
     /// Mark `value` as an uncatchable engine error.
@@ -377,9 +527,101 @@ impl Engine {
     }
 }
 
+impl Drop for Engine {
+    fn drop(&mut self) {
+        // Order matters: stop routing new jobs to the host, release the ones already adopted,
+        // then let the runtime go. Freeing a job touches the runtime's allocator and its values,
+        // so it must happen while `self.runtime`/`self.context` are still alive - which they are,
+        // because fields are dropped after this body returns.
+        let function_hook = self.async_function_hook.replace(std::ptr::null_mut());
+        if !function_hook.is_null() {
+            // SAFETY: installed by `set_async_function_hook` on this runtime.
+            unsafe {
+                ffi::JS_SetAsyncFunctionHook(self.raw, None, std::ptr::null_mut());
+                drop(Box::from_raw(function_hook));
+            }
+        }
+        let hook = self.async_stack_hook.replace(std::ptr::null_mut());
+        if !hook.is_null() {
+            // SAFETY: installed by `set_async_stack_hook` on this runtime; cleared before the
+            // backing cell is reclaimed.
+            unsafe {
+                ffi::JS_SetAsyncStackHook(self.raw, None, std::ptr::null_mut());
+                drop(Box::from_raw(hook));
+            }
+        }
+        self.queue.uninstall();
+        debug_assert!(
+            !self.runtime.is_job_pending(),
+            "an engine job bypassed the host queue"
+        );
+        // Releasing a job can run a finalizer, and a finalizer job goes to `rt->job_list` now
+        // that the hook is gone; the engine frees those itself (the assertion above ran before
+        // that could happen).
+        self.queue.clear();
+        debug_assert_eq!(
+            self.queue.outstanding(),
+            0,
+            "engine jobs leaked: {} adopted and not freed",
+            self.queue.outstanding()
+        );
+    }
+}
+
 impl fmt::Debug for Engine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Engine").finish_non_exhaustive()
+        f.debug_struct("Engine")
+            .field("queued_jobs", &self.queue.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The closure behind the async-stack hook, boxed so the C side can hold a thin pointer to it.
+struct AsyncStackHookCell(Box<dyn Fn() -> Option<String>>);
+
+/// The closure behind the async-function hook (same trick).
+struct AsyncFunctionHookCell(Box<dyn Fn(i64, bool)>);
+
+/// C entry point for the async-function hook.
+unsafe extern "C" fn async_function_trampoline(
+    _ctx: *mut ffi::JSContext,
+    tag: i64,
+    entering: bool,
+    opaque: *mut std::ffi::c_void,
+) {
+    let cell = &*(opaque as *const AsyncFunctionHookCell);
+    // A panic may not cross the boundary; a missed context switch is a bug, not a crash.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        (cell.0)(tag, entering);
+    }));
+}
+
+/// C entry point for the async-stack hook.
+///
+/// The returned buffer must use the runtime's allocator (`free` by default), because QuickJS
+/// frees it with `js_free`. A panic must not cross the boundary: it becomes "no extra frames".
+unsafe extern "C" fn async_stack_trampoline(
+    ctx: *mut ffi::JSContext,
+    opaque: *mut std::ffi::c_void,
+) -> *mut std::os::raw::c_char {
+    let cell = &*(opaque as *const AsyncStackHookCell);
+    let text = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (cell.0)())) {
+        Ok(Some(text)) => text,
+        _ => return std::ptr::null_mut(),
+    };
+    if text.is_empty() {
+        return std::ptr::null_mut();
+    }
+    let bytes = text.as_bytes();
+    // SAFETY: the engine frees this with its own allocator, so it must come from `JS_Malloc`.
+    unsafe {
+        let buffer = ffi::JS_Malloc(ctx, bytes.len() + 1) as *mut u8;
+        if buffer.is_null() {
+            return std::ptr::null_mut();
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *buffer.add(bytes.len()) = 0;
+        buffer as *mut std::os::raw::c_char
     }
 }
 

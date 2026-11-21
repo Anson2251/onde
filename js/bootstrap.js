@@ -148,9 +148,28 @@
   const timerHandles = new Map(); // driver timer id -> Timeout
   const immediateHandles = new Map(); // driver immediate id -> Immediate
 
-  function register(callback, args, repeat) {
+  // `asyncType` mints the async_hooks resource the callback runs in (M6). Every timer, immediate
+  // and tick gets one at *schedule* time, which is what makes `executionAsyncId()` inside the
+  // callback the id of the thing that was scheduled, and lets an ALS store inherit from the code
+  // that called setTimeout rather than from the loop.
+  // async_hooks tracking starts when `node:async_hooks` is first loaded, not at boot: a program
+  // that never asks for it must not pay an id, a context switch and a destroy per callback. The
+  // module flips `started` (M6). Resources created before that have no async id, which is D54.
+  const asyncControl = { started: host.asyncForced() === true };
+  Object.defineProperty(g, "__ln_async_control", {
+    value: asyncControl,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
+  function register(callback, args, repeat, asyncType) {
     const id = nextCallbackId++;
-    callbacks.set(id, { fn: callback, args, repeat });
+    const entry = { fn: callback, args, repeat };
+    if (asyncType !== undefined && asyncControl.started) {
+      entry.asyncId = host.asyncInit(asyncType, 0);
+    }
+    callbacks.set(id, entry);
     return id;
   }
 
@@ -238,11 +257,21 @@
       throw invalidArgType("callback", "function", callback);
     }
     const delay = normalizeDelay(after);
-    const callbackId = register(callback, args, repeat);
+    const callbackId = register(callback, args, repeat, "Timeout");
     const id = host.setTimer(callbackId, delay, repeat);
     const handle = new Timeout(id, callbackId, repeat);
     timerHandles.set(id, handle);
     return handle;
+  }
+
+  // A cleared timer/immediate never runs, so nothing would emit its `destroy`; do it here. The
+  // entry is removed by the caller, so a second clear cannot double-emit.
+  function destroyCallbackAsyncId(callbackId) {
+    const entry = callbacks.get(callbackId);
+    if (entry !== undefined && entry.asyncId !== undefined) {
+      host.asyncDestroy(entry.asyncId);
+      entry.asyncId = undefined;
+    }
   }
 
   function clearTimer(handle) {
@@ -251,6 +280,7 @@
     if (host.clearTimer(id)) {
       const timer = timerHandles.get(id);
       if (timer !== undefined) {
+        destroyCallbackAsyncId(timer._callbackId);
         callbacks.delete(timer._callbackId);
         timerHandles.delete(id);
       }
@@ -261,7 +291,7 @@
     if (typeof callback !== "function") {
       throw invalidArgType("callback", "function", callback);
     }
-    const callbackId = register(callback, args, false);
+    const callbackId = register(callback, args, false, "Immediate");
     const id = host.setImmediate(callbackId);
     const handle = new Immediate(id, callbackId);
     immediateHandles.set(id, handle);
@@ -274,6 +304,7 @@
     if (host.clearImmediate(id)) {
       const immediate = immediateHandles.get(id);
       if (immediate !== undefined) {
+        destroyCallbackAsyncId(immediate._callbackId);
         callbacks.delete(immediate._callbackId);
         immediateHandles.delete(id);
       }
@@ -281,7 +312,42 @@
   }
 
   function scheduleTick(callback, args) {
-    host.nextTick(register(callback, args, false));
+    host.nextTick(register(callback, args, false, "TickObject"));
+  }
+
+  // --- async context around dispatch (M6) -----------------------------------------------------
+
+  // The engine side of async_hooks lives in Rust; this is the pair of calls that brackets one
+  // user callback. `finally` is deliberate: a throwing callback must still emit `after` and
+  // restore the previous id, or the rest of the loop would run in the wrong context.
+  function runInAsyncId(asyncId, fn) {
+    const previous = host.asyncEnter(asyncId);
+    try {
+      return fn();
+    } finally {
+      host.asyncLeave(asyncId, previous);
+      host.asyncDestroy(asyncId);
+    }
+  }
+
+  // `queueMicrotask` is an engine global whose jobs are the engine's own microtasks, so their
+  // async id has to be minted here and entered when the job runs. The wrapper is installed
+  // before any stdlib module can capture the original.
+  if (typeof g.queueMicrotask === "function") {
+    const nativeQueueMicrotask = g.queueMicrotask;
+    g.queueMicrotask = function queueMicrotask(callback) {
+      // The validation is Node-visible behaviour (D12 retired); the async id is not, so it is
+      // only minted once tracking started.
+      if (typeof callback !== "function") {
+        throw invalidArgType("callback", "function", callback);
+      }
+      if (!asyncControl.started) {
+        nativeQueueMicrotask(callback);
+        return;
+      }
+      const asyncId = host.asyncInit("Microtask", 0);
+      nativeQueueMicrotask(() => runInAsyncId(asyncId, callback));
+    };
   }
 
   // --- async ops ------------------------------------------------------------------------------
@@ -332,17 +398,28 @@
       }
       if (aborted) error = makeAbortError();
     }
-    if (entry.callback !== undefined) {
-      entry.callback(error === undefined || error === null ? null : error, value);
+    const settled = error === undefined || error === null;
+    const reason = settled ? null : error;
+    const settle = () => {
+      if (entry.callback !== undefined) {
+        entry.callback(reason, value);
+        return;
+      }
+      if (settled) entry.resolve(value);
+      else entry.reject(reason);
+    };
+    // The completion runs as the request's async resource, so an ALS store from the call site is
+    // visible in the callback and in a `then` attached to the promise (M6).
+    if (entry.asyncId === undefined) {
+      settle();
       return;
     }
-    if (error === undefined || error === null) entry.resolve(value);
-    else entry.reject(error);
+    runInAsyncId(entry.asyncId, settle);
   }
 
   // Shared by `__ln_op` (fs) and `__ln_dns_op` (dns): mint the id, register the settler, hand the
   // id to the Rust entry point, and return the promise (or undefined for the callback form).
-  function submitOp(submit, options) {
+  function submitOp(submit, options, asyncType) {
     const settings = options === undefined || options === null ? {} : options;
     const id = host.nextRequestId();
     const callback = settings.callback;
@@ -360,6 +437,12 @@
         entry.resolve = resolve;
         entry.reject = reject;
       });
+    }
+    // Node names the resource after the operation family ('FSREQCALLBACK',
+    // 'GETADDRINFOREQWRAP'); the id exists from request time, so the context is right even for
+    // the callback form. Only minted once async_hooks is in play (D54).
+    if (asyncControl.started) {
+      entry.asyncId = host.asyncInit(asyncType === undefined ? "FSREQCALLBACK" : asyncType, 0);
     }
     opSettlers.set(id, entry);
 
@@ -385,18 +468,19 @@
       // (Node does the same). Forget the settler and let the exception reach the caller.
       opSettlers.delete(id);
       removeAbortListener(entry);
+      if (entry.asyncId !== undefined) host.asyncDestroy(entry.asyncId);
       throw error;
     }
     return result;
   }
 
   function op(name, args, options) {
-    return submitOp((id) => host.fsAsync(id, name, args), options);
+    return submitOp((id) => host.fsAsync(id, name, args), options, "FSREQCALLBACK");
   }
 
   // `dns.lookup` shares the op table and the one id sequence; only the Rust entry point differs.
   function dnsOp(hostname, family, all, options) {
-    return submitOp((id) => host.dnsAsync(id, hostname, family, all), options);
+    return submitOp((id) => host.dnsAsync(id, hostname, family, all), options, "GETADDRINFOREQWRAP");
   }
 
   // --- events, process, console ---------------------------------------------------------------
@@ -603,7 +687,25 @@
     } else {
       callbacks.delete(callbackId);
     }
-    entry.fn.apply(thisArg, entry.args);
+    // The id is captured here: the callback may clear its own timer (or interval), and clearing
+    // destroys the resource while this frame is still using it.
+    const asyncId = entry.asyncId;
+    if (asyncId === undefined) {
+      entry.fn.apply(thisArg, entry.args);
+      return;
+    }
+    // An interval keeps its resource across firings; a one-shot timer, an immediate and a tick
+    // are destroyed as soon as the callback returns.
+    if (entry.repeat) {
+      const previous = host.asyncEnter(asyncId);
+      try {
+        entry.fn.apply(thisArg, entry.args);
+      } finally {
+        host.asyncLeave(asyncId, previous);
+      }
+      return;
+    }
+    runInAsyncId(asyncId, () => entry.fn.apply(thisArg, entry.args));
   }
 
   function requireCjsNamespace(filename) {

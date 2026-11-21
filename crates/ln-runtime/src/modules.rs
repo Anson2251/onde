@@ -43,6 +43,7 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "util" => bundled_js!("lib/util.js"),
         "assert" => bundled_js!("lib/assert.js"),
         "assert/strict" => "module.exports = require(\"assert\").strict;",
+        "async_hooks" => bundled_js!("lib/async_hooks.js"),
         "events" => bundled_js!("lib/events.js"),
         "fs" => bundled_js!("lib/fs.js"),
         "fs/promises" => bundled_js!("lib/fs-promises.js"),

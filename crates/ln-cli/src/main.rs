@@ -51,6 +51,10 @@ struct Cli {
     #[arg(long = "io-threads", value_name = "N", default_value_t = 4)]
     io_threads: u64,
 
+    /// Append the async ancestry of an error to its stack
+    #[arg(long = "async-stack-traces")]
+    async_stack_traces: bool,
+
     /// Arguments exposed through process.argv after the script name
     #[arg(
         value_name = "ARGS",
@@ -128,6 +132,7 @@ fn real_main() -> i32 {
     let exe = env::args().next().unwrap_or_else(|| "lite".to_owned());
     let budget = cli.budget();
     let io_threads = cli.io_threads();
+    let async_stack_traces = cli.async_stack_traces;
 
     if let Some(expression) = cli.eval {
         // `node -e EXPR a b` exposes `a b` in `process.argv`; a positional after `-e` is an
@@ -137,7 +142,7 @@ fn real_main() -> i32 {
             argv.push(file.display().to_string());
         }
         argv.extend(cli.args);
-        return run_eval(&expression, argv, budget, io_threads);
+        return run_eval(&expression, argv, budget, io_threads, async_stack_traces);
     }
 
     let Some(file) = cli.file else {
@@ -165,6 +170,7 @@ fn real_main() -> i32 {
     let mut config = Config::new(argv);
     config.budget = budget;
     config.io_threads = io_threads;
+    config.async_stack_traces = async_stack_traces;
     let mut isolate = match Isolate::new(config) {
         Ok(isolate) => isolate,
         Err(failure) => return report_failure(failure),
@@ -182,10 +188,17 @@ fn real_main() -> i32 {
     }
 }
 
-fn run_eval(expression: &str, argv: Vec<String>, budget: Budget, io_threads: usize) -> i32 {
+fn run_eval(
+    expression: &str,
+    argv: Vec<String>,
+    budget: Budget,
+    io_threads: usize,
+    async_stack_traces: bool,
+) -> i32 {
     let mut config = Config::new(argv);
     config.budget = budget;
     config.io_threads = io_threads;
+    config.async_stack_traces = async_stack_traces;
     // Node's `-e` evaluates as CommonJS with `require` in scope; keep the completion-value
     // printing, which is onde's documented convenience.
     config.expose_require = true;

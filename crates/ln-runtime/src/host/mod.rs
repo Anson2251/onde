@@ -86,6 +86,11 @@ pub(crate) struct HostState {
     pub ipc_fd: Option<i32>,
     /// `Some` when this isolate is a worker.
     pub worker: Option<Rc<crate::WorkerRole>>,
+    /// async_hooks ids and the execution context (M6).
+    pub async_hooks: Rc<crate::async_hooks::AsyncTracker>,
+    /// True when `--async-stack-traces` started tracking before the bootstrap ran, so the
+    /// stdlib must mint ids from the first callback.
+    pub async_forced: bool,
 }
 
 pub(crate) fn install<'js>(
@@ -153,6 +158,119 @@ pub(crate) fn install<'js>(
                 exit.exit_code.set(code);
                 Ok(())
             })?,
+        )?;
+    }
+
+    // --- async_hooks identity (M6) -----------------------------------------------------------
+    //
+    // The stdlib mints an id for every asynchronous resource it creates (a timer, a tick, an fs
+    // request) and brackets the callback with `asyncEnter`/`asyncLeave`. Ids are numbers, never
+    // BigInt: Node's are safe integers and user code compares them with `===`.
+    {
+        // `--async-stack-traces` needs ids even in a program that never loads `async_hooks`.
+        let forced = state.async_forced;
+        host.set(
+            "asyncForced",
+            js::Function::new(ctx.clone(), move || -> js::Result<bool> { Ok(forced) })?,
+        )?;
+    }
+
+    {
+        // Called once, when `node:async_hooks` is first loaded: starts minting and tagging ids.
+        // Before this, the runtime does no async bookkeeping at all.
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncStart",
+            js::Function::new(ctx.clone(), move || -> js::Result<()> {
+                hooks.start();
+                Ok(())
+            })?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncInit",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, type_name: String, trigger: f64| -> js::Result<f64> {
+                    let trigger = if trigger > 0.0 {
+                        Some(trigger as i64)
+                    } else {
+                        None
+                    };
+                    Ok(hooks.init_resource(&ctx, &type_name, trigger) as f64)
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncCurrent",
+            js::Function::new(ctx.clone(), move || -> f64 { hooks.current() as f64 })?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncEnable",
+            js::Function::new(ctx.clone(), move |mask: u32| -> js::Result<()> {
+                hooks.set_wants(mask);
+                Ok(())
+            })?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncDestroy",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, id: f64| -> js::Result<()> {
+                    hooks.destroy(&ctx, id as i64);
+                    Ok(())
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncEnter",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, id: f64| -> js::Result<f64> {
+                    Ok(hooks.enter(&ctx, id as i64) as f64)
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncLeave",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, id: f64, previous: f64| -> js::Result<()> {
+                    hooks.leave(&ctx, id as i64, previous as i64);
+                    Ok(())
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let hooks = state.async_hooks.clone();
+        host.set(
+            "asyncInits",
+            js::Function::new(ctx.clone(), move || -> f64 { hooks.inits() as f64 })?,
         )?;
     }
 

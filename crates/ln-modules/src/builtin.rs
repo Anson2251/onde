@@ -12,6 +12,7 @@
 pub const BUILTINS: &[&str] = &[
     "assert",
     "assert/strict",
+    "async_hooks",
     "buffer",
     "child_process",
     "console",

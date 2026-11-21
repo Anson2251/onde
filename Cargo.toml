@@ -22,3 +22,10 @@ license = "MIT"
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+
+# M6 vendors the engine: the job-queue hook in `docs/engine-patch.md` needs quickjs-ng to hand
+# its pending jobs to the host instead of its internal list. The vendored crate is
+# rquickjs-sys 0.14.0 (byte-for-byte otherwise) with `vendor/job-queue-hook.patch` applied to
+# the bundled quickjs-ng 0.16.2 sources. See docs/m6-plan.md §2.
+[patch.crates-io]
+rquickjs-sys = { path = "vendor/rquickjs-sys" }

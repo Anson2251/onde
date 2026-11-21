@@ -90,9 +90,18 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 `ERR_MODULE_NOT_FOUND`, `ERR_PACKAGE_PATH_NOT_EXPORTED`, `ERR_REQUIRE_ESM`, …), and uncaught-error
 rendering shared by scripts and modules.
 
+### Async context (M6)
+
+`async_hooks` and `AsyncLocalStorage` are host features built on the patched engine: the engine
+hands every job to `ln-engine`'s queue with an `int64_t` tag, promises carry the tag of the resource
+they belong to, and the runtime brackets each job with `before`/`after`. `js/lib/async_hooks.js`
+owns the hook list, the store tables and `AsyncResource`; `ln-runtime/src/async_hooks.rs` owns ids
+and the execution context. See [ADR-0009](adr/0009-async-context.md) and
+[m6-plan.md](m6-plan.md).
+
 ### Not yet
 
-- **M6:** `async_hooks`/`AsyncLocalStorage` across `await`
+- **M7:** fast paths for the async-hooks crossing, per-socket resources, async frames on by default
 - **Non-goals:** native addons (N-API), `vm`, `cluster`, `inspector`, full `Intl` — see
   [compat.md](compat.md) §3
 
@@ -105,7 +114,8 @@ crates/
   ln-cli/        `lite` binary: args, budget flags, eval vs file       [exists]
   ln-runtime/    isolate bootstrap, host primitives, ESM/CJS loading,
                  loop, errors, worker/proc/signal bridges              [exists]
-  ln-engine/     safe wrapper over the engine + the job pump step      [exists]
+  ln-engine/     the engine wrapper, the host-owned job queue and the
+                 patched entry points (ffi.rs, jobs.rs)                 [exists]
   ln-sched/      microtask/tick scheduler, timers, loop driver, budget [exists]
   ln-modules/    engine-free CJS/ESM resolution, package.json maps,
                  named-export scan                                     [exists]
@@ -115,7 +125,6 @@ crates/
   ln-crypto/     hash/HMAC/HKDF/random, engine-free and tokio-free     [M3]
   ln-zlib/       gzip/deflate + crc32, engine-free and tokio-free      [M4]
   ln-error/      errno→code and message tables                         [M3]
-  ln-sys/        bindgen FFI for vendored, patched quickjs-ng          [M6]
 js/
   bootstrap.js   install order: host, events/process, globals, hooks
   lib/           path, url, util, events, assert, buffer, os, console,
@@ -125,34 +134,38 @@ js/
                  net, internal/net, http, https, internal/http, tls,
                  dns, zlib, child_process, internal/pipe,
                  worker_threads, internal/worker, readline,
-                 readline-promises
+                 readline-promises, async_hooks
 test/
-  conformance/   230 cases: scheduler (M1), modules, stdlib,
+  conformance/   232 cases: scheduler (M1), modules, stdlib,
                  fs, stream, zlib, net, http, https, child_process,
-                 workers, readline, divergences
+                 workers, readline, async_hooks, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   programs/      cat, wc -l, cp -r as real programs (M3 acceptance)
   net/           throughput, interop, fd-leak, slow-loris, cold start (M4)
   proc/          M5 acceptance: children, workers, Atomics, signals
+  async/         M6 acceptance: ALS matrix (96 cells), hook semantics,
+                 1M-promise retention
   stress/        RSS across timer create/clear
 tuckbox/         a small npm, in TypeScript, running on onde           [demo]
-vendor/          quickjs-ng fork + rquickjs-sys patch queue            [M6]
+vendor/          rquickjs-sys 0.14.0 + patched quickjs-ng 0.17.0        [M6]
+                 job-queue-hook.patch, README (pin + rebase procedure)
 ```
 
 ## 3. Build and test
 
 ```sh
-cargo test --all                                # 372 tests across the crates
+cargo test --all                                # 378 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 230/230 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 232/232 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (220)
+./test/differential.sh                          # node vs lite, same stdout + exit code (223)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 75 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 77 stdlib suites under node and lite + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
+./test/async/run.sh                             # M6 acceptance: ALS matrix, hooks, 1M promises
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
