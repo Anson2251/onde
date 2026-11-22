@@ -58,6 +58,17 @@ pub(super) fn install<'js>(
         })?,
     )?;
 
+    // Does the terminal itself echo what is typed? Readline asks before echoing, because a real
+    // terminal in its normal (canonical) mode already echoes keystrokes *and* the terminating
+    // newline: echoing the line again prints every input twice (verified against `vibe-cpc`: three
+    // "123" lines instead of two).
+    host.set(
+        "echoes",
+        js::Function::new(ctx.clone(), |fd: u8| -> js::Result<bool> {
+            Ok(tty_echoes(fd))
+        })?,
+    )?;
+
     host.set(
         "columns",
         js::Function::new(ctx.clone(), |fd: u8| -> js::Result<u32> {
@@ -77,6 +88,23 @@ pub(super) fn install<'js>(
     )?;
 
     Ok(())
+}
+
+/// Whether the terminal behind `fd` echoes input (`ECHO` in its line discipline).
+///
+/// `false` for anything that is not a terminal, which is also the answer for a terminal interface
+/// reading from a pipe: there is no line discipline, so the program has to do the echoing itself.
+#[cfg(unix)]
+fn tty_echoes(fd: u8) -> bool {
+    // SAFETY: `tcgetattr` only writes the termios struct it is given.
+    let mut term: libc::termios = unsafe { std::mem::zeroed() };
+    let status = unsafe { libc::tcgetattr(fd as libc::c_int, &mut term) };
+    status == 0 && (term.c_lflag & libc::ECHO) != 0
+}
+
+#[cfg(not(unix))]
+fn tty_echoes(_fd: u8) -> bool {
+    false
 }
 
 /// A synchronous, retry-on-`EINTR` write of the whole buffer (`host.writeFd`).

@@ -12,8 +12,10 @@
 //
 //   * splitting input chunks into lines (`\n`, `\r\n`, and a lone `\r` treated as a newline),
 //     including `\r\n` split across chunks, held for up to `crlfDelay` ms;
-//   * prompt output (`question()`/`prompt()` write through `output.write`), terminal echo and
-//     the `SIGINT` event when a terminal interface actually sees a `\x03` byte;
+//   * prompt output (`question()`/`prompt()` write through `output.write`), terminal echo *only
+//     when the terminal does not already echo* (a canonical terminal echoes keystrokes and the
+//     newline itself, so echoing again printed every interactive line twice), and the `SIGINT`
+//     event when a terminal interface actually sees a `\x03` byte;
 //   * the in-memory `history` array (`historySize`, `removeHistoryDuplicates`);
 //   * `close`/`pause`/`resume`/`[Symbol.asyncIterator]`;
 //   * the ANSI cursor helpers and a small keypress decoder for `emitKeypressEvents`.
@@ -463,6 +465,38 @@ function processStdout() {
   return proc && proc.stdout ? proc.stdout : undefined;
 }
 
+function hostObject() {
+  const host = globalThis.__ln_host;
+  return host !== undefined && host !== null && typeof host === "object" ? host : null;
+}
+
+/**
+ * Does the terminal echo what is typed, so the program must not?
+ *
+ * A real terminal in its normal (canonical) mode echoes keystrokes and the terminating newline
+ * itself. Echoing the line again — which is what a raw-mode line editor does, because it turns
+ * that echo off — prints every input twice and leaves an extra blank line. Node never sees this
+ * because it always enters raw mode; onde's interface is line-oriented and leaves the terminal's
+ * own line discipline (and its editing: backspace, ^U, ^W) in charge, so it must not echo.
+ *
+ * A terminal interface reading from a *pipe* has no line discipline, so there the program echoes.
+ */
+function echoesInput(terminal, kernelEchoes) {
+  return Boolean(terminal) && !kernelEchoes;
+}
+
+function inputEchoes(input) {
+  const fd = input && typeof input.fd === "number" ? input.fd : undefined;
+  if (fd === undefined || fd < 0 || fd > 255) return false;
+  const host = hostObject();
+  if (host === null || typeof host.echoes !== "function") return false;
+  try {
+    return host.echoes(fd) === true;
+  } catch (_) {
+    return false;
+  }
+}
+
 class Interface extends EventEmitter {
   constructor(input, output, completer, terminal) {
     super();
@@ -494,6 +528,8 @@ class Interface extends EventEmitter {
 
     if (terminal === undefined) terminal = output.isTTY;
     this.terminal = Boolean(terminal);
+    this._kernelEchoes = this.terminal && inputEchoes(input);
+    this._echoInput = echoesInput(this.terminal, this._kernelEchoes);
 
     if (historySize === undefined) historySize = this.terminal ? kHistorySize : 0;
     if (typeof historySize !== "number") throw invalidArgType("size", "number", historySize);
@@ -784,13 +820,15 @@ class Interface extends EventEmitter {
   _appendText(text) {
     if (text === "") return;
     this._lineText += text;
-    if (this.terminal) this._writeToOutput(text);
+    // The terminal already echoed these characters when it is a real one.
+    if (this._echoInput) this._writeToOutput(text);
   }
 
   _completeLine() {
     const line = this._lineText;
     this._lineText = "";
-    if (this.terminal) this._writeToOutput("\r\n");
+    // Same rule as `_appendText`: the terminal's line discipline wrote the newline.
+    if (this._echoInput) this._writeToOutput("\r\n");
     this._addHistory(line);
     if (this._questionCallback !== null) {
       const callback = this._takeQuestionCallback();

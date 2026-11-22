@@ -131,6 +131,39 @@ function pair(options) {
   return { input, output, rl: createInterface(settings) };
 }
 
+// ---------------------------------------------------------------------------
+// Terminal echo ownership
+
+// The interface echoes only when the terminal does not. A canonical terminal echoes keystrokes
+// and the newline itself, so echoing again printed every interactive line twice (and an extra
+// blank line) — `vibe-cpc` showed three `123` lines where Node prints two. `host.echoes(fd)` is
+// how the interface asks; stubbing it here keeps the test runnable under node, where the module
+// runs too but the host object does not exist.
+function withHostEchoes(value, body) {
+  const hadHost = globalThis.__ln_host !== undefined && globalThis.__ln_host !== null;
+  const host = hadHost ? globalThis.__ln_host : {};
+  const original = host.echoes;
+  if (!hadHost) globalThis.__ln_host = host;
+  host.echoes = () => value;
+  try {
+    body();
+  } finally {
+    // Restore by assignment: the host object the runtime installs has native (non-deletable)
+    // properties, so `delete` is not an option there. The whole global is ours to remove only when
+    // this test created it (under node).
+    host.echoes = original;
+    if (!hadHost) delete globalThis.__ln_host;
+  }
+}
+
+function ttyInterface() {
+  const input = new FakeInput();
+  input.fd = 0;
+  input.isTTY = true;
+  const output = new FakeOutput({ isTTY: true });
+  return { input, output, rl: createInterface({ input, output, terminal: true }) };
+}
+
 const tests = [];
 function test(name, fn) {
   tests.push({ name, fn });
@@ -194,6 +227,30 @@ test("positional createInterface and option defaults", () => {
 
 // ---------------------------------------------------------------------------
 // Lines
+
+// The runtime installs `__ln_host` as a native, sealed object: its properties cannot be replaced,
+// so the echo state cannot be stubbed under `lite`. Node has no such global, and the interface
+// asks `host.echoes(fd)` exactly the way production does, so these cases run there — same module,
+// same code path, with a stand-in host.
+if (globalThis.__ln_host === undefined || globalThis.__ln_host === null) {
+  test("a terminal that echoes gets no second copy of the input", () => {
+    withHostEchoes(true, () => {
+      const { input, output, rl } = ttyInterface();
+      input.feed("123\n");
+      eq(output.data, "", "the terminal already echoed the line and its newline");
+      rl.close();
+    });
+  });
+
+  test("a terminal that does not echo gets the interface's copy", () => {
+    withHostEchoes(false, () => {
+      const { input, output, rl } = ttyInterface();
+      input.feed("123\n");
+      eq(output.data, "123\r\n", "no line discipline, so the interface echoes");
+      rl.close();
+    });
+  });
+}
 
 test("chunks split into lines, CRLF across chunks, final line on end", () => {
   const { input, rl } = pair({ terminal: false, crlfDelay: 100 });
