@@ -7,6 +7,10 @@ license.workspace = true
 description = "Safe engine boundary for onde (quickjs-ng via rquickjs)"
 publish = false
 
+[build-dependencies]
+# Reads `BC_VERSION` and hashes the atom table straight out of the vendored sources.
+ln-abi = { path = "../ln-abi" }
+
 [dependencies]
 # Deliberately no `futures` feature: AsyncRuntime, `Context::async_with` and the spawner own a
 # second job pump, which violates invariant I1 (ADR-0001 §2, ADR-0002 §4).
@@ -14,3 +18,5 @@ rquickjs = { version = "0.14", features = ["loader"] }
 # The SharedArrayBuffer hooks are `extern "C"` and must not unwind; they allocate with
 # `libc::malloc` and release with `libc::free` (ADR-0008 §2.3).
 libc = "0.2"
+# The ABI stamp: the identity of the engine build, shared with `ondec` and the archive.
+ln-abi = { path = "../ln-abi" }

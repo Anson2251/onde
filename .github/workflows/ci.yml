@@ -26,6 +26,10 @@ jobs:
         run: cargo test --all
       - name: build
         run: cargo build
+      - name: standalone builds (archive + ondec + a linked app that runs)
+        # The archive is built for this cell and a real app is linked, run, and checked after its
+        # sources are deleted. This is the matrix's first real cell check, not a unit test.
+        run: ./test/standalone/run.sh
       - name: conformance corpus
         run: ./test/conformance/run.sh
       - name: node for the stdlib oracle

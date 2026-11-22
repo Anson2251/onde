@@ -1,0 +1,44 @@
+[package]
+name = "ondec"
+version = "0.1.0"
+edition.workspace = true
+# Not the workspace's 1.80: the bundler's tree (oxc 0.158) requires 1.97. `ondec` is a host-only
+# build tool and never part of the SDK, so this does not raise the runtime's floor.
+rust-version = "1.97"
+license.workspace = true
+description = "The onde deployment compiler: bundle a JavaScript app into a standalone executable"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+# The frontend: bundling, Node resolution, CJS→ESM, TS/JSX loaders, in-process.
+rolldown = "1.3.2"
+# `Output`/`OutputChunk` are rolldown's output types; `rolldown` re-exports bundler options
+# only, so the output enum is named from its own crate (same version, one build).
+rolldown_common = "1.3.2"
+# `Bundler::generate` is async; a current-thread runtime is enough and adds no scheduler of ours.
+tokio = { version = "1", features = ["rt"] }
+# Bytecode: the same quickjs-ng build as the SDK, so `BC_VERSION`/atoms match by construction.
+ln-engine = { path = "../ln-engine" }
+ln-payload = { path = "../ln-payload" }
+ln-abi = { path = "../ln-abi" }
+# `--compress`: the two codecs the payload header can name. zlib comes from the same flate2 the
+# runtime already links for `node:zlib`; zstd compresses better and decodes faster at the cost of a
+# decoder in the app (measured in docs/standalone-build.md §7).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+zstd = "0.13"
+# `SHA256SUMS` verification of a downloaded SDK.
+sha2 = "0.10"
+# The build directory: generated C, the payload, and the `.incbin` file for section embedding.
+tempfile = "3"
+
+[lib]
+name = "ondec"
+
+[[bin]]
+name = "ondec"
+path = "src/main.rs"
+
+[dev-dependencies]
+# The end-to-end tests stage a project and an SDK in temporary directories.
+tempfile = "3"

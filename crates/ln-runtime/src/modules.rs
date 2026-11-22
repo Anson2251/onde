@@ -87,6 +87,21 @@ pub(crate) struct ModuleRuntime {
     pub resolver: Resolver,
     /// Canonical module name -> how to load it. Filled by the resolver callback.
     resolved: RefCell<HashMap<String, Resolution>>,
+    /// Set when the process was linked with a payload: modules come from here, never from disk.
+    payload: RefCell<Option<Rc<PayloadImage>>>,
+}
+
+/// A payload, parsed and checked against the linked engine.
+pub(crate) struct PayloadImage {
+    pub(crate) payload: ln_payload::Payload<'static>,
+}
+
+/// Why a payload cannot be run by this runtime.
+pub(crate) enum PayloadFailure {
+    /// Built for a different engine: its bytecode must not be read (exit 78).
+    Abi(String),
+    /// Truncated, corrupt, or a format this runtime does not read.
+    Corrupt(String),
 }
 
 impl ModuleRuntime {
@@ -94,7 +109,85 @@ impl ModuleRuntime {
         Rc::new(ModuleRuntime {
             resolver: Resolver::new(cwd),
             resolved: RefCell::new(HashMap::new()),
+            payload: RefCell::new(None),
         })
+    }
+
+    /// Switch this runtime into compiled mode: modules come from `bytes`, never from disk.
+    ///
+    /// The identity check happens **before** the first `JS_ReadObject`, because the engine's
+    /// bytecode reader is not a defensive parser: bytecode from another build is undefined
+    /// behaviour, not an error it can report. A compressed payload is inflated here, once, and
+    /// leaked: QuickJS reads module bytecode in place, so it must outlive every module object.
+    pub fn set_payload(self: &Rc<Self>, bytes: &'static [u8]) -> Result<(), PayloadFailure> {
+        let image: &'static [u8] = match ln_payload::Payload::parse(bytes) {
+            Ok(ln_payload::Parsed::Image(_)) => bytes,
+            Ok(ln_payload::Parsed::Compressed {
+                total_len,
+                codec,
+                stream,
+            }) => {
+                // The stream covers everything after the header, and the runtime needs the whole
+                // image back (the parser reads the header too), so rebuild it with the compressed
+                // bit cleared.
+                let body_len = total_len
+                    .checked_sub(ln_payload::HEADER_LEN)
+                    .ok_or_else(|| {
+                        PayloadFailure::Corrupt(format!(
+                            "payload header claims {total_len} bytes, less than the header"
+                        ))
+                    })?;
+                // The image is built once: header first, then the body decoded straight into the
+                // same allocation. No second buffer, no copy.
+                let mut image = Vec::with_capacity(total_len);
+                image.extend_from_slice(&bytes[..ln_payload::HEADER_LEN]);
+                match codec {
+                    ln_payload::Codec::Zlib => {
+                        ln_zlib::decompress_into(
+                            ln_zlib::Format::Zlib,
+                            stream,
+                            &mut image,
+                            body_len,
+                        )
+                        .map_err(|error| {
+                            PayloadFailure::Corrupt(format!("cannot inflate zlib payload: {error}"))
+                        })?;
+                    }
+                    ln_payload::Codec::Zstd => decompress_zstd_into(stream, &mut image, body_len)?,
+                }
+                if image.len() != total_len {
+                    return Err(PayloadFailure::Corrupt(format!(
+                        "payload inflated to {} bytes, expected {total_len}",
+                        image.len()
+                    )));
+                }
+                image[10] &= !(ln_payload::FLAG_COMPRESSED as u8);
+                &*Box::leak(image.into_boxed_slice())
+            }
+            Err(error) => return Err(PayloadFailure::Corrupt(error.to_string())),
+        };
+
+        let payload = match ln_payload::Payload::parse(image) {
+            Ok(ln_payload::Parsed::Image(payload)) => payload,
+            Ok(ln_payload::Parsed::Compressed { .. }) => {
+                return Err(PayloadFailure::Corrupt(
+                    "a decompressed payload still says it is compressed".to_owned(),
+                ))
+            }
+            Err(error) => return Err(PayloadFailure::Corrupt(error.to_string())),
+        };
+
+        payload
+            .check_engine(&ln_engine::engine_stamp_parsed())
+            .map_err(|error| PayloadFailure::Abi(error.to_string()))?;
+
+        *self.payload.borrow_mut() = Some(Rc::new(PayloadImage { payload }));
+        Ok(())
+    }
+
+    /// The payload, when this process was compiled.
+    pub fn payload(&self) -> Option<Rc<PayloadImage>> {
+        self.payload.borrow().clone()
     }
 
     /// Install the engine's module loader. Called once, before the bootstrap runs.
@@ -122,6 +215,10 @@ impl js::loader::Resolver for EsmResolver {
         name: &str,
         _attributes: Option<js::loader::ImportAttributes<'js>>,
     ) -> js::Result<String> {
+        if let Some(payload) = self.state.payload() {
+            return resolve_in_payload(ctx, &payload, base, name);
+        }
+
         match self
             .state
             .resolver
@@ -153,6 +250,10 @@ impl js::loader::Loader for EsmLoader {
         name: &str,
         _attributes: Option<js::loader::ImportAttributes<'js>>,
     ) -> js::Result<js::Module<'js, js::module::Declared>> {
+        if let Some(payload) = self.state.payload() {
+            return load_from_payload(ctx, &payload, name);
+        }
+
         let resolution = self.state.resolved.borrow().get(name).cloned();
 
         if let Some(resolution) = resolution {
@@ -184,6 +285,179 @@ impl js::loader::Loader for EsmLoader {
             .map_err(|message| throw_node_error(ctx, "ERR_INVALID_FILE_URL_PATH", &message))?;
         load_esm_module(ctx, name, &path)
     }
+}
+
+/// Compiled mode: resolve a specifier against the payload's key table.
+///
+/// There is no disk and no `node_modules`. Builtins resolve to `node:` names; relative and
+/// absolute specifiers resolve inside the table; everything else is `ERR_MODULE_NOT_FOUND` with
+/// both the importer and the key that was tried, because a compiled app's most common failure is
+/// a dependency the bundler left unresolved.
+fn resolve_in_payload<'js>(
+    ctx: &js::Ctx<'js>,
+    image: &PayloadImage,
+    base: &str,
+    specifier: &str,
+) -> js::Result<String> {
+    if let Some(builtin) = ln_modules::builtin::lookup(specifier) {
+        return Ok(format!("node:{builtin}"));
+    }
+    if let Some(name) = ln_modules::builtin::strip_prefix(specifier) {
+        return Err(throw_node_error(
+            ctx,
+            "ERR_UNKNOWN_BUILTIN_MODULE",
+            &format!("No such built-in module: node:{name}"),
+        ));
+    }
+
+    let base_key = payload_key(base);
+    let Some(key) = ln_payload::resolve_key(base_key, specifier) else {
+        return Err(missing_payload_module(ctx, specifier, base_key, None));
+    };
+    if image.payload.contains(&key) {
+        Ok(payload_url(&key))
+    } else {
+        Err(missing_payload_module(ctx, specifier, base_key, Some(&key)))
+    }
+}
+
+fn missing_payload_module<'js>(
+    ctx: &js::Ctx<'js>,
+    specifier: &str,
+    importer: &str,
+    key: Option<&str>,
+) -> js::Error {
+    let mut message = format!("Cannot find module '{specifier}' imported from {importer}");
+    match key {
+        Some(key) => {
+            message.push_str(&format!("\n  the payload has no module with key '{key}'"));
+        }
+        None => message.push_str(
+            "\n  a compiled app has no node_modules: only builtins and payload keys resolve",
+        ),
+    }
+    throw_node_error(ctx, "ERR_MODULE_NOT_FOUND", &message)
+}
+
+/// Compiled mode: load one payload module by its canonical name.
+fn load_from_payload<'js>(
+    ctx: &js::Ctx<'js>,
+    image: &PayloadImage,
+    name: &str,
+) -> js::Result<js::Module<'js, js::module::Declared>> {
+    // QuickJS asks for `node:` names directly (import statements in bytecode are not re-resolved
+    // through the resolver), so the builtin path has to exist here too.
+    if let Some(builtin) = name.strip_prefix("node:") {
+        return load_builtin(ctx, name, builtin);
+    }
+
+    let key = payload_key(name);
+    let entry = image
+        .payload
+        .get(key)
+        .ok_or_else(|| missing_payload_module(ctx, name, name, Some(key)))?;
+
+    match entry.kind {
+        ln_payload::Kind::Bytecode => {
+            // SAFETY: `entry.body` is module bytecode from a payload whose engine identity was
+            // checked in `set_payload`, and whose structural invariants were checked by
+            // `ln_payload`. QuickJS reads it in place (`JS_READ_OBJ_ROM_DATA`), which is why the
+            // payload is `'static`.
+            let module = unsafe { js::Module::load(ctx.clone(), entry.body) }?;
+            match module.name::<String>() {
+                Ok(actual) if actual != name => {
+                    return Err(throw_node_error(
+                        ctx,
+                        "ERR_INVALID_MODULE_SPECIFIER",
+                        &format!(
+                            "payload module '{key}' is named '{actual}' in its bytecode, but the \
+                             table looks it up as '{name}'"
+                        ),
+                    ))
+                }
+                Ok(_) => {}
+                Err(error) => return Err(error),
+            }
+            meta_payload(ctx, &module, name, key)?;
+            Ok(module)
+        }
+        ln_payload::Kind::Source => {
+            let source = std::str::from_utf8(entry.body).map_err(|_| {
+                throw_node_error(
+                    ctx,
+                    "ERR_INVALID_MODULE_SPECIFIER",
+                    &format!("payload module '{key}' is not UTF-8"),
+                )
+            })?;
+            let module = js::Module::declare(ctx.clone(), name, source)?;
+            meta_payload(ctx, &module, name, key)?;
+            Ok(module)
+        }
+    }
+}
+
+/// `import.meta` for a payload module: names from the key table, not filesystem paths.
+fn meta_payload<'js>(
+    ctx: &js::Ctx<'js>,
+    module: &js::Module<'js, js::module::Declared>,
+    url: &str,
+    key: &str,
+) -> js::Result<()> {
+    let meta = module.meta()?;
+    meta.set("url", url)?;
+    meta.set("filename", key)?;
+    meta.set("dirname", ln_payload::dirname(key))?;
+    meta.set("main", false)?;
+    meta.set("resolve", ln_engine::meta_resolve_function(ctx, url)?)?;
+    Ok(())
+}
+
+/// Decode a zstd payload body.
+///
+/// Feature-gated: zstd is the one decoder that is not already in the image, so a runtime built
+/// without it must say so rather than fail halfway through `JS_ReadObject`.
+#[cfg(feature = "zstd")]
+fn decompress_zstd_into(
+    stream: &[u8],
+    out: &mut Vec<u8>,
+    body_len: usize,
+) -> Result<(), PayloadFailure> {
+    use std::io::Read as _;
+
+    let decoder = zstd::stream::read::Decoder::new(stream).map_err(|error| {
+        PayloadFailure::Corrupt(format!("cannot start the zstd decoder: {error}"))
+    })?;
+    // One byte past the promised length, so an over-long stream is detected rather than truncated.
+    decoder
+        .take(body_len as u64 + 1)
+        .read_to_end(out)
+        .map_err(|error| {
+            PayloadFailure::Corrupt(format!("cannot inflate zstd payload: {error}"))
+        })?;
+    Ok(())
+}
+
+#[cfg(not(feature = "zstd"))]
+fn decompress_zstd_into(
+    _stream: &[u8],
+    _out: &mut Vec<u8>,
+    _body_len: usize,
+) -> Result<(), PayloadFailure> {
+    Err(PayloadFailure::Corrupt(
+        "this payload is zstd-compressed, but this runtime was built without the zstd decoder; \
+         rebuild the app with `--compress zlib` or link a runtime that has it"
+            .to_owned(),
+    ))
+}
+
+/// The `file:///<key>` form of a payload key.
+fn payload_url(key: &str) -> String {
+    format!("file:///{key}")
+}
+
+/// The key a canonical module name refers to.
+fn payload_key(name: &str) -> &str {
+    name.strip_prefix("file:///").unwrap_or(name)
 }
 
 fn load_builtin<'js>(

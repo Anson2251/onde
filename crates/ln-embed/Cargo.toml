@@ -1,0 +1,31 @@
+[package]
+name = "ln-embed"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The C ABI of a compiled onde app: onde.h and libonde-<tuple>.a"
+publish = false
+
+[lib]
+# The archive a compiled app links against. `libonde.a`: the crate name is not what users see,
+# the C symbol names are.
+name = "onde"
+crate-type = ["staticlib"]
+
+[features]
+# A linked app carries the zstd payload decoder unless the archive is built without it. Off by
+# default would be silent breakage for anyone who uses `--compress zstd`; on by default costs
+# ~250 KB of decoder in every app, which is the trade the release decides (see the docs).
+default = ["zstd-payload"]
+zstd-payload = ["ln-runtime/zstd"]
+
+[dependencies]
+ln-runtime = { path = "../ln-runtime", default-features = false }
+# `engine_stamp()` for `onde_engine_stamp()`, and the payload reader through `ln-runtime`.
+ln-engine = { path = "../ln-engine" }
+ln-payload = { path = "../ln-payload" }
+
+[build-dependencies]
+# The marker baked into the archive must be the same string the runtime compares against.
+ln-abi = { path = "../ln-abi" }

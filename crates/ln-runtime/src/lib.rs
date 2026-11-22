@@ -85,6 +85,26 @@ pub struct Config {
     /// Append async ancestry to every Error stack (`--async-stack-traces`). Off by default:
     /// recording a creation site per promise is measurable, and M6 ships it opt-in.
     pub async_stack_traces: bool,
+    /// The payload this process was linked with, for a compiled app.
+    ///
+    /// `None` is a normal runtime: modules come from the disk. `Some` is compiled mode: every
+    /// module comes from the payload, the disk is never consulted, and `argv[1]` is the executable
+    /// because there is no script path.
+    pub payload: Option<PayloadBytes>,
+}
+
+/// The payload bytes a compiled app was linked with.
+///
+/// It must outlive the isolate (QuickJS reads module bytecode in place), which is why it is
+/// `'static`: a linked `const` array or a leaked mapping. `Debug` prints the length, not the
+/// bytes.
+#[derive(Clone, Copy)]
+pub struct PayloadBytes(pub &'static [u8]);
+
+impl std::fmt::Debug for PayloadBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PayloadBytes({} bytes)", self.0.len())
+    }
 }
 
 impl Config {
@@ -95,6 +115,7 @@ impl Config {
             expose_require: false,
             io_threads: 4,
             async_stack_traces: false,
+            payload: None,
         }
     }
 }
@@ -139,12 +160,39 @@ pub(crate) enum WorkerEntry {
 pub enum Failure {
     /// The engine could not be created, or the bootstrap script failed. An onde bug.
     Engine(String),
+    /// The payload is not one this runtime can read (corrupt, truncated, unknown format).
+    Payload(String),
+    /// The payload was built for a different engine: its bytecode must not be read.
+    ///
+    /// This is the one failure with its own exit code (78, `EX_CONFIG`): the app is fine, the
+    /// runtime is fine, and the two were simply not built together.
+    AbiMismatch(String),
+}
+
+impl Failure {
+    /// The exit code for a failure that happened outside user code.
+    ///
+    /// 1 is "this process could not run the program"; 78 (`EX_CONFIG`) is reserved for the
+    /// payload/runtime engine mismatch, so a build system can tell "rebuild the app" apart from
+    /// "the app is broken".
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Failure::Engine(_) | Failure::Payload(_) => 1,
+            Failure::AbiMismatch(_) => 78,
+        }
+    }
 }
 
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Failure::Engine(message) => write!(f, "engine failure: {message}"),
+            Failure::Payload(message) => write!(f, "bad payload: {message}"),
+            Failure::AbiMismatch(message) => write!(
+                f,
+                "this app was built for a different version of onde ({message}); rebuild it with \
+                 the ondec that matches this runtime"
+            ),
         }
     }
 }
@@ -412,6 +460,17 @@ impl Isolate {
         let stop = sched.stop_handle();
         let modules =
             ModuleRuntime::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // Compiled mode is decided here, before any module can load: the loader reads this flag
+        // on every resolution, and a payload that fails the engine check must stop the process
+        // before the bootstrap (or anything else) can ask for a module.
+        if let Some(payload) = config.payload {
+            modules
+                .set_payload(payload.0)
+                .map_err(|failure| match failure {
+                    modules::PayloadFailure::Abi(message) => Failure::AbiMismatch(message),
+                    modules::PayloadFailure::Corrupt(message) => Failure::Payload(message),
+                })?;
+        }
         modules.install(&engine);
         let memory = Rc::new(Cell::new(0));
         let memory_requested = Rc::new(Cell::new(false));
@@ -663,6 +722,60 @@ impl Isolate {
                 );
                 return Ok(self.finish_failure());
             }
+        };
+
+        if self.exit.requested.get() {
+            return Ok(self.finish(None));
+        }
+
+        if let Err(error) = evaluated {
+            if let Some(outcome) = self.entry_error(error) {
+                return Ok(outcome);
+            }
+        }
+
+        self.settle(None)
+    }
+
+    /// Run the payload this process was linked with (compiled mode).
+    ///
+    /// The payload was negotiated in [`Isolate::new`], so a bad one never reaches this point.
+    /// `begin` is told the module *key*, not a path: that is what `import.meta.filename`, stack
+    /// traces and error excerpts show, and it is the only name a compiled app has.
+    pub fn run_payload(&mut self) -> Result<RunOutcome, Failure> {
+        let Some(payload) = self.modules.payload() else {
+            return Err(Failure::Engine(
+                "run_payload() on an isolate with no payload".to_owned(),
+            ));
+        };
+
+        let entry = payload.payload.entry();
+        let key = entry.key.to_owned();
+        let name = format!("file:///{key}");
+        let dirname = ln_payload::dirname(&key).to_owned();
+        let kind = entry.kind;
+        let body = entry.body;
+
+        self.begin(&key, "", 0);
+
+        let evaluated = match kind {
+            ln_payload::Kind::Bytecode => {
+                self.engine
+                    .eval_module_bytecode(body, &name, Some(&key), Some(&dirname), true)
+            }
+            ln_payload::Kind::Source => match std::str::from_utf8(body) {
+                Ok(source) => {
+                    self.engine
+                        .eval_module(source, &name, Some(&key), Some(&dirname), true)
+                }
+                Err(_) => {
+                    self.report_entry_error(
+                        "ERR_INVALID_MODULE_SPECIFIER",
+                        &format!("payload module {key:?} is not UTF-8"),
+                    );
+                    return Ok(self.finish_failure());
+                }
+            },
         };
 
         if self.exit.requested.get() {

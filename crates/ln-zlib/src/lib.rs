@@ -86,6 +86,38 @@ pub fn decompress(format: Format, data: &[u8], max_output: usize) -> Result<Vec<
     Ok(out)
 }
 
+/// Decompress `data` into `out`, appending, and refuse to grow it by more than `max_output`.
+///
+/// The same formats and error mapping as [`decompress`], for callers that already own a buffer
+/// with a prefix: a compiled app's payload image has its 36-byte header written first, so decoding
+/// straight into the buffer saves one full-size allocation and copy on the startup path.
+pub fn decompress_into(
+    format: Format,
+    data: &[u8],
+    out: &mut Vec<u8>,
+    max_output: usize,
+) -> Result<(), NodeError> {
+    let start = out.len();
+    let limit = if max_output == 0 {
+        u64::MAX
+    } else {
+        max_output as u64 + 1
+    };
+    let outcome = match format {
+        Format::Gzip => MultiGzDecoder::new(data).take(limit).read_to_end(out),
+        Format::Zlib => ZlibDecoder::new(data).take(limit).read_to_end(out),
+        Format::Raw => DeflateDecoder::new(data).take(limit).read_to_end(out),
+    };
+    outcome.map_err(|error| match error.kind() {
+        std::io::ErrorKind::UnexpectedEof => buf_error("unexpected end of file"),
+        _ => data_error(format!("invalid compressed data: {error}")),
+    })?;
+    if max_output != 0 && out.len() - start > max_output {
+        return Err(too_large(max_output));
+    }
+    Ok(())
+}
+
 /// Compress `data` in `format` at `level` (`-1` is the backend default, `0`..=`9` explicit).
 pub fn compress(format: Format, data: &[u8], level: i32) -> Result<Vec<u8>, NodeError> {
     let compression = if level < 0 {
@@ -157,6 +189,19 @@ mod tests {
                 b"level"
             );
         }
+    }
+
+    #[test]
+    fn decompress_into_appends_to_an_existing_buffer() {
+        let packed = compress(Format::Zlib, b"payload body", 6).expect("compress");
+        let mut out = b"ONDE".to_vec();
+        decompress_into(Format::Zlib, &packed, &mut out, 12).expect("decompress");
+        assert_eq!(out, b"ONDEpayload body");
+
+        // The limit counts only what this call appended.
+        let mut out = b"ONDE".to_vec();
+        let error = decompress_into(Format::Zlib, &packed, &mut out, 4).expect_err("too large");
+        assert_eq!(error.code, "ERR_BUFFER_TOO_LARGE");
     }
 
     #[test]

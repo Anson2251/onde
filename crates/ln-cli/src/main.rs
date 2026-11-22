@@ -263,5 +263,8 @@ fn cli_error(error: clap::Error) -> i32 {
 fn report_failure(failure: Failure) -> i32 {
     let mut err = io::stderr().lock();
     let _ = writeln!(err, "lite: {failure}");
-    1
+    // A compiled-app payload from another engine exits 78 rather than 1, so a build system can
+    // tell "rebuild the app" apart from "the program is broken". `lite` itself never carries a
+    // payload, but the same `Failure` reaches this function through the shared runtime.
+    failure.exit_code()
 }

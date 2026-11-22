@@ -500,6 +500,10 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 - Diagnostics: `--cpu-prof`-lite (sampling profiler is out of scope; do **timing breakdown** by
   phase and op), `--trace-gc`, `--trace-events` (Chrome trace JSON), heap statistics.
 - `node:test` lite runner so the conformance corpus can be written in the API people know.
+- **Standalone builds** (`docs/standalone-build.md`): pulled in here because the bytecode snapshot
+  is the same emitter, stamp and loader. Status: the link backend builds and runs real apps on the
+  host cell (`test/standalone/run.sh`); the release matrix, `sdk` downloads against a real release
+  and the wrappe backend are open.
 
 **Exit criteria**
 

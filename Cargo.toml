@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/ln-abi",
+    "crates/ln-payload",
+    "crates/ln-embed",
+    "crates/ondec",
     "crates/ln-sched",
     "crates/ln-modules",
     "crates/ln-error",
