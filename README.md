@@ -5,7 +5,7 @@ A Node-compatible JavaScript runtime: QuickJS as the engine, Rust as the host.
 onde runs the code around the work: CLIs, build steps, config, request handlers with light logic,
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
-`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.3 MB
+`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.4 MB
 binary.
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
@@ -19,7 +19,9 @@ against Node 26 in `test/async/`; the scheduler corpus stayed byte-identical.
 [docs/m6-plan.md](docs/m6-plan.md) records the contract and its outcome,
 [docs/adr/0009](docs/adr/0009-async-context.md) the engine/host boundary. Two M4 targets are still
 missed, HTTP throughput and the memory held by half-open connections;
-[docs/m4-plan.md](docs/m4-plan.md) §8 has both.
+[docs/m4-plan.md](docs/m4-plan.md) §8 has both. Standalone builds landed ahead of M7: `ondec`
+bundles an app and links it with the runtime into one executable, see
+[One executable](#one-executable).
 
 ## Roadmap
 
@@ -30,7 +32,7 @@ missed, HTTP throughput and the memory held by half-open connections;
 | M4, done | `net`, `http`/`https`, `tls`, `dns`, `zlib` | the server case, and what tuckbox needs |
 | M5, done | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline`, process signals | tools that shell out, and work that leaves the main thread |
 | M6, done | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue; the engine is vendored and patched | request-scoped state without passing a context through every call |
-| M7 | bytecode snapshot at build time, allocation fast paths, memory limits, `--trace-events`, a `node:test` runner | closes the startup, throughput and memory gap measured below |
+| M7 | bytecode snapshot at build time, allocation fast paths, memory limits, `--trace-events`, a `node:test` runner; standalone builds landed early (`ondec`) | closes the startup, throughput and memory gap measured below |
 | M8 | compatibility sweep, packaging, publish | 1.0 |
 
 ## What you trade
@@ -58,7 +60,7 @@ this re-run was 100-150 ms for *both* onde binaries because the host was heavily
 2026-11-15 figure below was taken on a quiet machine); that tail is the M4 single-isolate issue,
 not M6.
 
-onde ships as one 5.3 MB binary against a 76 MB Node install, and it holds a fifth of the memory
+onde ships as one 5.4 MB binary against a 76 MB Node install, and it holds a fifth of the memory
 for the same server. The readable JS stdlib is minified at build time with oxc (names are not
 mangled): 906 KB of source becomes 559 KB embedded. Startup is not where onde wins: Bun opens in
 6.9 ms against onde's 10.8, and that gap will stay, because QuickJS has an engine to initialize as
@@ -97,6 +99,63 @@ process.nextTick(() => console.log("tick"));
 Promise.resolve().then(() => console.log("then"));
 setTimeout(() => console.log("timer"), 0);
 ```
+
+## One executable
+
+`ondec` packages an app as a single program: it bundles the sources with rolldown, compiles every
+module to QuickJS bytecode, and links the payload against a static runtime library. The result needs
+neither `lite` nor Node, `node_modules`, the sources or the SDK at run time.
+
+```sh
+# In the onde checkout: the tool, and the SDK for this machine.
+cargo build --release -p ondec
+./scripts/build-sdk.sh                        # onde.h + libonde-<tuple>.a, prints the path
+sdk=$(ls -d dist/sdk/*/* | tail -1)           # dist/sdk/0.1.0/<tuple>
+
+# Anywhere: bundle a project into one executable.
+target/release/ondec build ~/app/src/main.js --sdk "$sdk" -o ~/app/app
+```
+
+`cargo install --path crates/ondec` puts the tool on `PATH` if you would rather not type the
+checkout's path.
+
+> **Alpha.** Fetching the SDK is a release-stage feature: once the first alpha publishes `onde.h`
+> and the `libonde-<tuple>.a` cells as GitHub release assets, `ondec build` downloads and verifies
+> them by itself and `--sdk` becomes optional. There are no release assets yet, so `--sdk` is
+> required and the SDK is built locally with the script above.
+
+The tool does the work in order: bundle with rolldown (in-process, so TypeScript, JSX, `require`
+and `node_modules` all work at build time), compile every output module to bytecode, encode a
+payload (header, table, bodies), write a temporary C file, link it with the cell's archive, strip,
+optionally sign. None of that machinery ends up in the app: it is the runtime plus its modules, and
+a generated C file that hands the payload over.
+
+Sizes and startup, measured 2026-11-23 on the same machine as *What you trade* (macOS arm64,
+release build):
+
+| app | executable | cold start |
+|---|---|---|
+| hello world (210 B payload) | 4.8 MB | 18 ms |
+| [vibe-cpc](https://github.com/Anson2251/vibe-cpc) (1.1 MiB payload) | 6.0 MB | 25 ms (Node: 105 ms) |
+| 34,000-function module (4.3 MiB payload) | 9.4 MB | 26 ms |
+| the same, `--compress zstd:19` (543 KiB payload) | 5.4 MB | 29 ms |
+
+A compiled app never parses its sources: a 1.9 MiB module loads from bytecode in about 5 ms where
+`lite` needs about 790 ms to parse it. A hello-world app is also smaller than the interpreter that
+produced it — 4.8 MB against `lite`'s 5.4 MB — because only the runtime code the app reaches is
+linked in.
+
+Compression buys size, not speed. `--compress` takes `none` (the default), `zlib`, or
+`zstd[:level]`: zlib costs nothing because the runtime already links it for `node:zlib`, while zstd
+compresses better and decodes faster but adds a 249 KB decoder to every image.
+
+Cross-building is explicit: `--target <tuple>` names the cell, and `--cc` or `CC_<tuple>` names the
+compiler (`gcc`, `clang`, `zig cc`, `cl`) — a non-host target is never compiled with the host's
+`cc` by default. `--print-command` prints the link line instead of running it, and `--packager
+wrappe` stages the same bundle for a self-extracting binary when there is no C toolchain at all.
+
+The payload format, the cell matrix and the parts still open are in
+[docs/standalone-build.md](docs/standalone-build.md).
 
 ## Tuckbox
 
@@ -177,6 +236,7 @@ an explicit microtask model.
 3. [docs/roadmap.md](docs/roadmap.md) for milestones, exit criteria and sequencing.
 4. [docs/architecture.md](docs/architecture.md) for the component map and boot sequence.
 5. [docs/tuckbox.md](docs/tuckbox.md) for the demo: a package installer on onde.
+6. [docs/standalone-build.md](docs/standalone-build.md) for packaging an app as one executable.
 
 The decisions behind the structure (scheduler, event loop, module system, handles, HTTP codec) are
 in [docs/adr/](docs/adr/), and [internals.md](docs/internals.md) §5 gives the reading order.
