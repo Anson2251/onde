@@ -48,6 +48,8 @@
 
 use std::fmt;
 
+pub mod snapshot;
+
 use ln_abi::Stamp;
 
 /// An uncompressed payload starts with these bytes.

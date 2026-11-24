@@ -18,6 +18,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ln_error::NodeError;
 use ln_http::{Conn, Event as HttpEvent, ProtocolError, Role};
@@ -37,6 +38,16 @@ use super::{
 /// connection costs little; the codec's own head limit is tighter than this.
 const HTTP_READ_CHUNK: usize = 16 * 1024;
 
+/// The scratch buffer every connection starts with, before it has proved that anything is being
+/// delivered. A half-open peer never fills it, so it never grows (m7-plan §6.1): at 2,000 idle
+/// connections this is the difference between 8 MiB and 128 MiB of resident buffers.
+const INITIAL_READ_CHUNK: usize = 1024;
+
+/// Consecutive full reads after which the buffer may take the size the consumer asked for. Two is
+/// enough to tell a stream being consumed from a peer that sent a partial head and went quiet, and
+/// it costs a busy socket two small reads at connection start.
+const GROW_AFTER_FULL_READS: u8 = 2;
+
 /// Raw or parsed mode. Parsed mode is `httpAttach`; `detach` returns to raw (H6).
 enum Mode {
     Raw,
@@ -54,6 +65,8 @@ pub(crate) struct Connection {
     read_request: Option<u32>,
     /// The scratch buffer for one read, sized by the outstanding request (bounded by `MAX_CHUNK`).
     read_buf: Vec<u8>,
+    /// Consecutive reads that filled `read_buf`, which is how the buffer decides to grow (H7).
+    read_chunks: u8,
     write_queue: std::collections::VecDeque<Vec<u8>>,
     write_offset: usize,
     /// A `Write` queued bytes that have not produced a `Drain` yet.
@@ -94,6 +107,7 @@ impl Connection {
             mode: Mode::Raw,
             read_request: None,
             read_buf: Vec::new(),
+            read_chunks: 0,
             write_queue: std::collections::VecDeque::new(),
             write_offset: 0,
             drain_pending: false,
@@ -309,10 +323,20 @@ impl Connection {
     }
 
     /// Size the read buffer to the outstanding request, never more than `MAX_CHUNK` (H7).
+    ///
+    /// Until the socket has delivered `GROW_AFTER_FULL_READS` full buffers it is clamped to
+    /// `INITIAL_READ_CHUNK`, because the request says what a *consumer* could take, not what the
+    /// peer will send: an HTTP parser asks for 16 KiB and a flowing `net` socket for 64 KiB on
+    /// every connection, including the ones that will never send a complete head.
     fn size_read_buffer(&mut self) {
-        let wanted = match &self.mode {
+        let asked = match &self.mode {
             Mode::Raw => self.read_request.unwrap_or(1) as usize,
             Mode::Http { .. } => HTTP_READ_CHUNK,
+        };
+        let wanted = if self.read_chunks < GROW_AFTER_FULL_READS {
+            asked.min(INITIAL_READ_CHUNK)
+        } else {
+            asked
         }
         .clamp(1, MAX_CHUNK as usize);
         if self.read_buf.len() != wanted {
@@ -417,6 +441,14 @@ impl Connection {
     }
 
     async fn on_read(&mut self, count: usize) {
+        // A read that filled the buffer is the signal that this peer is consuming, and is what lets
+        // the buffer grow past `INITIAL_READ_CHUNK`; a partial read means the socket went quiet and
+        // shrinks it back on the next size pass.
+        if count == self.read_buf.len() {
+            self.read_chunks = self.read_chunks.saturating_add(1);
+        } else {
+            self.read_chunks = 0;
+        }
         // The parsed path may have to write a canned status before closing, so this is async.
         if matches!(self.mode, Mode::Http { .. }) {
             if self.http_idle {
@@ -751,11 +783,38 @@ impl Connection {
             let _ = writer.shutdown().await;
             self.write_shutdown = true;
         }
+        // Report first, then drain: `clientError` is delivered when the response has been written,
+        // and the drain below is about the socket, not the event (a 50 ms delay here would put the
+        // event after a client that has already read its response — `test/js/lib/http.test.js`
+        // depends on the order).
         self.emit(Event::ClientError {
             error: NodeError::from(error),
         });
         self.had_error = true;
+        // Drain before dropping the socket: closing it with unread bytes makes the kernel send RST,
+        // and the peer would lose the status we just wrote. Reachable as soon as the read buffer is
+        // smaller than the offending message, which is the normal case since the per-connection
+        // buffer starts at 1 KiB (m7-plan §6.1); the bound keeps a peer that keeps writing from
+        // holding the task.
+        self.drain_before_close(Duration::from_millis(50)).await;
         self.finished = true;
+    }
+
+    /// Read and discard what the peer already sent, for a short bounded window. See the call site
+    /// for why: an unread receive buffer turns a clean FIN into an RST.
+    async fn drain_before_close(&mut self, budget: Duration) {
+        let deadline = tokio::time::sleep(budget);
+        tokio::pin!(deadline);
+        let mut buf = [0u8; 4096];
+        while let Some(reader) = self.reader.as_mut() {
+            tokio::select! {
+                _ = &mut deadline => break,
+                read = reader.read(&mut buf) => match read {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                },
+            }
+        }
     }
 
     fn detach(&mut self) {

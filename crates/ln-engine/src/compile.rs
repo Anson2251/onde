@@ -1,7 +1,7 @@
-//! Compile ES modules to QuickJS bytecode, without evaluating them.
+//! Compile ES modules and global scripts to QuickJS bytecode, without evaluating them.
 //!
-//! This is what `ondec` calls for every asset in a bundle. It is deliberately separate from
-//! [`crate::Engine`]:
+//! [`module`] is what `ondec` calls for every asset in a bundle; [`script`] is what the build
+//! writes for the bootstrap snapshot (M7). Both are deliberately separate from [`crate::Engine`]:
 //!
 //! - it never installs a module loader or evaluates anything, so a malicious or broken bundle only
 //!   ever reaches the parser;
@@ -19,24 +19,34 @@
 //!
 //! A module that imports `./worker.js` compiles fine: the import is a specifier in the bytecode,
 //! not a resolved path. Resolution happens at run time against the payload's key table.
+//!
+//! A script keeps the same name and source, but no module scope: its `var` and function
+//! declarations are global when it is evaluated, which is why the bootstrap can be compiled this
+//! way without changing what `js/bootstrap.js` sees.
+
+use std::ffi::CString;
 
 use ln_abi::Endian;
 
 use crate::js;
-use crate::{caught_from_error, CaughtError};
+use crate::{caught_from_error, internal_error, CaughtError};
 
-/// How to compile one module.
+/// How to compile one module or script.
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// The canonical module name. In a compiled app this is `file:///<payload key>`: it must be the
-    /// same string the loader will look the module up by, because QuickJS stores it in the
-    /// bytecode and in its module registry.
+    /// The canonical name. For a module this is `file:///<payload key>`: it must be the same
+    /// string the loader will look the module up by, because QuickJS stores it in the bytecode
+    /// and in its module registry. For a script it is the filename the stack traces show, so the
+    /// loader must pass the same string to `eval_script_bytecode`.
     pub name: String,
     /// Keep the original source in the bytecode (default). `false` drops stack locations as well
     /// as `toString`, so it is a size emergency switch, not a normal mode.
     pub strip_source: bool,
-    /// Byte order of the bytecode. Every v1 cell is little-endian; the field exists so a
-    /// cross-compile writes the target's order rather than the build machine's.
+    /// Byte order the caller wants the bytecode in. In quickjs-ng this is **advisory**:
+    /// `JS_WRITE_OBJ_BSWAP` is 0 ("obsolete, handled transparently"), so the writer always emits
+    /// the engine's native order; the field documents the intent that the stamp and the snapshot
+    /// header record. `module()` has the same property, and the engine-identity check at load is
+    /// what actually guards it.
     pub endian: Endian,
 }
 
@@ -88,6 +98,86 @@ pub fn module(source: &str, options: &Options) -> Result<Vec<u8>, CaughtError> {
     })
 }
 
+/// Compile one **global script** to bytecode.
+///
+/// The returned bytes are a global-scope function, ready for
+/// [`crate::Engine::eval_script_bytecode`]. Evaluating them behaves like
+/// [`crate::Engine::eval_global`] of the same source: the script's `var`/function declarations
+/// land on the global object and the top-level `this` is `globalThis`. A module has its own
+/// scope, so it is the wrong container for the bootstrap (m7-plan §3.1).
+///
+/// As with [`module`], a parse error is a [`CaughtError`] with the runtime's name, message and
+/// stack, so a build failure reads like a run-time one.
+///
+/// # Why raw engine calls
+///
+/// rquickjs 0.14's safe eval API has no compile-only mode, and the whole point here is to stop
+/// before execution. `JS_Eval`/`JS_WriteObject` are committed bindings (no vendored patch), so
+/// this calls them directly instead of adding `ffi` declarations.
+///
+/// The source is deliberately *not* run through [`crate::strip_source_prefix`]: a classic script
+/// may legally start with `#!`, and the engine's eval path already skips it. Rewriting it would
+/// make the snapshot's bytecode differ from what `eval_global` parses for the same file.
+pub fn script(source: &str, options: &Options) -> Result<Vec<u8>, CaughtError> {
+    let scratch = Scratch::new()?;
+
+    scratch.context.with(|ctx| {
+        let raw = ctx.as_raw().as_ptr();
+        let source = CString::new(source)
+            .map_err(|_| internal_error("script source contains a NUL byte".to_owned()))?;
+        let name = CString::new(options.name.as_str()).map_err(|_| {
+            internal_error(format!(
+                "script name contains a NUL byte: {:?}",
+                options.name
+            ))
+        })?;
+
+        // The build-time half of qjsc's sequence: compile into a function, never evaluate it.
+        // SAFETY: `raw` is the live context and both C strings outlive the call; `JS_Eval` copies
+        // the source it keeps.
+        let object = unsafe {
+            js::qjs::JS_Eval(
+                raw,
+                source.as_ptr(),
+                source.as_bytes().len() as _,
+                name.as_ptr(),
+                (js::qjs::JS_EVAL_TYPE_GLOBAL | js::qjs::JS_EVAL_FLAG_COMPILE_ONLY) as i32,
+            )
+        };
+        if unsafe { js::qjs::JS_IsException(object) } {
+            return Err(caught_from_error(&ctx, js::Error::Exception));
+        }
+        // SAFETY: the value is owned and belongs to this context. The `Value` frees it after the
+        // write, which is what keeps a failed write from leaking the compiled function.
+        let object = unsafe { js::Value::from_raw(ctx.clone(), object) };
+
+        let write = js::WriteOptions {
+            endianness: match options.endian {
+                Endian::Little => js::WriteOptionsEndianness::Little,
+                Endian::Big => js::WriteOptionsEndianness::Big,
+            },
+            strip_source: options.strip_source,
+            ..Default::default()
+        };
+
+        // `JS_WriteObject` needs the length as an out-parameter because the buffer is allocated
+        // by the engine; there is no `Vec` API at this layer.
+        let mut len: js::qjs::size_t = 0;
+        // SAFETY: `object` is live and `JS_WriteObject` only reads it (the C signature takes
+        // `JSValueConst`). A null return means an exception is pending.
+        let buffer =
+            unsafe { js::qjs::JS_WriteObject(raw, &mut len, object.as_raw(), write.to_flag()) };
+        if buffer.is_null() {
+            return Err(caught_from_error(&ctx, js::Error::Exception));
+        }
+        // SAFETY: the buffer is `len` bytes long, and `js_free` is the allocator that produced
+        // it; the copy must happen before the free.
+        let bytes = unsafe { std::slice::from_raw_parts(buffer, len as usize) }.to_vec();
+        unsafe { js::qjs::js_free(raw, buffer.cast()) };
+        Ok(bytes)
+    })
+}
+
 /// The name baked into a bytecode module.
 ///
 /// The loader compares it with the payload key before evaluating, because a mismatch would create
@@ -121,7 +211,7 @@ struct Scratch {
 impl Scratch {
     fn new() -> Result<Scratch, CaughtError> {
         let runtime = js::Runtime::new().map_err(|error| {
-            engine_error(format!("cannot create a compile-time engine: {error}"))
+            internal_error(format!("cannot create a compile-time engine: {error}"))
         })?;
         // QuickJS resolves every import while compiling *and while reading* a module, even under
         // `JS_EVAL_FLAG_COMPILE_ONLY` (see the "Could add a flag to avoid resolution" comment in
@@ -130,7 +220,7 @@ impl Scratch {
         // bytecode, and the app's loader resolves them again against the payload.
         runtime.set_loader(StubResolver, StubLoader);
         let context = js::Context::full(&runtime).map_err(|error| {
-            engine_error(format!("cannot create a compile-time context: {error}"))
+            internal_error(format!("cannot create a compile-time context: {error}"))
         })?;
         Ok(Scratch { context, runtime })
     }
@@ -172,16 +262,5 @@ impl js::loader::Loader for StubLoader {
         _attributes: Option<js::loader::ImportAttributes<'js>>,
     ) -> js::Result<js::Module<'js, js::module::Declared>> {
         js::Module::declare(ctx.clone(), name, "export {};")
-    }
-}
-
-fn engine_error(message: String) -> CaughtError {
-    CaughtError {
-        name: "InternalError".to_owned(),
-        display: message.clone(),
-        message,
-        stack: None,
-        is_error: false,
-        code: None,
     }
 }

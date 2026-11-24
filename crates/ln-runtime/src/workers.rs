@@ -141,6 +141,9 @@ pub(crate) struct WorkerBridge {
     argv: Vec<String>,
     io_threads: usize,
     budget: Budget,
+    /// The parent's `--max-old-space-size`, inherited by every worker unless `resourceLimits`
+    /// overrides it (m7-plan §3.3).
+    memory_limit: Option<u64>,
     live: RefCell<HashSet<u64>>,
     refs: RefCell<HashSet<u64>>,
     threads: RefCell<HashMap<u64, WorkerThread>>,
@@ -154,6 +157,7 @@ impl WorkerBridge {
         argv: Vec<String>,
         io_threads: usize,
         budget: Budget,
+        memory_limit: Option<u64>,
     ) -> Self {
         WorkerBridge {
             ids,
@@ -164,6 +168,7 @@ impl WorkerBridge {
             argv,
             io_threads,
             budget,
+            memory_limit,
             live: RefCell::new(HashSet::new()),
             refs: RefCell::new(HashSet::new()),
             threads: RefCell::new(HashMap::new()),
@@ -179,6 +184,8 @@ impl WorkerBridge {
         entry: WorkerEntry,
         worker_data: Option<Serialized>,
         argv: Option<Vec<String>>,
+        // `resourceLimits.maxOldGenerationSizeMb`, in bytes; `None` inherits the parent's limit.
+        memory_limit: Option<u64>,
     ) -> Result<u32, NodeError> {
         if id == 0 {
             return Err(NodeError::invalid_arg_value(
@@ -232,6 +239,9 @@ impl WorkerBridge {
         config.io_threads = self.io_threads;
         config.budget = self.budget;
         config.expose_require = eval_entry;
+        // A worker's limit is its own runtime's, never the parent's: the two are separate heaps
+        // (m7-plan §3.3, D53), which is why this is a per-worker value and not shared state.
+        config.max_old_space_size = memory_limit.or(self.memory_limit);
 
         let thread_name = format!("onde-worker-{thread_id}");
         let handle = std::thread::Builder::new()

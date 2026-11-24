@@ -5,13 +5,20 @@ A Node-compatible JavaScript runtime: QuickJS as the engine, Rust as the host.
 onde runs the code around the work: CLIs, build steps, config, request handlers with light logic,
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
-`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.4 MB
+`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.5 MB
 binary.
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
 > commands below still say `target/debug/lite`.
 
-Status: M0 through M6 are done; M7 is next. M6 is the milestone that changes the engine: quickjs-ng
+Status: M0 through M7 are done; M8 is next. M7 added the build-time bootstrap snapshot, the
+diagnostics flags (`--trace-events`, `--timing`, `--trace-gc`), heap limits and a `node:test` runner,
+and fixed an idle socket that held 64 KiB of read buffer — the half-open case went from 156 MB to
+41 MB at 2,000 connections. One measured gap is recorded rather than closed: HTTP throughput is
+0.45x of Node in one isolate. The half-open case went from 67 MB to 45 MB: the server stopped
+building a session, and its timers, for a connection that never sent a byte. [docs/m7-plan.md](docs/m7-plan.md) is the record.
+
+M6 is the milestone that changes the engine: quickjs-ng
 is now vendored and patched (`vendor/`, 0.17.0 plus a ~260-line job-queue patch), the host owns the
 microtask queue, and `async_hooks`/`AsyncLocalStorage` propagate across `await`, `then`, ticks,
 microtasks, timers, `fs` callbacks and async function bodies. A 96-cell propagation matrix runs
@@ -32,43 +39,50 @@ bundles an app and links it with the runtime into one executable, see
 | M4, done | `net`, `http`/`https`, `tls`, `dns`, `zlib` | the server case, and what tuckbox needs |
 | M5, done | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline`, process signals | tools that shell out, and work that leaves the main thread |
 | M6, done | `async_hooks` and `AsyncLocalStorage` across `await`, on a host-owned job queue; the engine is vendored and patched | request-scoped state without passing a context through every call |
-| M7 | bytecode snapshot at build time, allocation fast paths, memory limits, `--trace-events`, a `node:test` runner; standalone builds landed early (`ondec`) | closes the startup, throughput and memory gap measured below |
+| M7, done | a build-time bootstrap snapshot, `--trace-events`/`--timing`/`--trace-gc`, `--max-old-space-size` with worker limits, a `node:test` runner, and an idle socket that no longer holds 64 KiB of read buffer; standalone builds landed early (`ondec`) | startup, per-connection memory and diagnostics; the HTTP tail is left to 1.1 |
 | M8 | compatibility sweep, packaging, publish | 1.0 |
 
 ## What you trade
 
 Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-24, release build, Node 26.12.1
-and Bun 1.3.10. Cold start and HTTP are medians of three (HTTP: 100 keep-alive connections, 20
-warm-up + 200 measured requests each); compute is medians of five repetitions per workload.
-Harnesses: `test/net/bench.sh`, `test/net/coldstart.js` and `test/bench/run.js`.
+and Bun 1.3.10; the onde column was re-measured after M7 on the same machine with `lowpowermode`
+off and a load average near 5, which is why the three runtimes reproduce their earlier figures while
+onde's moved. Cold start and HTTP are medians of three (HTTP: 100 keep-alive connections, 20 warm-up
++ 200 measured requests each); compute is medians of five repetitions per workload. Harnesses:
+`test/net/bench.sh`, `test/net/coldstart.js` and `test/bench/run.js`. Peak RSS is the one figure not
+re-measured: this machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resolve
+the change (an M7 soak of the same server peaked at 8.0 MB).
 
 ### Footprint
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
-| install size | 5.4 MB | 77 MB | 58 MB |
-| cold start, `-e '1+1'` | 12.2 ms | 92.6 ms | 8.0 ms |
-| cold start, `require("http")` | 19.0 ms | 95.0 ms | 15.9 ms |
+| install size | 5.5 MB | 77 MB | 58 MB |
+| cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
+| cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
 | 100 processes, same server (derived) | 927 MB | 4.42 GB | 3.32 GB |
-| embedded JS stdlib | 557 KB from 921 KB source | — | — |
+| embedded JS stdlib | 581 KB from 925 KB source (540 KB of module source + a 41 KB compiled bootstrap) | — | — |
 
 At 9.3 MB resident, a hundred onde processes cost less than the tool around them; the same
 hundred Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's
-12.2, and QuickJS has an engine to initialize either way.
+11.6, and QuickJS has an engine to initialize either way.
 
 ### Hot path
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
-| HTTP throughput, 100 keep-alive connections | 12.9k req/s | 30.0k req/s | 29.4k req/s |
-| HTTP p50 | 0.40 ms | 3.17 ms | 3.11 ms |
-| HTTP p99 | 52.5 ms | 6.6 ms | 7.4 ms |
-| share of Node's requests/s | 43% | 100% | 98% |
+| HTTP throughput, 100 keep-alive connections | 13.2k req/s | 30.0k req/s | 29.5k req/s |
+| HTTP p50 | 0.45 ms | 3.19 ms | 3.20 ms |
+| HTTP p99 | 45.7 ms | 6.8 ms | 6.4 ms |
+| share of Node's requests/s | 44% | 100% | 98% |
 
 The p50 is lower than Node's because onde's requests are cheap; the tail is much worse because
-every connection queues behind one isolate thread. That is the M4 single-isolate issue, not M6:
-the async-hooks plumbing costs nothing for a server that never loads `async_hooks`.
+every connection queues behind one isolate thread. That is the single-isolate ceiling, not the
+async-hooks plumbing (which costs nothing for a server that never loads `async_hooks`), and it is
+why M7 closed the diagnostics and memory criteria but left this one recorded: M7 took the p99 from
+52.5 ms to 45.7 ms and the throughput from 12.9k to 13.2k req/s, which is allocation work, not an
+architecture change. A second isolate is a 1.1 item.
 
 ### Pure JavaScript
 
@@ -146,7 +160,7 @@ release build):
 
 A compiled app never parses its sources: a 1.9 MiB module loads from bytecode in about 5 ms where
 `lite` needs about 790 ms to parse it. A hello-world app is also smaller than the interpreter that
-produced it — 4.8 MB against `lite`'s 5.4 MB — because only the runtime code the app reaches is
+produced it — 4.8 MB against `lite`'s 5.5 MB — because only the runtime code the app reaches is
 linked in.
 
 Compression buys size, not speed. `--compress` takes `none` (the default), `zlib`, or

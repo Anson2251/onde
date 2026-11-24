@@ -53,3 +53,38 @@ rss_kb() {
   fi
   echo "0"
 }
+
+# Machine state, for the cold-start protocol (m7-plan §4.1).
+#
+# A wall-clock benchmark on a laptop measures the laptop as much as the runtime: macOS `lowpowermode`
+# caps CPU frequency and roughly doubles onde's 12 ms cold start. Every recorded number therefore
+# carries the mode and the load average, and a gate is skipped rather than failed when the mode is
+# known to be throttled.
+
+power_mode() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    local value
+    value="$(pmset -g 2>/dev/null | awk '/lowpowermode/ { print $2; exit }')"
+    case "$value" in
+      1) echo "low" ;;
+      0) echo "off" ;;
+      *) echo "unknown" ;;
+    esac
+  else
+    local governor
+    governor="$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+    case "$governor" in
+      powersave) echo "low" ;;
+      performance|schedutil|ondemand|conservative|"") echo "unknown" ;;
+      *) echo "unknown" ;;
+    esac
+  fi
+}
+
+load_average() {
+  uptime 2>/dev/null | sed 's/.*load averages*: *//' | awk '{ print $1 }'
+}
+
+machine_line() {
+  printf 'MACHINE lowpowermode=%s load=%s\n' "$(power_mode)" "$(load_average)"
+}

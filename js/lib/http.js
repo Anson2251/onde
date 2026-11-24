@@ -73,19 +73,26 @@ class Server extends NetServer {
     return super.close(callback);
   }
 
-  /// Node's Tier B convenience methods; both are small over the session set.
+  /// Node's Tier B convenience methods. They walk sockets rather than sessions: a session is
+  /// created on the first byte (D73), so a connection that has not sent one has no session and is
+  /// idle by definition.
   closeAllConnections() {
-    for (const session of this._sessions) session.destroy();
+    if (this._sockets === undefined) return;
+    for (const socket of this._sockets) socket.destroy();
   }
 
   closeIdleConnections() {
-    for (const session of this._sessions) {
-      if (session.req === null && session.res === null) session.destroy();
+    if (this._sockets === undefined) return;
+    for (const socket of this._sockets) {
+      const session = socket._lnSession;
+      if (session === undefined || (session.req === null && session.res === null)) {
+        socket.destroy();
+      }
     }
   }
 
   getConnections(callback) {
-    const count = this._sessions.size;
+    const count = this._sockets === undefined ? 0 : this._sockets.size;
     if (typeof callback === "function") process.nextTick(callback, null, count);
     return count;
   }

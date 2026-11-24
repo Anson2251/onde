@@ -266,6 +266,51 @@ pub enum Op {
 }
 
 impl Op {
+    /// A stable token per operation, for diagnostics (`--trace-events`, `--timing`).
+    ///
+    /// Distinct from [`Op::syscall`]: this names the *operation* (`copytree`-style internal names
+    /// included), while `syscall` is what an error's `syscall` property must say.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::ReadFile { .. } => "readFile",
+            Op::WriteFile { .. } => "writeFile",
+            Op::AppendFile { .. } => "appendFile",
+            Op::CopyFile { .. } => "copyFile",
+            Op::Mkdir { .. } => "mkdir",
+            Op::Mkdtemp { .. } => "mkdtemp",
+            Op::Readdir { .. } => "readdir",
+            Op::Rm { .. } => "rm",
+            Op::Rmdir { .. } => "rmdir",
+            Op::Unlink { .. } => "unlink",
+            Op::Rename { .. } => "rename",
+            Op::Stat { .. } => "stat",
+            Op::Statfs { .. } => "statfs",
+            Op::Fstat { .. } => "fstat",
+            Op::Access { .. } => "access",
+            Op::Chmod { .. } => "chmod",
+            Op::Chown { .. } => "chown",
+            Op::Truncate { .. } => "truncate",
+            Op::Ftruncate { .. } => "ftruncate",
+            Op::Readlink { .. } => "readlink",
+            Op::Symlink { .. } => "symlink",
+            Op::Link { .. } => "link",
+            Op::Realpath { .. } => "realpath",
+            Op::Utimes { .. } => "utimes",
+            Op::Open { .. } => "open",
+            Op::Close { .. } => "close",
+            Op::Read { .. } => "read",
+            Op::Write { .. } => "write",
+            Op::Fsync { .. } => "fsync",
+            Op::Fdatasync { .. } => "fdatasync",
+            Op::Fchmod { .. } => "fchmod",
+            Op::Fchown { .. } => "fchown",
+            Op::Futimes { .. } => "futimes",
+            Op::Lookup { .. } => "lookup",
+        }
+    }
+}
+
+impl Op {
     /// The `syscall` property Node puts on the error (`open`, `read`, `stat`, ...).
     pub fn syscall(&self) -> &'static str {
         match self {

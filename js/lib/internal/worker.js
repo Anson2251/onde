@@ -269,6 +269,10 @@ class Worker extends EventEmitter {
         settings.workerData === undefined ? null : settings.workerData,
         this.argv.length > 0 ? this.argv : null,
         transfers,
+        // A worker runtime has its own heap, so the limit travels with the spawn (D53).
+        typeof this.resourceLimits.maxOldGenerationSizeMb === "number"
+          ? this.resourceLimits.maxOldGenerationSizeMb
+          : null,
       ]);
     } catch (error) {
       host.workers.release(this._id);

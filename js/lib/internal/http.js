@@ -1463,25 +1463,48 @@ function isUpgradeRequest(req) {
 /// Called from the server's `'connection'` listener, before any `read` is issued, so the codec
 /// owns the first byte. The session's observer is installed before `httpAttach` so no event can
 /// arrive without a listener.
+/// Attach parsed HTTP to an accepted socket, lazily.
+///
+/// The codec is attached immediately (it has to be: it owns the parse), but the per-connection
+/// *session* — request/response slots, socket listeners, headers timer — is created on the first
+/// event. An idle peer that has not sent a byte costs one `onHandleEvent` entry instead of ~2.5 KiB,
+/// which is the difference between 47 MB and ~42 MB at 2,000 half-open connections
+/// (m7-plan §12.3, D73).
+///
+/// `getConnections()` and the `close*Connections()` helpers count sockets, not sessions: a
+/// sessionless socket is still a connection, and it is idle by definition.
 function attachServerSocket(server, socket) {
   const id = internalNet().handleIdOf(socket);
-  const session = new ServerSession(server, socket, id);
   server._sessions = server._sessions || new Set();
-  server._sessions.add(session);
+  server._sockets = server._sockets || new Set();
+  server._sockets.add(socket);
 
-  session.off = internalNet().onHandleEvent(socket, (name, payload) => {
-    try {
-      handleServerEvent(server, session, name, payload);
-    } catch (error) {
-      // A throw from a user callback must reach `uncaughtException` (the bootstrap sink routes it
-      // the same way); do not let it corrupt the connection state.
-      if (typeof globalThis.__ln_emit_uncaught === "function") globalThis.__ln_emit_uncaught(error);
-      else throw error;
+  let session = null;
+  const ensureSession = () => {
+    if (session !== null) return session;
+    session = new ServerSession(server, socket, id);
+    session.off = off;
+    socket._lnSession = session;
+    server._sessions.add(session);
+    if (server.headersTimeout > 0) {
+      // Node starts this at accept; here it starts at the first byte (D73), which is what lets a
+      // never-sending peer cost no timer at all.
+      session.headersTimer = unrefTimer(
+        setTimeout(() => {
+          if (!session.closed) session.destroy();
+        }, server.headersTimeout),
+      );
     }
-  });
+    return session;
+  };
 
-  socket.on("error", () => {});
-  socket.on("close", () => {
+  const detach = () => {
+    server._sockets.delete(socket);
+    if (session === null) {
+      // Nothing was ever parsed on this socket: release the handle listener and stop.
+      off();
+      return;
+    }
     session.closed = true;
     session.clearHeadersTimer();
     session.clearRequestTimer();
@@ -1491,6 +1514,32 @@ function attachServerSocket(server, socket) {
       session.off = null;
     }
     server._sessions.delete(session);
+    socket._lnSession = undefined;
+  };
+
+  // A parsed-mode socket must never surface an unhandled `'error'`: a TLS or TCP teardown error
+  // (EIO, ECONNRESET) arrives before any request exists, and without a listener it reaches
+  // `uncaughtException` and turns a clean exit into exit 1. This is the one eager listener the
+  // lazy design keeps, and the reason is correctness, not convenience (D73).
+  socket.on("error", () => {});
+
+  const off = internalNet().onHandleEvent(socket, (name, payload) => {
+    // A parsed-mode socket's own sink delivers its own events first; these two are the ones the
+    // server has to see *before* any user listener could not exist, and cleanup belongs here so a
+    // connection that never carried a byte still costs no socket listener (D73).
+    if (name === "closed") {
+      detach();
+      return;
+    }
+    if (name === "error") return;
+    try {
+      handleServerEvent(server, ensureSession(), name, payload);
+    } catch (error) {
+      // A throw from a user callback must reach `uncaughtException` (the bootstrap sink routes it
+      // the same way); do not let it corrupt the connection state.
+      if (typeof globalThis.__ln_emit_uncaught === "function") globalThis.__ln_emit_uncaught(error);
+      else throw error;
+    }
   });
 
   internalNet().command(id, "httpAttach", [
@@ -1499,15 +1548,10 @@ function attachServerSocket(server, socket) {
     server.maxHeadersCount === undefined ? DEFAULT_MAX_HEADERS : server.maxHeadersCount,
   ]);
 
-  if (server.headersTimeout > 0) {
-    session.headersTimer = unrefTimer(
-      setTimeout(() => {
-        if (!session.closed) session.destroy();
-      }, server.headersTimeout),
-    );
-  }
   if (server.timeout > 0 && typeof socket.setTimeout === "function") {
-    socket.setTimeout(server.timeout, () => session.destroy());
+    socket.setTimeout(server.timeout, () => {
+      if (session !== null) session.destroy();
+    });
   }
   return session;
 }

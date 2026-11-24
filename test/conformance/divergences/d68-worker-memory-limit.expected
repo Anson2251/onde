@@ -1,0 +1,4 @@
+worker error InternalError
+parent ok true
+exit 1
+exit:0

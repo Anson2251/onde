@@ -100,6 +100,10 @@ pub(crate) struct OpBridge {
     results: Arc<Mutex<HashMap<RequestId, OpDone>>>,
     /// Cooperative cancellation flags, keyed by request id.
     aborts: RefCell<HashMap<RequestId, Arc<AtomicBool>>>,
+    /// When each in-flight op was submitted, with its name, for `--trace-events`/`--timing`.
+    /// One small entry per op in flight, removed when the slot is taken, so it cannot outlive the
+    /// op; the turn loop never touches it, which is what keeps diagnostics free when they are off.
+    starts: RefCell<HashMap<RequestId, (&'static str, std::time::Instant)>>,
     driver: std::rc::Rc<RefCell<Driver>>,
     /// Wakes the loop after a result is parked. Also used by the immediate rejection path.
     sender: Mutex<CompletionSender>,
@@ -140,6 +144,7 @@ impl OpBridge {
             ids,
             results,
             aborts: RefCell::new(HashMap::new()),
+            starts: RefCell::new(HashMap::new()),
             driver,
             sender: Mutex::new(sender),
             pool: OnceLock::new(),
@@ -174,6 +179,9 @@ impl OpBridge {
     }
 
     pub(crate) fn submit(&self, id: RequestId, op: Op) {
+        self.starts
+            .borrow_mut()
+            .insert(id, (op.name(), std::time::Instant::now()));
         self.ids.observe(id);
         let abort = Arc::new(AtomicBool::new(false));
         self.aborts.borrow_mut().insert(id, abort.clone());
@@ -205,6 +213,11 @@ impl OpBridge {
     ///
     /// The caller releases the external ref after a successful take; a missing slot means the
     /// completion was already dispatched (or never existed), so it must not release another ref.
+    /// When `id` was submitted, if diagnostics were on for it. Consumed by the completion path.
+    pub(crate) fn take_start(&self, id: RequestId) -> Option<(&'static str, std::time::Instant)> {
+        self.starts.borrow_mut().remove(&id)
+    }
+
     pub(crate) fn take(&self, id: RequestId) -> Option<OpDone> {
         let done = self
             .results
@@ -271,7 +284,10 @@ pub(crate) fn op_value_to_js<'js>(
         OpValue::Fd(fd) => Ok(js::Value::new_int(ctx.clone(), *fd)),
         OpValue::Count(count) => Ok(js::Value::new_number(ctx.clone(), *count as f64)),
         OpValue::Bytes(bytes) => {
-            Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes.clone())?.into_value())
+            // `as_slice`, not `clone()`: the engine copies into its own ArrayBuffer either way, and
+            // cloning the Vec first copied the payload twice. On a 10 MB read that second copy was
+            // measurable against Node (m7-plan §4.7, D36).
+            Ok(js::TypedArray::<u8>::new(ctx.clone(), bytes.as_slice())?.into_value())
         }
         OpValue::Text(text) => Ok(js::String::from_str(ctx.clone(), text)?.into_value()),
         OpValue::Stat(stat) => stat_to_js(ctx, stat),

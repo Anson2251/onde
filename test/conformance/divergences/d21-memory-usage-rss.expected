@@ -1,0 +1,4 @@
+rss positive true
+rss at least heapUsed true
+external zero true
+exit:0

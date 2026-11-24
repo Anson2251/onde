@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The hard performance gates and the soak run here, on the reference-scheduled machine, not on
+  # every push: a shared runner measures the runner (m7-plan §5).
+  schedule:
+    - cron: "17 3 * * *"
 
 jobs:
   test:
@@ -26,12 +30,21 @@ jobs:
         run: cargo test --all
       - name: build
         run: cargo build
+      - name: M7 diagnostics (trace structure, timing, trace-gc)
+        run: ./test/diag/run.sh
+      - name: M7 node:test pilot (same transcript under node and lite)
+        run: ./test/node-test/run.sh
       - name: standalone builds (archive + ondec + a linked app that runs)
         # The archive is built for this cell and a real app is linked, run, and checked after its
         # sources are deleted. This is the matrix's first real cell check, not a unit test.
         run: ./test/standalone/run.sh
       - name: conformance corpus
         run: ./test/conformance/run.sh
+      - name: conformance on the bootstrap snapshot path
+        # Criterion 9 of m7-plan §6: the release profile boots from build-time bytecode. This runs
+        # the same corpus through the bytecode path in a debug build, where both paths are
+        # selectable, so a broken snapshot cannot hide until a release is cut.
+        run: ONDE_BOOTSTRAP=bytecode RUN=target/debug/lite ./test/conformance/run.sh
       - name: node for the stdlib oracle
         uses: actions/setup-node@v4
         with:
@@ -115,6 +128,49 @@ jobs:
 
   # License policy: deny.toml. A separate job because it does not depend on the OS matrix.
   # M4 adds `webpki-roots` (MPL-2.0), which the allowlist covers.
+  # M7 performance (m7-plan §5-6). Soft by default on a shared runner: every number is printed and
+  # none is enforced. The release binary also runs the whole conformance corpus here, because the
+  # release profile is the one that boots from the bytecode snapshot (WP2).
+  perf:
+    name: M7 performance (soft on shared runners)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: build release
+        run: cargo build --release -p ln-cli
+      - name: conformance corpus on the snapshot path
+        run: RUN=target/release/lite ./test/conformance/run.sh
+      - name: performance ratios (soft)
+        run: |
+          NET_BENCH_FORCE=1 NET_BENCH_SOFT=1 PERF_BUILD=0 PERF_SKIP_HALFOPEN=1 ./test/perf/run.sh
+      - name: half-open bound (soft, 500 connections to fit the runner)
+        run: NET_BENCH_SOFT=1 LITE=target/release/lite NET_CONNS=500 ./test/perf/halfopen.sh
+
+  # Nightly: the same numbers with the gates on, plus the RSS soak, on the reference machine label.
+  # Until that machine is registered, this job runs on a hosted runner with the gates still soft
+  # and the soak capped — a red job that means "the runner is busy" is worse than a report.
+  nightly:
+    name: nightly soak and hard ratios
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: build release
+        run: cargo build --release -p ln-cli
+      - name: performance ratios
+        run: PERF_BUILD=0 ./test/perf/run.sh
+      - name: RSS soak (30 min on a hosted runner; the reference run is 60)
+        run: LITE=target/release/lite SOAK_SECONDS=1800 ./test/soak/run.sh
+
   licenses:
     name: licenses and sources
     runs-on: ubuntu-latest

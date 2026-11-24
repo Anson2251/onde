@@ -4,6 +4,7 @@
 #   ./test/net/slowloris.sh                 # 2000 half-open connections, under a minute
 #   NET_CONNS=10000 ulimit -n 20000 ./test/net/slowloris.sh   # the 10k variant
 #   LITE=/path/to/lite ./test/net/slowloris.sh
+#   NET_SLOWLORIS_RAW=1 ./test/net/slowloris.sh   # the floor: raw TCP, no HTTP layer
 #
 # NET_CONNS (default 2000) sockets each send a partial request head and then idle. While they are
 # held open the script samples the lite server's RSS (must stay below 25 MB), then opens one more
@@ -19,7 +20,16 @@ root="$(cd "$here/../.." && pwd)"
 LITE="${LITE:-$root/target/debug/lite}"
 conns="${NET_CONNS:-2000}"
 rss_limit_mb="${NET_SLOWLORIS_RSS_MB:-25}"
-server_js="$here/fixtures/slow-server.js"
+# The floor variant serves raw TCP (accept, consume, never answer) so the difference between the
+# two runs is the HTTP layer's per-connection cost — the number m7-plan §6.1 re-specifies the bound
+# against, since the raw floor alone (29 MB at 2,000) is above the old 25 MB target.
+if [ "${NET_SLOWLORIS_RAW:-0}" = "1" ]; then
+  server_js="$here/fixtures/raw-server.js"
+  mode="raw"
+else
+  server_js="$here/fixtures/slow-server.js"
+  mode="http"
+fi
 client_js="$here/slowloris.js"
 probe_js="$here/http-431.js"
 # shellcheck source=lib.sh
@@ -74,7 +84,7 @@ while [ ! -s "$tmp/port" ]; do
 done
 
 rss_base="$(rss_kb "$server_pid")"
-echo "slowloris: runtime=$LITE connections=$conns rss_limit=${rss_limit_mb}MB baseline=${rss_base}KB"
+echo "slowloris: runtime=$LITE connections=$conns mode=$mode rss_limit=${rss_limit_mb}MB baseline=${rss_base}KB"
 
 node "$client_js" "$tmp/port" "$conns" >"$tmp/client.log" 2>&1 &
 client_pid=$!
@@ -104,23 +114,36 @@ fi
 open_line="$(grep -m1 '^OPEN:' "$tmp/client.log" 2>/dev/null || true)"
 echo "slowloris: client ${open_line:-did-not-report}"
 
-# Let the accept loop settle, then take the peak of a few samples: a transient allocation spike is
-# still memory the server is holding under the flood.
+# The client must have opened exactly the connections we asked for: a partial flood measures a
+# different stress level, and comparing it against a full one produced a nonsense -22 MB delta once.
+opened_count="$(printf '%s' "${open_line:-}" | sed -n 's/.*OPEN:\([0-9]*\).*/\1/p')"
+if [ "${opened_count:-0}" != "$conns" ]; then
+  echo "slowloris: client opened ${opened_count:-0} of $conns connections; not a measurement of the bound"
+  failures=$((failures + 1))
+fi
+
+# Let the accept loop settle, then take the median of seven samples. The median rather than the
+# peak, because this number is used as a *difference* against the raw-TCP floor (m7-plan §6.1) and
+# one transient in one of the two runs would otherwise dominate it. The peak is reported alongside.
 sleep 1
-rss_peak=0
-for _ in 1 2 3 4 5; do
+samples=""
+for _ in 1 2 3 4 5 6 7; do
   value="$(rss_kb "$server_pid")"
-  if [ -n "$value" ] && [ "$value" -gt "$rss_peak" ]; then rss_peak="$value"; fi
+  [ -n "$value" ] && samples="$samples$value
+"
   sleep 0.1
 done
-rss_mb="$(awk -v kb="$rss_peak" 'BEGIN { printf "%.1f", kb / 1024 }')"
-echo "slowloris: rss_held=${rss_mb}MB (baseline $((rss_base / 1024))MB)"
+rss_peak="$(printf '%s' "$samples" | sort -n | tail -n 1)"
+rss_median="$(printf '%s' "$samples" | sort -n | sed -n 4p)"
+rss_mb="$(awk -v kb="${rss_median:-0}" 'BEGIN { printf "%.1f", kb / 1024 }')"
+rss_peak_mb="$(awk -v kb="${rss_peak:-0}" 'BEGIN { printf "%.1f", kb / 1024 }')"
+echo "slowloris: rss_held=${rss_mb}MB peak=${rss_peak_mb}MB (baseline $((rss_base / 1024))MB)"
 if ! kill -0 "$server_pid" 2>/dev/null; then
   echo "slowloris: server died under the flood"
   failures=$((failures + 1))
 fi
 
-if ! awk -v mb="$rss_mb" -v limit="$rss_limit_mb" 'BEGIN { exit !(mb < limit) }'; then
+if [ "$mode" = "http" ] && ! awk -v mb="$rss_mb" -v limit="$rss_limit_mb" 'BEGIN { exit !(mb < limit) }'; then
   echo "slowloris: RSS ${rss_mb}MB is not < ${rss_limit_mb}MB"
   if [ "${NET_BENCH_SOFT:-0}" = "1" ]; then
     # A shared CI runner is not the reference machine, and this bound is a recorded M4 gap that
@@ -132,12 +155,15 @@ if ! awk -v mb="$rss_mb" -v limit="$rss_limit_mb" 'BEGIN { exit !(mb < limit) }'
 fi
 
 # The 431 probe runs while the half-open sockets are still held, so it also proves the server
-# still accepts and answers new connections under the flood.
+# still accepts and answers new connections under the flood. It is an HTTP behaviour, so the raw
+# floor variant has nothing to probe.
+if [ "$mode" = "http" ]; then
 probe_out="$(node "$probe_js" "$tmp/port" 2>&1)"
 probe_code=$?
 printf '%s\n' "$probe_out" | sed 's/^/  probe: /'
 if [ "$probe_code" -ne 0 ]; then
   failures=$((failures + 1))
+fi
 fi
 
 # Tear the flood down before reporting so no listener is left behind.
@@ -149,8 +175,8 @@ wait "$server_pid" 2>/dev/null || true
 server_pid=""
 
 if [ "$failures" -eq 0 ]; then
-  echo "SUMMARY: conns=$conns rss_held=${rss_mb}MB baseline=$((rss_base / 1024))MB 431=ok closed=ok"
+  echo "RESULT conns=$conns mode=$mode rss_mb=$rss_mb baseline_mb=$((rss_base / 1024)) 431=ok closed=ok"
 else
-  echo "SUMMARY: conns=$conns rss_held=${rss_mb}MB baseline=$((rss_base / 1024))MB failures=$failures"
+  echo "RESULT conns=$conns mode=$mode rss_mb=$rss_mb baseline_mb=$((rss_base / 1024)) failures=$failures"
 fi
 [ "$failures" -eq 0 ]

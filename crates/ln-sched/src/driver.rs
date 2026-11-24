@@ -334,63 +334,76 @@ impl Driver {
     ///
     /// `now` is the loop's clock. Tests pass a fake instant; the runtime passes `Instant::now()`.
     pub fn next(&mut self, now: Instant) -> Turn {
-        if !self.turn_started {
-            self.turn_started = true;
-            self.immediate_snapshot = None;
-            // An unreferenced handle cannot start a turn: Node exits before firing an `unref`ed
-            // timer when nothing else keeps the loop alive.
-            self.due = if self.refs() == 0 {
-                VecDeque::new()
-            } else {
-                self.timers.due_snapshot(now).into()
-            };
-            if self.refs() == 0 {
-                // An `unref`ed immediate cannot start a turn either.
-                self.immediate_snapshot = Some(VecDeque::new());
-            }
-        }
-
-        while let Some(id) = self.due.pop_front() {
-            // Timers cleared after the snapshot are skipped, not fired.
-            if self.timers.contains(id) {
-                return Turn::Timer(id);
-            }
-        }
-
-        // Completions are the poll-phase substitute and run before check-phase immediates
-        // (ADR-0003 §2).
-        if let Some(completion) = self.completions.pop_front() {
-            return Turn::Completion(completion.0);
-        }
-
-        if self.immediate_snapshot.is_none() {
-            let ids: VecDeque<ImmediateId> = self.immediates.iter().map(|entry| entry.id).collect();
-            self.immediate_snapshot = Some(ids);
-        }
-        if let Some(snapshot) = self.immediate_snapshot.as_mut() {
-            while let Some(id) = snapshot.pop_front() {
-                if self.immediates.iter().any(|entry| entry.id == id) {
-                    return Turn::Immediate(id);
+        loop {
+            if !self.turn_started {
+                self.turn_started = true;
+                self.immediate_snapshot = None;
+                // An unreferenced handle cannot start a turn: Node exits before firing an `unref`ed
+                // timer when nothing else keeps the loop alive.
+                self.due = if self.refs() == 0 {
+                    VecDeque::new()
+                } else {
+                    self.timers.due_snapshot(now).into()
+                };
+                if self.refs() == 0 {
+                    // An `unref`ed immediate cannot start a turn either.
+                    self.immediate_snapshot = Some(VecDeque::new());
                 }
             }
-        }
 
-        // The turn is over: decide whether to exit or block.
-        self.turn_started = false;
-        if self.refs() == 0 {
-            if !self.before_exit_done {
-                self.before_exit_done = true;
-                return Turn::BeforeExit;
+            while let Some(id) = self.due.pop_front() {
+                // Timers cleared after the snapshot are skipped, not fired.
+                if self.timers.contains(id) {
+                    return Turn::Timer(id);
+                }
             }
-            return Turn::Exit;
-        }
 
-        self.before_exit_done = false;
-        let timeout = self
-            .timers
-            .next_deadline()
-            .map(|deadline| deadline.saturating_duration_since(now));
-        Turn::Wait(timeout)
+            // Completions are the poll-phase substitute and run before check-phase immediates
+            // (ADR-0003 §2).
+            if let Some(completion) = self.completions.pop_front() {
+                return Turn::Completion(completion.0);
+            }
+
+            if self.immediate_snapshot.is_none() {
+                let ids: VecDeque<ImmediateId> =
+                    self.immediates.iter().map(|entry| entry.id).collect();
+                self.immediate_snapshot = Some(ids);
+            }
+            if let Some(snapshot) = self.immediate_snapshot.as_mut() {
+                while let Some(id) = snapshot.pop_front() {
+                    if self.immediates.iter().any(|entry| entry.id == id) {
+                        return Turn::Immediate(id);
+                    }
+                }
+            }
+
+            // The turn is over: decide whether to exit or block.
+            self.turn_started = false;
+            if self.refs() == 0 {
+                if !self.before_exit_done {
+                    self.before_exit_done = true;
+                    return Turn::BeforeExit;
+                }
+                return Turn::Exit;
+            }
+
+            // An immediate scheduled while the check phase was running is not in this turn's
+            // snapshot: it belongs to the next turn (the phase-order rule above), so start that
+            // turn now instead of blocking. Without this, the new immediate waits for an
+            // unrelated timer or completion — forever when none exists. `setImmediate` scheduled
+            // from a promise continuation after another immediate is the common case (a test
+            // runner awaiting one test before starting the next is exactly that shape).
+            self.before_exit_done = false;
+            if !self.immediates.is_empty() {
+                continue;
+            }
+
+            let timeout = self
+                .timers
+                .next_deadline()
+                .map(|deadline| deadline.saturating_duration_since(now));
+            return Turn::Wait(timeout);
+        }
     }
 }
 
@@ -469,6 +482,23 @@ mod tests {
 
         // The next turn, still at `now`, must block until the timer's deadline.
         assert_eq!(driver.next(now), Turn::Wait(Some(Duration::from_millis(5))));
+    }
+
+    #[test]
+    fn an_immediate_scheduled_during_the_check_phase_starts_a_new_turn() {
+        let now = now();
+        let mut driver = Driver::new();
+        let first = driver.schedule_immediate(1);
+        assert_eq!(driver.next(now), Turn::Immediate(first));
+        assert_eq!(driver.fire_immediate(first), Some(1));
+
+        // The callback's microtask checkpoint queues a second immediate before the loop asks for
+        // work again. It must run at the start of the next turn, not after a block: with no timer
+        // pending, a `Wait(None)` here is a hang.
+        let second = driver.schedule_immediate(2);
+        assert_eq!(driver.next(now), Turn::Immediate(second));
+        assert_eq!(driver.fire_immediate(second), Some(2));
+        assert_eq!(driver.next(now), Turn::BeforeExit);
     }
 
     #[test]

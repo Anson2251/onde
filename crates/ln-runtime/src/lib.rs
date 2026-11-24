@@ -39,6 +39,7 @@ use ln_sched::{
 
 mod args;
 mod async_hooks;
+mod bootstrap;
 mod handles;
 mod host;
 mod host_crypto;
@@ -48,6 +49,7 @@ pub mod ops;
 mod proc;
 mod report;
 mod signals;
+mod trace;
 mod workers;
 pub use report::render_uncaught;
 
@@ -57,11 +59,10 @@ use host::HostState;
 use modules::ModuleRuntime;
 use ops::OpBridge;
 use proc::{IpcBridge, ProcBridge};
-use signals::SignalBridge;
+use trace::Diagnostics;
 
-/// Compiled into the binary; evaluated once per isolate before the entry script.
-const BOOTSTRAP: &str = include_str!(concat!(env!("OUT_DIR"), "/js/bootstrap.js"));
-const BOOTSTRAP_NAME: &str = "<lite:bootstrap>";
+use signals::SignalBridge;
+pub use trace::DiagnosticsConfig;
 
 /// Callback kinds understood by `bootstrap.js`'s `__ln_dispatch`.
 const KIND_TIMER: u8 = 0;
@@ -91,6 +92,23 @@ pub struct Config {
     /// module comes from the payload, the disk is never consulted, and `argv[1]` is the executable
     /// because there is no script path.
     pub payload: Option<PayloadBytes>,
+    /// Diagnostics: what `--trace-events`, `--timing` and `--trace-gc` asked for.
+    ///
+    /// Kept as the raw request so the runtime decides when the file is opened and flushed; see
+    /// [`DiagnosticsConfig`] and m7-plan §3.4.
+    pub diagnostics: DiagnosticsConfig,
+    /// Hard cap on the engine heap, in bytes (`--max-old-space-size`).
+    ///
+    /// QuickJS has one heap and one limit, so this is not Node's old-space split: exceeding it is a
+    /// fatal engine OOM (m7-plan §3.3, D67/D68). Workers inherit it unless `resourceLimits` says
+    /// otherwise.
+    pub max_old_space_size: Option<u64>,
+    /// Test files discovered by `lite --test`.
+    ///
+    /// `None` runs a script; `Some` makes [`Isolate::run_tests`] the entry point. Discovery lives
+    /// in `ln-cli` (it is argument parsing, m7-plan §4.6), and the runtime only hands this list to
+    /// the JavaScript runner in `js/lib/test.js`.
+    pub test_files: Option<Vec<String>>,
 }
 
 /// The payload bytes a compiled app was linked with.
@@ -116,6 +134,9 @@ impl Config {
             io_threads: 4,
             async_stack_traces: false,
             payload: None,
+            diagnostics: DiagnosticsConfig::default(),
+            max_old_space_size: None,
+            test_files: None,
         }
     }
 }
@@ -418,6 +439,11 @@ pub struct Isolate {
     memory: Rc<Cell<usize>>,
     /// Set by the `memoryUsage` host call, cleared when the sample is taken.
     memory_requested: Rc<Cell<bool>>,
+    /// Files `lite --test` discovered; `Some` means this isolate is a test runner, not a script
+    /// host (see [`Config::test_files`]).
+    test_files: Option<Vec<String>>,
+    /// `--trace-events`, `--timing` and `--trace-gc`; `None` unless one was asked for.
+    diagnostics: Option<Diagnostics>,
     finished: bool,
 }
 
@@ -450,6 +476,11 @@ impl Isolate {
             }
             .map_err(|e| Failure::Engine(e.to_string()))?,
         );
+        // The limit applies to this runtime before the bootstrap, so a bootstrap that allocates
+        // past it fails at boot rather than an hour later (m7-plan §4.4).
+        if let Some(limit) = config.max_old_space_size {
+            engine.set_memory_limit(limit);
+        }
         let mut sched = Scheduler::new();
         sched.set_budget(config.budget);
 
@@ -510,6 +541,13 @@ impl Isolate {
                 .filter(|fd| *fd > 0)
         };
         let async_hooks = AsyncTracker::new();
+        // A worker gets no diagnostics of its own: one trace file per process is the contract, and
+        // a worker's turns would need a lane in the main isolate's file (m7-plan §3.4).
+        let diagnostics = match role {
+            Some(_) => None,
+            None => Diagnostics::new(&config.diagnostics)
+                .map_err(|error| Failure::Engine(format!("diagnostics: {error}")))?,
+        };
         let workers = Rc::new(workers::WorkerBridge::new(
             driver.clone(),
             sender,
@@ -517,10 +555,11 @@ impl Isolate {
             config.argv.clone(),
             config.io_threads,
             config.budget,
+            config.max_old_space_size,
         ));
         let worker = role.map(Rc::new);
 
-        let isolate = Isolate {
+        let mut isolate = Isolate {
             engine,
             sched,
             driver,
@@ -545,6 +584,8 @@ impl Isolate {
             start: Instant::now(),
             memory,
             memory_requested,
+            test_files: config.test_files.clone(),
+            diagnostics,
             finished: false,
         };
         // `--async-stack-traces` needs ids even when the program never loads `async_hooks`, and
@@ -553,6 +594,14 @@ impl Isolate {
             isolate.async_hooks.start();
         }
         isolate.install(&config)?;
+        // Baseline for --trace-gc before the entry point allocates anything: without it the first
+        // sample *is* the baseline, and a collection during the entry script produces no event
+        // (the heap never appears to fall, it was never recorded higher).
+        if let Some(diagnostics) = &mut isolate.diagnostics {
+            if diagnostics.wants_heap() {
+                diagnostics.sample_heap(isolate.engine.heap_statistics().malloc_size);
+            }
+        }
         isolate.install_tracker();
         isolate.install_async_hooks(config.async_stack_traces);
         Ok(isolate)
@@ -590,8 +639,9 @@ impl Isolate {
         self.engine
             .with_ctx(|ctx| host::install(&ctx, &host_state, &config.argv).map_err(engine_error))?;
 
-        match self.engine.eval_global(BOOTSTRAP, BOOTSTRAP_NAME) {
-            Ok(_) => {}
+        // Source in debug builds, the build-time snapshot in release (m7-plan §4.3).
+        match bootstrap::install(&self.engine) {
+            Ok(()) => {}
             // A failing bootstrap is a bug in onde; surface it as an engine failure so the
             // CLI does not pretend it was a user script error.
             Err(error) => {
@@ -786,6 +836,47 @@ impl Isolate {
             if let Some(outcome) = self.entry_error(error) {
                 return Ok(outcome);
             }
+        }
+
+        self.settle(None)
+    }
+
+    /// Run the `node:test` files discovered by the CLI (`lite --test`).
+    ///
+    /// The runner is JavaScript (`js/lib/test.js`): hooks, the promise/`done` duality, plan
+    /// accounting and timeouts are test semantics, not flag plumbing. Rust hands it the paths and
+    /// then drives the same loop a script entry uses. The runner prints the spec transcript and
+    /// ends by setting `process.exitCode`, which [`Isolate::finish`] already turns into the
+    /// process status.
+    pub fn run_tests(&mut self) -> Result<RunOutcome, Failure> {
+        let files: Vec<String> = self.test_files.clone().unwrap_or_default();
+
+        // The dispatcher needs a name for errors that escape a test (an uncaught throw in a timer,
+        // for example); no source means no excerpt, which is correct for a runner.
+        self.begin("<test>", "", 0);
+
+        let invoked = self.engine.with_ctx(|ctx| -> js::Result<()> {
+            // `__ln_builtin_exports` is bootstrap's builtin accessor; loading `node:test` here is
+            // the same module a test file gets when it requires it, so registration state is one.
+            let builtin: js::Function = ctx.globals().get("__ln_builtin_exports")?;
+            let runner: js::Object = builtin.call(("node:test",))?;
+            let run: js::Function = runner.get("_run")?;
+            let paths = js::Array::new(ctx.clone())?;
+            for (index, file) in files.iter().enumerate() {
+                paths.set(index, file.as_str())?;
+            }
+            // `_run` is async: the returned promise is the run, and `settle` below pumps the
+            // microtasks and timers it waits on.
+            let _: js::Value = run.call((paths,))?;
+            Ok(())
+        });
+        if let Err(error) = invoked {
+            return Err(Failure::Engine(format!(
+                "test runner failed to start: {error}"
+            )));
+        }
+        if self.exit.requested.get() {
+            return Ok(self.finish(None));
         }
 
         self.settle(None)
@@ -998,7 +1089,26 @@ impl Isolate {
                 break;
             }
 
+            if let Some(diagnostics) = &mut self.diagnostics {
+                if diagnostics.wants_heap() {
+                    // The allocator's view, not the accounted-object one: `memory_used_size` omits
+                    // fast-array storage, so a 40 MB array of numbers barely moves it. This is the
+                    // same walk m4-plan §8.4 removed from the loop, so it only runs under
+                    // --trace-gc.
+                    diagnostics.sample_heap(self.engine.heap_statistics().malloc_size);
+                }
+            }
+            let turn_started = Instant::now();
             let turn = self.driver.borrow_mut().next(Instant::now());
+            // Named before the match moves the turn; the vocabulary is `ln_sched::Turn`'s.
+            let phase = match &turn {
+                Turn::Timer(_) => "timer",
+                Turn::Immediate(_) => "immediate",
+                Turn::Completion(_) => "completion",
+                Turn::BeforeExit => "beforeExit",
+                Turn::Exit => "exit",
+                Turn::Wait(_) => "wait",
+            };
             match turn {
                 Turn::Timer(id) => {
                     let fire = self.driver.borrow_mut().fire_timer(id, Instant::now());
@@ -1055,13 +1165,23 @@ impl Isolate {
                         });
                     self.checkpoint_all()?;
                 }
-                Turn::Exit => break,
+                Turn::Exit => {
+                    // Recorded before the break so the trace's last event is the exit turn; the
+                    // timing line after the match never runs for it.
+                    if let Some(diagnostics) = &mut self.diagnostics {
+                        diagnostics.turn("exit", turn_started.elapsed());
+                    }
+                    break;
+                }
                 Turn::Wait(timeout) => {
                     let completions = self.reactor.wait(timeout);
                     for completion in completions {
                         self.driver.borrow_mut().push_completion(completion);
                     }
                 }
+            }
+            if let Some(diagnostics) = &mut self.diagnostics {
+                diagnostics.turn(phase, turn_started.elapsed());
             }
         }
         Ok(())
@@ -1126,6 +1246,7 @@ impl Isolate {
         }
 
         if let Some(done) = self.ops.take(id) {
+            let op_started = self.ops.take_start(id);
             self.driver.borrow_mut().unref_external();
             if self.should_stop() {
                 // process.exit/fatal: drop the parked result without invoking JS (O4).
@@ -1139,6 +1260,10 @@ impl Isolate {
                     run_op_done(&engine, &exit, &bridge, done, s)
                 });
             self.checkpoint_all()?;
+            if let (Some((name, started)), Some(diagnostics)) = (op_started, &mut self.diagnostics)
+            {
+                diagnostics.op(name, started.elapsed());
+            }
             return Ok(());
         }
 
@@ -1322,6 +1447,10 @@ impl Isolate {
         }
         self.bridge.borrow_mut().ticks.clear();
         self.bridge.borrow_mut().rejections.clear();
+        // The loop is over, so the trace can be closed and the timing rows printed (m7-plan §4.5).
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.finish();
+        }
 
         let suppress = self.exit.requested.get()
             || self.state.fatal.get()

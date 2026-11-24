@@ -41,6 +41,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", js_root.display());
     println!("cargo:rerun-if-env-changed=ONDE_NO_MINIFY");
     println!("cargo:rerun-if-env-changed=ONDE_MINIFY_VERBOSE");
+    println!("cargo:rerun-if-env-changed=ONDE_SNAPSHOT_VERBOSE");
 
     let minify = std::env::var_os("ONDE_NO_MINIFY").is_none();
     let verbose = std::env::var_os("ONDE_MINIFY_VERBOSE").is_some();
@@ -83,6 +84,55 @@ fn main() {
             before,
             after,
             after.saturating_mul(100) / before.max(1)
+        );
+    }
+
+    // WP2: the bootstrap snapshot (docs/m7-plan.md §3.1, §4.3). The minified `bootstrap.js` was
+    // just written next to this one; compiling it here means the release binary can skip its parse
+    // at boot. The bytecode is only valid for the engine that produced it, so the envelope records
+    // `BC_VERSION`, byte order and the atom table, and the runtime refuses anything else before
+    // `JS_ReadObject` sees a byte.
+    write_bootstrap_snapshot(&out_root);
+}
+
+/// Compile the just-written `bootstrap.js` into `bootstrap.bc`, the snapshot the release build
+/// embeds instead of the source.
+///
+/// This is the one place the build depends on the engine: the same vendored quickjs-ng compiles the
+/// script here and reads it in the binary, so the stamp check only catches a stale `OUT_DIR`, never
+/// a mismatch between two engines. It costs a second engine build in the host triple (m7-plan §9,
+/// R12) and no runtime dependency.
+fn write_bootstrap_snapshot(out_root: &Path) {
+    let verbose = std::env::var_os("ONDE_SNAPSHOT_VERBOSE").is_some();
+    let source_path = out_root.join("bootstrap.js");
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
+    let stamp = ln_engine::engine_stamp_parsed();
+    let options = ln_engine::compile::Options {
+        // The name is what stack frames inside the bootstrap show; `eval_global` used the same one,
+        // so a snapshot and a source boot are indistinguishable in a trace.
+        name: "<lite:bootstrap>".to_owned(),
+        // Keep the source in the bytecode: an internal error with no line in `bootstrap.js` is not
+        // a diagnostic, and the bootstrap is the one script users cannot read in their own tree.
+        strip_source: false,
+        endian: stamp.endian,
+    };
+    let bytecode = ln_engine::compile::script(&source, &options).unwrap_or_else(|error| {
+        panic!(
+            "cannot compile the bootstrap snapshot (js/bootstrap.js must be valid script):
+{}",
+            error.body()
+        )
+    });
+    let blob = ln_payload::snapshot::encode(&bytecode, &stamp);
+    let target = out_root.join("bootstrap.bc");
+    fs::write(&target, &blob).unwrap_or_else(|error| panic!("write {}: {error}", target.display()));
+    if verbose {
+        println!(
+            "cargo:warning=bootstrap snapshot: {} bytes of source -> {} bytes of bytecode ({} bytes with header)",
+            source.len(),
+            bytecode.len(),
+            blob.len()
         );
     }
 }

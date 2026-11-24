@@ -1,0 +1,3 @@
+exit 1
+oom true
+exit:0

@@ -17,9 +17,10 @@
 //!
 //! # Unsafe
 //!
-//! The safe rquickjs API covers everything except the patch's job and promise-tag entry points,
-//! which are declared in [`ffi`] and wrapped here. Every `unsafe` block names the invariant it
-//! relies on; the queue's ownership rules live in [`jobs`].
+//! The safe rquickjs API covers everything except the patch's job and promise-tag entry points
+//! (declared in [`ffi`] and wrapped here) and the compile-only bytecode calls, which are
+//! committed bindings used directly. Every `unsafe` block names the invariant it relies on; the
+//! queue's ownership rules live in [`jobs`].
 
 use std::cell::Cell;
 use std::fmt;
@@ -82,6 +83,32 @@ pub enum PumpOutcome {
     Idle,
     /// The job threw. The engine exception was taken and cleared.
     Threw { tag: i64, error: CaughtError },
+}
+
+/// A snapshot of the engine's heap accounting, from `JS_ComputeMemoryUsage`.
+///
+/// QuickJS has one heap: there is no young/old generation split, so these are the only numbers a
+/// memory report can be built from (m7-plan §3.3). The field names are the engine's own so a
+/// reader can compare them with `quickjs.h`; sizes are bytes and counts are blocks. `malloc_limit`
+/// follows the engine's convention: `0` means unlimited.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeapStatistics {
+    /// Bytes currently allocated through the engine's allocator.
+    pub malloc_size: u64,
+    /// The hard cap set by [`Engine::set_memory_limit`], or `0` when unlimited.
+    pub malloc_limit: u64,
+    /// Bytes attributable to live objects, strings, atoms and shapes.
+    pub memory_used_size: u64,
+    /// Allocations currently outstanding.
+    pub malloc_count: u64,
+    /// Accounted blocks (objects, strings, properties, shapes, ...).
+    pub memory_used_count: u64,
+    /// Bytes held by the interned atom table.
+    pub atom_size: u64,
+    /// Bytes held by strings.
+    pub str_size: u64,
+    /// Bytes held by objects.
+    pub obj_size: u64,
 }
 
 /// A caught JavaScript exception, converted to owned data at the engine boundary.
@@ -429,6 +456,71 @@ impl Engine {
         })
     }
 
+    /// Evaluate a **global script** that arrives as QuickJS bytecode.
+    ///
+    /// The read side of [`compile::script`], and the boot path for the embedded bootstrap
+    /// snapshot (m7-plan §3.1). The result has the same meaning as [`Engine::eval_global`]'s: the
+    /// script's completion value, converted with JavaScript's `ToString`.
+    ///
+    /// `name` must be the name the script was compiled with. QuickJS bakes it into the bytecode,
+    /// so it is what stack traces show; the argument is used for this method's own diagnostics
+    /// (an empty stream) rather than to rename the stored script.
+    ///
+    /// # Input requirements
+    ///
+    /// `JS_ReadObject` bounds-checks the stream but otherwise trusts it: a valid header with
+    /// corrupt payload can still describe a function whose execution is undefined behaviour.
+    /// The caller therefore checks the snapshot header (magic, `BC_VERSION`, endianness, atom
+    /// hash) before calling. An empty slice is rejected here, since it is the one malformed input
+    /// that can be ruled out without knowing the format.
+    pub fn eval_script_bytecode(
+        &self,
+        bytes: &[u8],
+        name: &str,
+    ) -> Result<Completion, CaughtError> {
+        if bytes.is_empty() {
+            return Err(internal_error(format!(
+                "script bytecode for {name:?} is empty"
+            )));
+        }
+
+        self.with_ctx(|ctx| {
+            let raw = ctx.as_raw().as_ptr();
+            // SAFETY: `bytes` outlives the call, and the engine checks every read against
+            // `buf_len` (a short stream is a `SyntaxError`, not an out-of-bounds read). The
+            // remaining precondition - that a well-formed stream came from this engine build -
+            // belongs to the caller, which is where the snapshot header is checked.
+            let object = unsafe {
+                js::qjs::JS_ReadObject(
+                    raw,
+                    bytes.as_ptr(),
+                    bytes.len() as _,
+                    js::qjs::JS_READ_OBJ_BYTECODE as i32,
+                )
+            };
+            if unsafe { js::qjs::JS_IsException(object) } {
+                return Err(caught_from_error(&ctx, js::Error::Exception));
+            }
+
+            // SAFETY: `object` is owned and comes from this context. `JS_EvalFunction` takes
+            // ownership of it on every path (it frees a module, calls and frees a closure, or
+            // frees and throws for a non-function), so it must not be wrapped in a `Value` and
+            // must not be freed here - either would free it twice.
+            let result = unsafe { js::qjs::JS_EvalFunction(raw, object) };
+            if unsafe { js::qjs::JS_IsException(result) } {
+                return Err(caught_from_error(&ctx, js::Error::Exception));
+            }
+
+            // SAFETY: `result` is a fresh owned value from `JS_EvalFunction` in this context.
+            let value = unsafe { js::Value::from_raw(ctx.clone(), result) };
+            if value.is_undefined() {
+                Ok(Completion::Undefined)
+            } else {
+                Ok(Completion::Value(stringify(&ctx, value)))
+            }
+        })
+    }
+
     /// Compile an ES module without evaluating it (`lite --check`).
     pub fn compile_module(&self, source: &str, name: &str) -> Result<(), CaughtError> {
         self.with_ctx(|ctx| {
@@ -462,6 +554,50 @@ impl Engine {
     /// Current engine heap usage in bytes (the basis of `process.memoryUsage().heapUsed`).
     pub fn memory_usage(&self) -> usize {
         self.runtime.memory_usage().memory_used_size as usize
+    }
+
+    /// Cap this runtime's heap at `bytes`, or remove the cap with `0` (`JS_SetMemoryLimit`).
+    ///
+    /// QuickJS enforces one limit for the whole runtime (there are no generations), and it is
+    /// re-read on every allocation, so the same call works before boot and on a live engine. An
+    /// allocation that would cross the limit fails with the engine's `InternalError: out of
+    /// memory`; making that error fatal and uncatchable is the runtime's policy, not the
+    /// engine's (m7-plan §3.3).
+    pub fn set_memory_limit(&self, bytes: u64) {
+        self.runtime
+            .set_memory_limit(usize::try_from(bytes).unwrap_or(usize::MAX));
+    }
+
+    /// The engine's own heap accounting, for `process.memoryUsage` and `--trace-gc`.
+    pub fn heap_statistics(&self) -> HeapStatistics {
+        let usage = self.runtime.memory_usage();
+        // The engine reports `size_t` counts as `int64_t`; they cannot be negative (a heap over
+        // `i64::MAX` bytes is not addressable). `malloc_limit` keeps the engine's 0 = unlimited.
+        HeapStatistics {
+            malloc_size: usage.malloc_size as u64,
+            malloc_limit: usage.malloc_limit as u64,
+            memory_used_size: usage.memory_used_size as u64,
+            malloc_count: usage.malloc_count as u64,
+            memory_used_count: usage.memory_used_count as u64,
+            atom_size: usage.atom_size as u64,
+            str_size: usage.str_size as u64,
+            obj_size: usage.obj_size as u64,
+        }
+    }
+
+    /// Collect cyclic garbage now (`JS_RunGC`). Most values are refcounted and need no scan.
+    pub fn gc(&self) {
+        self.runtime.run_gc();
+    }
+
+    /// Set the allocation threshold that triggers a collection (`JS_SetGCThreshold`).
+    ///
+    /// This is a test hook rather than a tuning knob: the engine raises the threshold to 150% of
+    /// the live heap after the next collection, so a value here only decides *when* the first
+    /// forced collection happens (m7-plan §3.3).
+    pub fn set_gc_threshold(&self, bytes: u64) {
+        self.runtime
+            .set_gc_threshold(usize::try_from(bytes).unwrap_or(usize::MAX));
     }
 
     /// Install the engine's promise hook: the only source of `async_hooks` identity.
@@ -832,6 +968,20 @@ pub fn meta_resolve_function<'js>(ctx: &Ctx<'js>, base: &str) -> js::Result<js::
             helper.call((specifier, base.clone()))
         },
     )
+}
+
+/// An engine error that has no JavaScript value behind it (a malformed host input, a failed
+/// compile-time engine). It is shaped like `CaughtError` so every failure crosses the boundary the
+/// same way, but `is_error` is false because nothing was thrown.
+pub(crate) fn internal_error(message: String) -> CaughtError {
+    CaughtError {
+        name: "InternalError".to_owned(),
+        display: message.clone(),
+        message,
+        stack: None,
+        is_error: false,
+        code: None,
+    }
 }
 
 /// Convert a `js::Error` into owned data, consuming a pending exception when there is one.

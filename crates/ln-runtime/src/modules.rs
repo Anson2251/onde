@@ -54,6 +54,7 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "tty" => bundled_js!("lib/tty.js"),
         "perf_hooks" => bundled_js!("lib/perf_hooks.js"),
         "string_decoder" => bundled_js!("lib/string_decoder.js"),
+        "test" => bundled_js!("lib/test.js"),
         "buffer" => bundled_js!("lib/buffer.js"),
         "constants" => bundled_js!("lib/constants.js"),
         "crypto" => bundled_js!("lib/crypto.js"),

@@ -491,16 +491,33 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 
 ## M7 — Performance and diagnostics (4 w)
 
+Working contract: [m7-plan.md](m7-plan.md) (accepted 2026-11-24). It fixes the shape of the
+snapshot — a compiled *global script*, because a context cannot be serialized (§3.1) — keeps the
+stdlib modules on source (§3.2), re-specifies M4's half-open bound against its own measured
+raw-TCP floor (§6.1), and defers the 0.18 upgrade with dynamic `import()` to M8 (§3.6).
+
+**Closed 2026-11-24.** Five of six numeric criteria met: cold start 12.34/18.76 ms (delta 6.42),
+`fs.readFile` 1.17x, TCP echo 0.96x, binary 5.28 MB, and the diagnostics and `node:test` gates
+green. One remains, measured rather than assumed: HTTP keep-alive is 0.45x of Node (one isolate is the
+ceiling, R9). The half-open delta fell from 6 MB to 3 MB (45 MB against a 41–42 MB raw floor) once lazy
+per-connection sessions landed, and the 64 KiB-per-idle-socket read buffer was the other half of
+that story: together, 156 MB to 45 MB. The 2 MB bound is still missed and §12.3 of the plan says
+what the remaining 1.5 KB per connection is. Full account in [m7-plan §12](m7-plan.md#12-outcome-2026-11-24).
+
 **Build**
 
 - Startup snapshot: compile `js/bootstrap.js` + stdlib to bytecode at build time
   (`JS_WriteObject`/`JS_ReadObject`), load at boot; lazy-compile optional modules.
-- Fast paths: cached atoms, pre-sized arrays, avoid `String` allocs in `readFile`, zero-copy
-  `Buffer` over `Vec<u8>`, op dispatch table instead of name lookup.
+- Fast paths: allocation reduction on the hot ops, lazy per-connection session state, one copy
+  out of `fs.readFile` if the ratio needs it. The op dispatch is already an object of named
+  functions rather than a name lookup, so "op dispatch table" is not work — see
+  [m7-plan §3.7](m7-plan.md#37-the-fast-paths-are-chosen-by-measurement-except-one).
 - **Stdlib consolidation and Tier 1 codecs (M7 task).** Run phases A0–A5 and B1–B2 of
   [stdlib-consolidation-plan.md](stdlib-consolidation-plan.md): remove the duplicated JS error,
   byte, `fs`-option and loader-shim code, then move base64/hex and the `StringDecoder` boundary
   into the host behind one JS seam. Exit: the plan's §11 checklist; no codec regression.
+  **Landed 2026-11-24** (`5450b0d`): the §11 checklist is green and the codecs are 3.0x–18.8x of
+  Node. M7 keeps it as a regression gate rather than a work item.
 - Memory: `JS_SetMemoryLimit` + `--max-old-space-size` equivalent, `process.memoryUsage`,
   GC pressure heuristics, finalizer-based fd/lifetime audits in debug builds.
 - Diagnostics: `--cpu-prof`-lite (sampling profiler is out of scope; do **timing breakdown** by
@@ -514,7 +531,8 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 **Exit criteria**
 
 - Startup: < 15 ms hello-world, < 25 ms with `http` imported (p50 over 100 runs, cold cache).
-- `fs.readFile` 10 MB within 1.2x of Node; TCP echo within 1.5x; HTTP within 1.5x.
+- `fs.readFile` 10 MB within 1.2x of Node; TCP echo within 1.5x; HTTP within 1.5x
+  (the HTTP ratio is at risk in one isolate — [m7-plan §9](m7-plan.md#9-risks), R9).
 - Stdlib consolidation checklist green: one `invalidArgType`, no loader shims, base64/hex
   encoders ≤2 µs/1 KB and decoders ≤3.5 µs/1 KB; `StringDecoder.write` is one host call per chunk.
 - RSS < 25 MB for the hello server; no growth over 1h soak.

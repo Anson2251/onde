@@ -491,9 +491,10 @@ pub(crate) fn install<'js>(
                     memory_requested.set(true);
                     let used = memory.get();
                     let usage = js::Object::new(ctx.clone())?;
-                    // RSS is the engine heap until M7 adds an OS-level measurement; the field exists
-                    // so code reading `memoryUsage()` keeps working.
-                    usage.set("rss", used)?;
+                    // `rss` is the OS's view (M7, D21); `heapTotal`/`heapUsed` stay on the sample
+                    // taken at the top of a turn, because walking the QuickJS heap inside the
+                    // callback is the cost m4-plan §8.4 removed from the loop.
+                    usage.set("rss", rss_bytes())?;
                     usage.set("heapTotal", used)?;
                     usage.set("heapUsed", used)?;
                     usage.set("external", 0)?;
@@ -917,6 +918,66 @@ fn total_memory() -> u64 {
 
 #[cfg(not(unix))]
 fn total_memory() -> u64 {
+    0
+}
+
+/// Current resident set size in bytes, which is what `process.memoryUsage().rss` means.
+///
+/// Peak RSS is not a substitute: `getrusage`'s `ru_maxrss` never falls, so a soak test could not
+/// show memory being released, and Node's field is current by contract (D21).
+#[cfg(target_os = "macos")]
+mod mach {
+    // `libc` deprecates `mach_task_self` in favour of the `mach2` crate. One call is not worth a
+    // dependency, and the symbol is part of libSystem; declaring it keeps the API used here to the
+    // one function that has no replacement in `libc` itself.
+    extern "C" {
+        pub(crate) fn mach_task_self() -> u32;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rss_bytes() -> u64 {
+    // SAFETY: `mach_task_self` and `task_info` are pure queries. `task_info` writes the struct whole
+    // when it returns 0, and the count is the struct's `natural_t` length (the mach convention), so
+    // a partially written value cannot be read.
+    unsafe {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::uninit();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        let result = libc::task_info(
+            mach::mach_task_self(),
+            libc::MACH_TASK_BASIC_INFO,
+            info.as_mut_ptr().cast(),
+            &mut count,
+        );
+        if result == 0 {
+            info.assume_init().resident_size
+        } else {
+            0
+        }
+    }
+}
+
+/// Linux: `/proc/self/statm` is `size resident shared text lib data dt`, in pages; resident is the
+/// second field.
+#[cfg(target_os = "linux")]
+fn rss_bytes() -> u64 {
+    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let resident = statm
+        .split_whitespace()
+        .nth(1)
+        .and_then(|pages| pages.parse::<u64>().ok())
+        .unwrap_or(0);
+    // SAFETY: `sysconf` is a pure query with no pointer arguments.
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return 0;
+    }
+    resident.saturating_mul(page_size as u64)
+}
+
+/// Other unixes have no cheap current-RSS read here; 0 is honest and the field exists (D21).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rss_bytes() -> u64 {
     0
 }
 

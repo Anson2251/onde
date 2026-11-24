@@ -48,11 +48,11 @@ pub(super) fn install<'js>(
 
                 match name.as_str() {
                     "spawn" => {
-                        let (entry, worker_data, argv, transfers) =
+                        let (entry, worker_data, argv, transfers, memory_limit) =
                             spawn_arguments(&ctx, &arguments)
                                 .map_err(|error| throw_node_error_value(&ctx, &error))?;
                         let thread_id = bridge
-                            .spawn(id, entry, worker_data, argv)
+                            .spawn(id, entry, worker_data, argv, memory_limit)
                             .map_err(|error| throw_node_error_value(&ctx, &error))?;
                         detach_all(&ctx, transfers)?;
                         Ok(js::Value::new_number(ctx.clone(), f64::from(thread_id)))
@@ -150,12 +150,13 @@ fn install_role_info<'js>(
     Ok(())
 }
 
-/// One parsed `spawn`: entry, serialized workerData, argv override, transfer list.
+/// One parsed `spawn`: entry, serialized workerData, argv override, transfer list, memory limit.
 type SpawnArguments<'js> = (
     WorkerEntry,
     Option<Serialized>,
     Option<Vec<String>>,
     js::Value<'js>,
+    Option<u64>,
 );
 
 /// Parse `spawn(filename, evalSource, workerData, argv, transferList)`.
@@ -206,7 +207,31 @@ fn spawn_arguments<'js>(
         .filter(|value| !value.is_undefined() && !value.is_null())
         .cloned()
         .unwrap_or_else(|| js::Value::new_undefined(ctx.clone()));
-    Ok((entry, worker_data, argv, transfers))
+
+    // `resourceLimits.maxOldGenerationSizeMb`: a positive integer number of mebibytes. A worker's
+    // heap is its own runtime's, so this is passed per spawn and applied before its bootstrap
+    // (m7-plan §3.3). Values Node accepts and we cannot honour (`stackSizeMb`) never reach here.
+    let memory_limit = match args.get(5) {
+        Some(value) if !value.is_undefined() && !value.is_null() => {
+            let mb = value.as_number().ok_or_else(|| {
+                NodeError::invalid_arg_type(
+                    "options.resourceLimits",
+                    "a number",
+                    crate::args::type_name(value),
+                )
+            })?;
+            if !(mb.is_finite() && mb > 0.0) {
+                return Err(NodeError::invalid_arg_value(
+                    "options.resourceLimits.maxOldGenerationSizeMb",
+                    &format!("{mb}"),
+                    "a positive number of megabytes",
+                ));
+            }
+            Some((mb * 1024.0 * 1024.0) as u64)
+        }
+        _ => None,
+    };
+    Ok((entry, worker_data, argv, transfers, memory_limit))
 }
 
 fn optional_string<'js>(

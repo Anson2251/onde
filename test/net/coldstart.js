@@ -1,24 +1,62 @@
 "use strict";
 
-// Cold-start measurement for the M4 exit criterion: 25 release runs of `lite -e <expr>`, median
-// wall time. Spawning the process is part of the measurement (that is what "cold start" means),
-// and each run is independent: no warm process is reused.
+// Cold-start measurement for the M7 exit criteria: 25 release runs of `lite -e <expr>`, median wall
+// time. Spawning the process is part of the measurement (that is what "cold start" means), and each
+// run is independent: no warm process is reused.
 //
 //   node test/net/coldstart.js <lite> [runs]
 //   NET_BENCH_SOFT=1 node test/net/coldstart.js <lite>   # thresholds informational
+//   NET_BENCH_FORCE=1 node test/net/coldstart.js <lite>  # measure even in low-power mode
 //
-// Thresholds: `1+1` median <= 14 ms, `require("http")` median <= 25 ms.
+// Thresholds: `1+1` median <= 14 ms, `require("http")` median <= 25 ms, and the difference between
+// them (what importing the http stack costs) <= 8 ms.
+//
+// Since M7 the harness records the machine state with every number. macOS `lowpowermode` caps CPU
+// frequency and roughly doubles the reading (m7-plan §2: 12.2/19.0 ms on AC against 19.1/30.8 ms
+// under low-power), so a run in that mode reports and skips instead of failing a gate it cannot
+// honour. The `http − eval` delta is the second, machine-independent number: it is a property of
+// the runtime's module compile, not of the clock.
 
 const { spawnSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
 
 const lite = process.argv[2];
 const runs = Number(process.argv[3] || 25);
 const soft = process.env.NET_BENCH_SOFT === "1";
+const force = process.env.NET_BENCH_FORCE === "1";
 
 const cases = [
   { expr: "1+1", limit: 14 },
   { expr: 'require("http")', limit: 25 },
 ];
+const DELTA_LIMIT = 8;
+
+function powerMode() {
+  if (process.platform === "darwin") {
+    const probe = spawnSync("pmset", ["-g"], { encoding: "utf8" });
+    const match = /lowpowermode\s+([01])/.exec(probe.stdout || "");
+    if (!match) return "unknown";
+    return match[1] === "1" ? "low" : "off";
+  }
+  try {
+    const governor = fs.readFileSync("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "utf8").trim();
+    return governor === "powersave" ? "low" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const mode = powerMode();
+const load = os.loadavg()[0].toFixed(2);
+const throttled = mode === "low" && !force;
+console.log(`MACHINE lowpowermode=${mode} load=${load}${force ? " forced=1" : ""}`);
+if (throttled) {
+  console.log(
+    "SKIP: low-power mode is on; every number would be the power policy's. " +
+      "Set NET_BENCH_FORCE=1 to measure anyway, or record the run on the reference machine.",
+  );
+}
 
 function measure(expr) {
   // Two discarded warm-up spawns page the binary in, so the median measures runtime startup rather
@@ -50,9 +88,16 @@ function measure(expr) {
   };
 }
 
+if (throttled && !soft) {
+  console.log(`SUMMARY: skipped (lowpowermode=${mode}); thresholds not evaluated`);
+  process.exit(0);
+}
+
 let failures = 0;
+const medians = {};
 for (const { expr, limit } of cases) {
   const stats = measure(expr);
+  medians[expr] = stats.median;
   const met = stats.median <= limit;
   if (!met) failures += 1;
   console.log(
@@ -61,6 +106,15 @@ for (const { expr, limit } of cases) {
       `limit_ms=${limit} ${met ? "met" : "missed"}${soft ? " (soft)" : ""}`,
   );
 }
+
+// The import cost, which is what a stdlib snapshot can move (m7-plan §4.3, §8).
+const delta = medians['require("http")'] - medians["1+1"];
+const deltaMet = delta <= DELTA_LIMIT;
+if (!deltaMet) failures += 1;
+console.log(
+  `RESULT expr="http-eval-delta" median_ms=${delta.toFixed(2)} limit_ms=${DELTA_LIMIT} ` +
+    `${deltaMet ? "met" : "missed"}${soft ? " (soft)" : ""}`,
+);
 
 if (failures !== 0 && !soft) {
   process.exit(1);

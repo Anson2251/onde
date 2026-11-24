@@ -6,13 +6,14 @@
 //! `ln-runtime`.
 
 use std::env;
+use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
 
 use clap::Parser;
-use ln_runtime::{Budget, Config, Failure, Isolate};
+use ln_runtime::{Budget, Config, DiagnosticsConfig, Failure, Isolate};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -55,6 +56,30 @@ struct Cli {
     #[arg(long = "async-stack-traces")]
     async_stack_traces: bool,
 
+    /// Cap the engine heap in MB (QuickJS has one heap: Node's old/new split does not exist, D67)
+    #[arg(long = "max-old-space-size", value_name = "MB")]
+    max_old_space_size: Option<u64>,
+
+    /// Write a Chrome trace (turns, phases, ops) to FILE
+    #[arg(long = "trace-events", value_name = "FILE")]
+    trace_events: Option<PathBuf>,
+
+    /// Report sampled collections in --trace-events (they are sampled, see D69)
+    #[arg(long = "trace-gc")]
+    trace_gc: bool,
+
+    /// Print per-phase and per-op time at exit
+    #[arg(long = "timing")]
+    timing: bool,
+
+    /// `--trace-events` buffer before a flush, in MiB
+    #[arg(long = "trace-buffer-mb", value_name = "MB", default_value_t = 4)]
+    trace_buffer_mb: usize,
+
+    /// Run test files instead of a script (`node:test`; discovers `*.test.js`)
+    #[arg(long = "test")]
+    test: bool,
+
     /// Arguments exposed through process.argv after the script name
     #[arg(
         value_name = "ARGS",
@@ -77,6 +102,23 @@ impl Cli {
     fn io_threads(&self) -> usize {
         self.io_threads.clamp(1, 1024) as usize
     }
+
+    /// The heap cap in bytes. `saturating_mul` because a silly `--max-old-space-size` is a silly
+    /// cap, not a panic in argument parsing.
+    fn max_old_space_size(&self) -> Option<u64> {
+        self.max_old_space_size
+            .map(|mb| mb.saturating_mul(1024 * 1024))
+    }
+
+    /// What the three diagnostic flags asked for; all-empty when none was passed.
+    fn diagnostics(&self) -> DiagnosticsConfig {
+        DiagnosticsConfig {
+            trace_events: self.trace_events.clone(),
+            trace_buffer_mb: self.trace_buffer_mb.clamp(1, 512),
+            timing: self.timing,
+            trace_gc: self.trace_gc,
+        }
+    }
 }
 
 fn main() {
@@ -92,12 +134,17 @@ fn main() {
 /// positional, which is exactly Node's behaviour.
 fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     /// Options that consume the next token, so the token after them is not the script path.
-    const VALUED: [&str; 5] = [
+    /// Every value-taking flag must be listed: a missing one makes its value look like the script,
+    /// and the terminator is inserted before it (which is how `--trace-events FILE` first failed).
+    const VALUED: [&str; 8] = [
         "-e",
         "--eval",
         "--max-microtasks",
         "--microtask-timeout",
         "--io-threads",
+        "--max-old-space-size",
+        "--trace-events",
+        "--trace-buffer-mb",
     ];
 
     let mut argv = argv;
@@ -133,6 +180,20 @@ fn real_main() -> i32 {
     let budget = cli.budget();
     let io_threads = cli.io_threads();
     let async_stack_traces = cli.async_stack_traces;
+    let max_old_space_size = cli.max_old_space_size();
+    let diagnostics = cli.diagnostics();
+
+    if cli.test {
+        return run_tests(
+            &cli,
+            &exe,
+            budget,
+            io_threads,
+            async_stack_traces,
+            max_old_space_size,
+            diagnostics.clone(),
+        );
+    }
 
     if let Some(expression) = cli.eval {
         // `node -e EXPR a b` exposes `a b` in `process.argv`; a positional after `-e` is an
@@ -142,7 +203,15 @@ fn real_main() -> i32 {
             argv.push(file.display().to_string());
         }
         argv.extend(cli.args);
-        return run_eval(&expression, argv, budget, io_threads, async_stack_traces);
+        return run_eval(
+            &expression,
+            argv,
+            budget,
+            io_threads,
+            async_stack_traces,
+            max_old_space_size,
+            diagnostics.clone(),
+        );
     }
 
     let Some(file) = cli.file else {
@@ -171,6 +240,8 @@ fn real_main() -> i32 {
     config.budget = budget;
     config.io_threads = io_threads;
     config.async_stack_traces = async_stack_traces;
+    config.max_old_space_size = max_old_space_size;
+    config.diagnostics = diagnostics;
     let mut isolate = match Isolate::new(config) {
         Ok(isolate) => isolate,
         Err(failure) => return report_failure(failure),
@@ -188,17 +259,164 @@ fn real_main() -> i32 {
     }
 }
 
+/// `lite --test [FILES…]`: discover, then hand the list to the runtime's JavaScript runner.
+///
+/// The CLI owns discovery because it is argument parsing (m7-plan §4.6); the runner, the reporter
+/// and the exit-code decision live in `js/lib/test.js`. The positional `FILE` and `ARGS` fields
+/// already carry every path: with the `--` terminator in place, the first path lands in `file` and
+/// the rest in `args`, so `--test` does not need its own `Vec<PathBuf>` and the CLI keeps its
+/// single-script shape.
+fn run_tests(
+    cli: &Cli,
+    exe: &str,
+    budget: Budget,
+    io_threads: usize,
+    async_stack_traces: bool,
+    max_old_space_size: Option<u64>,
+    diagnostics: DiagnosticsConfig,
+) -> i32 {
+    if cli.eval.is_some() {
+        eprintln!("lite: --test cannot be combined with -e EXPR");
+        return 1;
+    }
+
+    let mut requested: Vec<PathBuf> = Vec::new();
+    if let Some(file) = &cli.file {
+        requested.push(file.clone());
+    }
+    requested.extend(cli.args.iter().map(PathBuf::from));
+
+    let files = match discover_tests(&requested) {
+        Ok(files) => files,
+        Err(message) => {
+            eprintln!("lite: {message}");
+            return 1;
+        }
+    };
+    if files.is_empty() {
+        // Node prints "Could not find any test files matching pattern" and exits 1; the wording
+        // is ours, the status is the same contract.
+        eprintln!("lite: no test files found");
+        return 1;
+    }
+
+    let paths: Vec<String> = files
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    // Node runs each test file in its own process with `process.argv = [exec, file]`; one isolate
+    // runs all of them here, so `argv[1..]` is the discovered list in execution order.
+    let mut argv = vec![exe.to_owned()];
+    argv.extend(paths.iter().cloned());
+
+    let mut config = Config::new(argv);
+    config.budget = budget;
+    config.io_threads = io_threads;
+    config.async_stack_traces = async_stack_traces;
+    config.max_old_space_size = max_old_space_size;
+    config.diagnostics = diagnostics;
+    config.test_files = Some(paths);
+
+    let mut isolate = match Isolate::new(config) {
+        Ok(isolate) => isolate,
+        Err(failure) => return report_failure(failure),
+    };
+    match isolate.run_tests() {
+        Ok(outcome) => outcome.exit_code,
+        Err(failure) => report_failure(failure),
+    }
+}
+
+/// Resolve the paths `lite --test` should run, sorted and deduplicated.
+///
+/// Two discovery rules, both from the plan's table: a named file is run as named and a named
+/// directory is searched for `*.test.js`; with no path at all every `.js` under `test/` is a test
+/// file, which is Node's `test/**/*.js` rule. Sorting keeps the transcript deterministic (the
+/// runner is sequential, so discovery order is execution order).
+fn discover_tests(requested: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    if requested.is_empty() {
+        if Path::new("test").is_dir() {
+            collect_test_files(Path::new("test"), true, &mut files)?;
+        }
+    } else {
+        for path in requested {
+            let metadata = fs::metadata(path)
+                .map_err(|error| format!("cannot find test path '{}': {error}", path.display()))?;
+            if metadata.is_dir() {
+                collect_test_files(path, false, &mut files)?;
+            } else {
+                files.push(path.clone());
+            }
+        }
+    }
+
+    // Canonical paths are what the CJS loader and stack traces use; dedupe after resolving so
+    // `./a.test.js` and `a.test.js` run once.
+    for path in &mut files {
+        if let Ok(canonical) = fs::canonicalize(&*path) {
+            *path = canonical;
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+/// Recursively collect `.js` files under `directory`.
+///
+/// `every_js` is the no-argument rule (`test/**/*.js`); otherwise only `*.test.js` is collected.
+/// Symlinks are not followed, so a link cycle cannot make discovery loop.
+fn collect_test_files(
+    directory: &Path,
+    every_js: bool,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("cannot read '{}': {error}", directory.display()))?;
+    let mut entries = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read '{}': {error}", directory.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot stat '{}': {error}", path.display()))?;
+        if file_type.is_dir() {
+            collect_test_files(&path, every_js, files)?;
+        } else if file_type.is_file()
+            && path.extension().is_some_and(|extension| extension == "js")
+            && (every_js || is_test_file_name(&path))
+        {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_test_file_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".test.js"))
+}
+
 fn run_eval(
     expression: &str,
     argv: Vec<String>,
     budget: Budget,
     io_threads: usize,
     async_stack_traces: bool,
+    max_old_space_size: Option<u64>,
+    diagnostics: DiagnosticsConfig,
 ) -> i32 {
     let mut config = Config::new(argv);
     config.budget = budget;
     config.io_threads = io_threads;
     config.async_stack_traces = async_stack_traces;
+    config.max_old_space_size = max_old_space_size;
+    config.diagnostics = diagnostics;
     // Node's `-e` evaluates as CommonJS with `require` in scope; keep the completion-value
     // printing, which is onde's documented convenience.
     config.expose_require = true;

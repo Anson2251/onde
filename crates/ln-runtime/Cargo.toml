@@ -39,6 +39,10 @@ serde_json = "1"
 # Empty by default: `lite` needs no payload decoder, and the SDK's archive enables what it ships
 # (see `ln-embed`'s `zstd-payload`).
 default = []
+# Embeds the bootstrap source in a release build as well as the snapshot, so the two boot paths can
+# be A/B measured in one optimized binary (m7-plan §4.3). Never on in a shipped build: it is ~55 KiB
+# of source that only exists to be compared against (D72).
+bootstrap-source = []
 zstd = ["dep:zstd"]
 
 [target.'cfg(unix)'.dependencies]
@@ -46,6 +50,11 @@ zstd = ["dep:zstd"]
 libc = "0.2"
 
 [build-dependencies]
+# WP2: the bootstrap is compiled to bytecode at build time by the same engine the runtime links
+# (see build.rs `write_bootstrap_snapshot`), and the envelope it is wrapped in is the payload
+# crate's snapshot format. Both are host-side only: neither is linked into a build without them.
+ln-engine = { path = "../ln-engine" }
+ln-payload = { path = "../ln-payload" }
 # Build-time only: the JS stdlib is minified into `OUT_DIR/js` (see build.rs). Pinned to the
 # series whose MSRV matches the workspace (1.80); newer oxc releases need a newer toolchain.
 oxc_allocator = "0.48.2"
