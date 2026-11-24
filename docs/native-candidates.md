@@ -14,13 +14,16 @@ of three.
 
 ## Ranked
 
+Ratios and per-call costs are the **pre-move** measurements that justified the work. The
+post-move numbers are in "B1/B2 rebench" below.
+
 | module | operation | onde vs Node | onde per call | verdict |
 |---|---|---|---|---|
-| `buffer.js` | `from(base64)` 1 KB | 1152x | 196 µs | move to the host |
-| `string_decoder.js` | `write` 1 KB | 580x | 133 µs | fix the scan, not the module |
-| `buffer.js` | `toString("base64")` 1 KB | 485x | 80 µs | move to the host |
+| `buffer.js` | `from(base64)` 1 KB | 1152x | 196 µs | moved (B1) |
+| `string_decoder.js` | `write` 1 KB | 580x | 133 µs | moved (B2) |
+| `buffer.js` | `toString("base64")` 1 KB | 485x | 80 µs | moved (B1) |
 | `buffer.js` | `readUInt32LE` | 232x | 0.23 µs | cheap, low value |
-| `buffer.js` | `toString("hex")` 1 KB | 227x | 129 µs | move to the host |
+| `buffer.js` | `toString("hex")` 1 KB | 227x | 129 µs | moved (B1) |
 | `url.js` | `new URL()` parse | 78x | 20 µs | 1.2 |
 | `assert.js` | `deepStrictEqual` | 50x | 8 µs | not a native candidate |
 | `path.js` | `parse` / `join` | 36x / 18x | 6 / 3 µs | 1.2 |
@@ -41,23 +44,40 @@ and byte arrays). Each
 arm validates a different thing, Node's implementation validates the reference and lite's validates
 the host, and both were mutation-tested by breaking the host and watching them fail.
 
-**The streaming decoder is still JavaScript** and is the largest codec cost left: `TextDecoder`
-with `stream: true` keeps the state machine, and `string_decoder.js` finds the incomplete-sequence
-boundary with a JavaScript byte loop before calling the native decode, which is why `write` on a
-1 KB chunk measures 580x Node. Fixing it means returning `{ text, pending }` from one host call
-rather than a second pass in JS.
+B1/B2 added base64/hex and the `StringDecoder` boundary; their rebench is below.
 
-## Tier 1: worth doing now
+## B1/B2 rebench
 
-**`buffer.js` codecs.** base64 and hex are byte-at-a-time loops with a lookup table (1152x and
-227x Node). They are a 64-entry table and a memcpy in Rust. `compare` and `fill` belong in the same
-host module; `indexOf`/`lastIndexOf` already live there.
+Release build at `5450b0d`, `BENCH_REPS=5 node test/bench/run.js`, medians of five runs, 1 KB
+payload. Per call is the benchmark total divided by its iteration count (20k for the Buffer
+operations, 50k for `write`); "before" is the JavaScript loop above.
 
-**`string_decoder.js`.** Not a port: the module already calls the native decoder, but it scans the
-chunk in JavaScript to find how many trailing bytes form an incomplete sequence, which is 1024
-iterations per 1 KB chunk. It needs the boundary found in Rust, in the same call that decodes
-(`{ text, pending }`), not a second pass. This is the path behind `stream.setEncoding("utf8")` and
-every text `fs.createReadStream`.
+| Workload | Node 26 | lite before | lite now | vs Node | vs before |
+|---|---|---|---|---|---|
+| `Buffer.from(base64)` | 0.17 µs | 196 µs | 3.1 µs | 18.8x | 63x |
+| `Buffer.toString("base64")` | 0.16 µs | 80 µs | 1.2 µs | 7.2x | 69x |
+| `Buffer.toString("hex")` | 0.56 µs | 129 µs | 1.7 µs | 3.0x | 77x |
+| `Buffer.from(hex)` | 0.63 µs | — | 2.1 µs | 3.4x | — |
+| `StringDecoder.write` | 0.23 µs | 133 µs | 2.0 µs | 8.8x | 67x |
+
+What remains is the host boundary, not the codec: string-to-Rust conversion and the fresh
+`Uint8Array` for decodes dominate the 2–3 µs. `TextDecoder` with `stream: true` still keeps its
+JavaScript state machine; B2 covered `StringDecoder`, which is the stream path behind
+`setEncoding("utf8")`.
+
+## Tier 1: landed (B1/B2)
+
+**`buffer.js` codecs.** Base64 encode/decode and hex encode are native; the standard 4-to-3
+packing uses the `base64` crate, while hex stays a local table loop. `Buffer.from(hex)` decode was
+not measured pre-move; it is now 2.1 µs. `fill` remains JavaScript (no measured win above the
+host-call floor).
+
+**`string_decoder.js`.** `write` now makes one host call that returns `{ text, pending }`; the
+JS state machine remains only for the node-test fallback. The path behind
+`setEncoding("utf8")` and text `fs.createReadStream` dropped from 133 µs to 2.0 µs per 1 KB.
+
+See "B1/B2 rebench" for the numbers; the execution plan is
+[stdlib-consolidation-plan.md](stdlib-consolidation-plan.md).
 
 ## Why not port the whole `buffer` module
 
@@ -70,8 +90,8 @@ own work per call is above roughly a microsecond:
 | method | onde per call | verdict |
 |---|---|---|
 | `indexOf` over 1 MB | 40 ms | move |
-| `from(base64)` 1 KB | 196 µs | move |
-| `toString("hex")` 1 KB | 129 µs | move |
+| `from(base64)` 1 KB | 196 µs | moved (B1) |
+| `toString("hex")` 1 KB | 129 µs | moved (B1) |
 | `compare` 1 KB | 28 µs | move |
 | `readUInt32LE` | 0.23 µs | marginal |
 | `from(array)`, `slice`, `concat`, coercion | 50-100 ns | leave: the boundary costs more than the work |

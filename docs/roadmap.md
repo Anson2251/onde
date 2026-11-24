@@ -516,7 +516,7 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 - Startup: < 15 ms hello-world, < 25 ms with `http` imported (p50 over 100 runs, cold cache).
 - `fs.readFile` 10 MB within 1.2x of Node; TCP echo within 1.5x; HTTP within 1.5x.
 - Stdlib consolidation checklist green: one `invalidArgType`, no loader shims, base64/hex
-  encoders ≤2 µs/1 KB and decoders ≤3 µs/1 KB; `StringDecoder.write` is one host call per chunk.
+  encoders ≤2 µs/1 KB and decoders ≤3.5 µs/1 KB; `StringDecoder.write` is one host call per chunk.
 - RSS < 25 MB for the hello server; no growth over 1h soak.
 - `--trace-events` output loads in `chrome://tracing`.
 

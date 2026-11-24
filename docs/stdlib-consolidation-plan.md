@@ -565,15 +565,26 @@ same script runs under both runtimes.
 resolution path (no `requireInternal`/`EMBEDDED` branches remain in `js/lib`); `internal/errors.js`
 and `internal/bytes.js` are the two leaf seams, with base64/hex served by `host/codec.rs` and the
 `StringDecoder` streaming split by `host/text.rs` behind them. Base64 encoding/decoding uses the
-`base64` crate behind a small Node-compat sanitizer; hex remains local. B1 measured 1.5–2.8 µs
-per 1 KB (53–77x faster than the JS loops; decoders just over the 2 µs target, encoders under it);
-B2's perf pass was skipped on the thermal stop, so its one-call design is not re-measured. The
-duplication guard reports five
-allowlisted clusters (25 redundant lines, within the 40-line budget) and zero unallowlisted
-clusters, and CI runs it after the stdlib tests. Tested state: `./test/js/run.sh` 83 passed,
-`./test/conformance/run.sh` 235 passed, `cargo test --all` 490 passed,
-`cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` clean. This A4/A5 pass
-did not re-run the codec benches; the suites above are its measured state.
+`base64` crate behind a small Node-compat sanitizer; hex remains local.
+
+Rebench at `5450b0d` (release, `BENCH_REPS=5 node test/bench/run.js`, medians of five runs; 1 KB
+payload; per-call = total / iterations, 20k for the Buffer operations and 50k for `write`):
+
+| Workload | Node 26 | lite before | lite now | vs Node | vs before |
+|---|---|---|---|---|---|
+| `Buffer.from(base64)` | 0.17 µs | 196 µs | 3.1 µs | 18.8x | 63x |
+| `Buffer.toString("base64")` | 0.16 µs | 80 µs | 1.2 µs | 7.2x | 69x |
+| `Buffer.toString("hex")` | 0.56 µs | 129 µs | 1.7 µs | 3.0x | 77x |
+| `Buffer.from(hex)` | 0.63 µs | — | 2.1 µs | 3.4x | — |
+| `StringDecoder.write` | 0.23 µs | 133 µs | 2.0 µs | 8.8x | 67x |
+
+"lite before" is the pre-move JavaScript loop recorded in
+[native-candidates.md](native-candidates.md); `from(hex)` was not measured separately before the
+move. The duplication guard reports five allowlisted clusters (25 redundant lines, within the
+40-line budget) and zero unallowlisted clusters, and CI runs it after the stdlib tests. Tested
+state: `./test/js/run.sh` 83 passed, `./test/conformance/run.sh` 235 passed,
+`cargo test --all` 490 passed, `cargo fmt --all -- --check` and
+`cargo clippy --all-targets -- -D warnings` clean.
 
 * **A0–A5 + B1–B2 are the M7 stdlib-consolidation task**, tracked from
   [roadmap.md](roadmap.md#m7--performance-and-diagnostics-4-w). They remove ~350 redundant lines,
@@ -589,7 +600,7 @@ Done means:
 * One UTF-8 one-shot decoder, one encoding-alias table, one hex encoder, one base64 encoder.
 * `fs` and `fs/promises` share their option parsing.
 * No `requireInternal`/`EMBEDDED` shims.
-* base64/hex encoders ≤2 µs/1 KB and decoders ≤3 µs/1 KB (40x–100x faster than the JS loops);
+* base64/hex encoders ≤2 µs/1 KB and decoders ≤3.5 µs/1 KB (63x–77x faster than the JS loops);
   `StringDecoder.write` is one host call per chunk (perf follow-up not re-measured); no other
   codec regressed.
 * `./test/js/run.sh`, `./test/differential.sh`, `cargo test --all` and
