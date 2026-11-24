@@ -65,7 +65,10 @@ pub(crate) struct Connection {
     read_request: Option<u32>,
     /// The scratch buffer for one read, sized by the outstanding request (bounded by `MAX_CHUNK`).
     read_buf: Vec<u8>,
-    /// Consecutive reads that filled `read_buf`, which is how the buffer decides to grow (H7).
+    /// Reads that filled `read_buf`, which is how the buffer decides to grow (H7). Monotonic: a
+    /// paced stream returns partial reads by design, so resetting on one would shrink a grown buffer
+    /// back to `INITIAL_READ_CHUNK` and regrow it on every burst (measured: a 1 MiB stream at
+    /// 8 KiB/5 ms produced 384 events instead of ~16 at the requested chunk).
     read_chunks: u8,
     write_queue: std::collections::VecDeque<Vec<u8>>,
     write_offset: usize,
@@ -327,7 +330,8 @@ impl Connection {
     /// Until the socket has delivered `GROW_AFTER_FULL_READS` full buffers it is clamped to
     /// `INITIAL_READ_CHUNK`, because the request says what a *consumer* could take, not what the
     /// peer will send: an HTTP parser asks for 16 KiB and a flowing `net` socket for 64 KiB on
-    /// every connection, including the ones that will never send a complete head.
+    /// every connection, including the ones that will never send a complete head. The clamp is
+    /// one-way: a socket that has proved it delivers keeps the larger buffer for its lifetime.
     fn size_read_buffer(&mut self) {
         let asked = match &self.mode {
             Mode::Raw => self.read_request.unwrap_or(1) as usize,
@@ -442,12 +446,11 @@ impl Connection {
 
     async fn on_read(&mut self, count: usize) {
         // A read that filled the buffer is the signal that this peer is consuming, and is what lets
-        // the buffer grow past `INITIAL_READ_CHUNK`; a partial read means the socket went quiet and
-        // shrinks it back on the next size pass.
+        // the buffer grow past `INITIAL_READ_CHUNK`. It never shrinks again: a partial read is the
+        // normal case for a consumer slower than the requested chunk, not evidence of an idle peer,
+        // and shrinking would regrow on the next burst.
         if count == self.read_buf.len() {
             self.read_chunks = self.read_chunks.saturating_add(1);
-        } else {
-            self.read_chunks = 0;
         }
         // The parsed path may have to write a canned status before closing, so this is async.
         if matches!(self.mode, Mode::Http { .. }) {

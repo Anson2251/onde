@@ -682,7 +682,7 @@ the absolutes are slightly pessimistic).
 | 2 | `fs.readFile` 10 MB ≤ 1.2x Node | 1.17x (1.63 vs 1.39 ms) | met, at the edge |
 | 3 | TCP echo ≥ 0.667 of Node | 0.96x (41.8k vs 43.7k req/s) | met |
 | 4 | HTTP keep-alive ≥ 0.667 of Node | 0.45x (13.2k vs 29.5k req/s) | **missed**, as predicted (§9 R9) |
-| 5 | 2,000 half-open: within 2 MB of the raw floor | HTTP 44–45 MB against a 41–42 MB floor: **3 MB** median over three paired runs (6 MB before lazy sessions) | **missed**; the residual 1.5 KB/connection is bookkeeping correctness needs (§12.3) |
+| 5 | 2,000 half-open: within 2 MB of the raw floor | HTTP 47.7 MB against a 44.6 MB floor: **3.0–3.2 MB** over three paired runs (6 MB before lazy sessions) | **missed**; the residual 1.5 KB/connection is bookkeeping correctness needs (§12.3) |
 | 6 | Hello-server RSS < 25 MB, no growth over 1 h | peak 7.98 MB, slope **0.27 MB/h** over a 10-minute run (61 samples) | met on the shorter run; the 1 h run is the nightly job |
 | 7 | Trace loads in `chrome://tracing` | 43 events, 1 lane, ops + gc, validated structurally | met (§12.2) |
 | 8 | Pilot identical under `node --test` and `lite --test` | 5 files / 24 tests, transcripts match | met |
@@ -751,9 +751,10 @@ the session, its listeners and its timer are created inside the handle-event cal
 event (`js/lib/internal/http.js`). Cleanup happens on the `closed` handle event rather than through
 a socket listener, so a connection that never carried a byte costs one listener entry.
 
-Result at 2,000 connections: 47 MB → **44–45 MB**, against a raw floor of 41–42 MB. Paired runs with
-the hardened harness (`test/perf/halfopen.sh`: median of seven samples, and a run that opens fewer
-connections than asked is now rejected rather than compared) report **3, 3 and 2 MB**, median 3.
+Result at 2,000 connections: 47 MB → **47.7 MB**, against a raw floor of 44.6 MB (both absolutes
+carry this machine's 8–9 MB baseline; the delta is the comparable number). Paired runs with the
+hardened harness (`test/perf/halfopen.sh`: median of seven samples, and a run that opens fewer
+connections than asked is now rejected rather than compared) report **3.0, 3.2 and 3.2 MB**.
 
 The last megabyte is what the lazy design cannot remove, and one piece of it is provably required:
 dropping the eager `socket.on("error")` listener turned five HTTPS conformance cases from `exit:0`
@@ -763,8 +764,10 @@ handle-listener set entry, and the `_sockets` entry the `close*Connections()` he
 a 2 MB bound, 3 MB is reported as missed, with the composition of the 1.5 KB written down rather
 than a bound quietly relaxed.
 
-The three D73 semantics follow from the design and are recorded: `headersTimeout` starts at the
-first byte, and `getConnections()`/`close*Connections()` count sockets rather than sessions.
+The D73 semantics follow from the design and are recorded: the session and its per-request timers
+are created on the first parsed event, `headersTimeout` stays a deadline taken at accept (held as a
+number on the socket and swept by one server timer), and `getConnections()`/`close*Connections()`
+count sockets rather than sessions.
 
 ### 12.4 What did not ship
 
@@ -788,7 +791,29 @@ first byte, and `getConnections()`/`close*Connections()` count sockets rather th
   peer's already-received response and broke three assertions in `test/js/lib/http.test.js`; the
   event now precedes the drain, which is about the socket, not the event.
 
-### 12.6 The one-page summary
+### 12.6 Review findings (after the first commit)
+
+A lifecycle review of the lazy session ran against the landed change and found one blocker and two
+important defects, all fixed in a follow-up commit:
+
+- **Critical: the first request head lost its bound.** The session was created on the first *parsed*
+  event, and that event only exists once the head is complete; `ensureSession` armed the
+  `headersTimeout` timer and `onServerRequest` cleared it in the same dispatch, so a peer that sent
+  a partial head was held forever instead of for the configured timeout. The record claimed
+  "starts at the first byte", which was also wrong. Fixed by keeping the deadline as a number on
+  the socket, taken at accept, and sweeping them with one timer per server — a per-connection timer
+  would have cost ~1.2 KiB back and the sweep costs one number. `d74-first-head-timeout.js` pins it,
+  and D74 records that Node does *not* reclaim this peer (measured) — onde is stricter on purpose.
+- **Important: `server.timeout` was a no-op for a sessionless socket.** The callback ran
+  `if (session !== null) session.destroy()`, so `'timeout'` fired and nothing was closed. It now
+  destroys the socket, and `"closed"` cleans up as for any other connection.
+- **Important: the read-buffer clamp thrashed on paced streams.** `read_chunks` reset on every
+  partial read, but a partial read is the normal case for a consumer slower than the requested
+  chunk: a 1 MiB stream at 8 KiB/5 ms produced 384 one-to-six-KiB reads instead of the ~128 that
+  Node's chunking produces. The counter is now monotonic — a socket that has proved it delivers
+  keeps the larger buffer — and the same stream reads 130 events of 8 KiB, matching Node.
+
+### 12.7 The one-page summary
 
 M7's headline claim — "a bytecode snapshot closes the startup gap" — turned out to be worth ~0.7 ms
 of a 12 ms start, because the gap was never the bootstrap. What actually moved memory was a 64 KiB

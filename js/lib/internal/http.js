@@ -1479,26 +1479,32 @@ function attachServerSocket(server, socket) {
   server._sockets = server._sockets || new Set();
   server._sockets.add(socket);
 
+  // The first head has no session yet, so its deadline cannot live on one. It used to be a timer
+  // armed inside the session, which became wrong once the session was created lazily: the "request"
+  // event only exists *after* the head has been parsed, so the timer was armed and cleared in the
+  // same dispatch, and a partial first head was held forever (D73, D74). The deadline is a number
+  // on the socket and the server sweeps them with one timer, so a peer is still reclaimed without
+  // paying a timer object per connection.
+  if (server.headersTimeout > 0) {
+    socket._lnHeadersDeadline = Date.now() + server.headersTimeout;
+    server._armHeadersTimer();
+  }
+
   let session = null;
   const ensureSession = () => {
     if (session !== null) return session;
+    // Parsing has started: the first head either completed or failed, so the accept-time bound is
+    // spent and the per-request timers take over (armed by the session's response path).
+    socket._lnHeadersDeadline = undefined;
     session = new ServerSession(server, socket, id);
     session.off = off;
     socket._lnSession = session;
     server._sessions.add(session);
-    if (server.headersTimeout > 0) {
-      // Node starts this at accept; here it starts at the first byte (D73), which is what lets a
-      // never-sending peer cost no timer at all.
-      session.headersTimer = unrefTimer(
-        setTimeout(() => {
-          if (!session.closed) session.destroy();
-        }, server.headersTimeout),
-      );
-    }
     return session;
   };
 
   const detach = () => {
+    socket._lnHeadersDeadline = undefined;
     server._sockets.delete(socket);
     if (session === null) {
       // Nothing was ever parsed on this socket: release the handle listener and stop.
@@ -1549,9 +1555,9 @@ function attachServerSocket(server, socket) {
   ]);
 
   if (server.timeout > 0 && typeof socket.setTimeout === "function") {
-    socket.setTimeout(server.timeout, () => {
-      if (session !== null) session.destroy();
-    });
+    // A silent socket has no session to destroy, and the old callback's `session !== null` guard
+    // made `server.timeout` a no-op for exactly the connections it is meant to reclaim (D74).
+    socket.setTimeout(server.timeout, () => socket.destroy());
   }
   return session;
 }
@@ -1851,6 +1857,7 @@ module.exports = {
   sendRequest,
   setGlobalAgent,
   attachServerSocket,
+  unrefTimer,
   isUpgradeRequest,
   // shared helpers for the public surface
   codedError,

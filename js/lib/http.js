@@ -12,6 +12,8 @@
 // upgrades, `clientError` and the JS keep-alive/headers/request timers.
 
 const internal = require("./internal/http.js");
+
+const { unrefTimer } = internal;
 const net = require("./net.js");
 const { Server: NetServer } = net;
 
@@ -54,6 +56,10 @@ class Server extends NetServer {
       settings.maxHeaderSize === undefined ? maxHeaderSize : settings.maxHeaderSize;
     this._sessions = new Set();
     this._closing = false;
+    // One timer for every connection waiting on its first head (see `_armHeadersTimer`). A timer
+    // per connection was the first thing this milestone removed: at 2,000 half-open connections it
+    // cost ~1.2 KB each. The sweep keeps the deadline as a number on the socket instead.
+    this._headersTimer = null;
 
     if (typeof requestListener === "function") this.on("request", requestListener);
 
@@ -70,7 +76,50 @@ class Server extends NetServer {
 
   close(callback) {
     this._closing = true;
+    if (this._headersTimer !== null) {
+      clearTimeout(this._headersTimer);
+      this._headersTimer = null;
+    }
     return super.close(callback);
+  }
+
+  /// Arm one timer for the earliest connection still waiting on its first request head.
+  ///
+  /// Node emits its headers timeout per socket; onde keeps a deadline on the socket and one sweep
+  /// here, because a timer object per idle peer is exactly the per-connection cost the lazy session
+  /// exists to avoid. Exactness is preserved: the timer is set for the earliest deadline and
+  /// re-armed after each sweep.
+  _armHeadersTimer() {
+    if (this._headersTimer !== null) {
+      clearTimeout(this._headersTimer);
+      this._headersTimer = null;
+    }
+    if (this._sockets === undefined) return;
+    let earliest = Infinity;
+    for (const socket of this._sockets) {
+      const deadline = socket._lnHeadersDeadline;
+      if (deadline !== undefined && deadline < earliest) earliest = deadline;
+    }
+    if (earliest === Infinity) return;
+    this._headersTimer = unrefTimer(
+      setTimeout(() => this._sweepHeaders(), Math.max(0, earliest - Date.now())),
+    );
+  }
+
+  _sweepHeaders() {
+    this._headersTimer = null;
+    if (this._sockets === undefined) return;
+    const now = Date.now();
+    const expired = [];
+    for (const socket of this._sockets) {
+      const deadline = socket._lnHeadersDeadline;
+      if (deadline !== undefined && deadline <= now) expired.push(socket);
+    }
+    for (const socket of expired) {
+      socket._lnHeadersDeadline = undefined;
+      socket.destroy();
+    }
+    this._armHeadersTimer();
   }
 
   /// Node's Tier B convenience methods. They walk sockets rather than sessions: a session is
