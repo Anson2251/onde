@@ -37,48 +37,52 @@ bundles an app and links it with the runtime into one executable, see
 
 ## What you trade
 
-Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-15, with onde on a release build,
-Node 26.10.0 and Bun 1.3.10. Cold start and HTTP are medians of three runs of the same script; the
-compute figures are medians of five repetitions per workload. Harnesses: `test/net/bench.sh`,
-`test/net/coldstart.js` and `test/bench/run.js`, all in the repo.
+Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-24, release build, Node 26.12.1
+and Bun 1.3.10. Cold start and HTTP are medians of three (HTTP: 100 keep-alive connections, 20
+warm-up + 200 measured requests each); compute is medians of five repetitions per workload.
+Harnesses: `test/net/bench.sh`, `test/net/coldstart.js` and `test/bench/run.js`.
+
+### Footprint
 
 | metric | onde | Node 26 | Bun 1.3 |
-|---|---|---|---|
-| install size | 5.3 MB | 76 MB | 58 MB |
-| cold start, `-e '1+1'` | 10.8 ms | 82.0 ms | 6.9 ms |
-| cold start, `require("http")` | 17.6 ms | 84.3 ms | 13.6 ms |
-| peak RSS, hello HTTP server | 9.3 MB | 44.3 MB | 38.1 MB |
-| HTTP throughput, 100 keep-alive connections | 13.4k req/s | 29.9k req/s | 32.1k req/s |
-| HTTP p99 at that load | 42.5 ms | 6.6 ms | 5.9 ms |
+|---|---:|---:|---:|
+| install size | 5.4 MB | 77 MB | 58 MB |
+| cold start, `-e '1+1'` | 12.2 ms | 92.6 ms | 8.0 ms |
+| cold start, `require("http")` | 19.0 ms | 95.0 ms | 15.9 ms |
+| peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
+| 100 processes, same server (derived) | 927 MB | 4.42 GB | 3.32 GB |
+| embedded JS stdlib | 557 KB from 921 KB source | — | — |
 
-Re-measured after M6 (2026-11-21, same harness, release build, 100k requests per run, interleaved
-with a pre-M6 binary and Node): onde serves **13.9k req/s** against Node's **29.9k**, with the
-pre-M6 binary at 14.3k — M6's async-hooks plumbing costs nothing for a server that never loads
-`async_hooks` (docs/m6-plan.md §10.4). Cold start re-measured at 11.3 ms (`-e`) and 18.6 ms
-(`require("http")`) with `test/net/coldstart.js`; Node 26.12 at 89 ms for both. The HTTP p99 in
-this re-run was 100-150 ms for *both* onde binaries because the host was heavily loaded (the
-2026-11-15 figure below was taken on a quiet machine); that tail is the M4 single-isolate issue,
-not M6.
+At 9.3 MB resident, a hundred onde processes cost less than the tool around them; the same
+hundred Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's
+12.2, and QuickJS has an engine to initialize either way.
 
-onde ships as one 5.4 MB binary against a 76 MB Node install, and it holds a fifth of the memory
-for the same server. The readable JS stdlib is minified at build time with oxc (names are not
-mangled): 906 KB of source becomes 559 KB embedded. Startup is not where onde wins: Bun opens in
-6.9 ms against onde's 10.8, and that gap will stay, because QuickJS has an engine to initialize as
-well. What changes a deployment
-is the resident figure: at 9 MB per process, embedding a runtime costs less than the tool around
-it, and a hundred of them take 930 MB where a hundred Node processes would need 4.4 GB.
+### Hot path
 
-The cost is on the hot path. At 100 keep-alive connections onde carries about 45% of Node's
-requests per second, and the tail is much worse (42.5 ms p99 against 6.6) because every connection
-queues behind one thread.
+| metric | onde | Node 26 | Bun 1.3 |
+|---|---:|---:|---:|
+| HTTP throughput, 100 keep-alive connections | 12.9k req/s | 30.0k req/s | 29.4k req/s |
+| HTTP p50 | 0.40 ms | 3.17 ms | 3.11 ms |
+| HTTP p99 | 52.5 ms | 6.6 ms | 7.4 ms |
+| share of Node's requests/s | 43% | 100% | 98% |
 
-Pure JavaScript is where the gap widens. Five compute benchmarks run between 2.2x and 18x slower
-than Node on this machine, with a median of 4.9x: string building 2.2x, sorting 3.1x, JSON 4.9x,
-recursive calls 9.3x, object churn 18x. QuickJS has no JIT and no generational nursery, so
-allocation-heavy code pays the most.
+The p50 is lower than Node's because onde's requests are cheap; the tail is much worse because
+every connection queues behind one isolate thread. That is the M4 single-isolate issue, not M6:
+the async-hooks plumbing costs nothing for a server that never loads `async_hooks`.
 
-For a CLI, a build step or a request handler with light logic, that is decent. For a bundler, a
-minifier or a 10 MB JSON transform, it is the wrong runtime.
+### Pure JavaScript
+
+| workload | Node 26 | onde | ratio |
+|---|---:|---:|---:|
+| string building | 22.5 ms | 43.0 ms | 1.9x |
+| sort 200k | 30.2 ms | 91.2 ms | 3.0x |
+| JSON 5×100k | 171.0 ms | 779.0 ms | 4.6x |
+| fib(30) | 6.0 ms | 55.8 ms | 9.3x |
+| object churn 300k | 2.7 ms | 49.9 ms | 18.5x |
+
+Median 4.6x. QuickJS has no JIT and no generational nursery, so allocation-heavy code pays the
+most. For a CLI, a build step or a request handler with light logic that is decent; for a
+bundler, a minifier or a 10 MB JSON transform it is the wrong runtime.
 
 ## Try it
 
