@@ -43,9 +43,11 @@ Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 | M6 | **Engine patch + async context** ★ | host-owned job queue, `async_hooks`, ALS everywhere | 4 | M1, M2 |
 | M7 | Performance & diagnostics | bytecode snapshot, profiling, memory caps, async stacks | 4 | M4, M6 |
 | M8 | 1.0 hardening | compat sweep, docs, packaging, release | 2.5 | all |
+| M9 | Permissions model | deny-by-default `--allow-*` for fs/net/child_process/env, and the gate FFI uses | 1.5 | M8 |
+| M10 | Native interop (FFI) | `onde:ffi`: `dlopen`, `libffi`, structs, callbacks, JSON codecs | 4 | M8, M9 |
 
-Total ≈ **34 eng-weeks**. One engineer: ~8 months. Three engineers: ~4 months wall-clock with
-the parallelization in §4.
+Total for 1.0 ≈ **34 eng-weeks**. One engineer: ~8 months. Three engineers: ~4 months wall-clock
+with the parallelization in §4. The 1.1 milestones, M9–M10, add ~5.5 eng-weeks after the release.
 
 ---
 
@@ -530,6 +532,19 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 
 ---
 
+## M9–M10 — 1.1: permissions and native interop (5.5 w)
+
+Post-1.0. **M9** is the deferred deny-by-default permissions model; **M10** is `dlopen` FFI
+([ffi-plan.md](ffi-plan.md), [ADR-0010](adr/0010-ffi-dlopen.md)), which is its first consumer.
+Ordering matters: with the model first, `--allow-ffi` is one entry in a uniform policy rather than a
+one-off flag, and `fs`/`net`/`child_process`/`env` are gated by the same mechanism.
+
+FFI is not in 1.0. The `ffi` feature is off in release builds through M8 and turns on for M10; a
+build without it has no `onde:ffi` module at all. WP0 can start behind the non-default feature
+during M8, as standalone builds landed ahead of M7, without moving the milestone.
+
+---
+
 ## 2. Sequencing
 
 ```
@@ -592,7 +607,9 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | [0006](adr/0006-handles-and-events.md) | Handles and events: live connections as a second primitive; hyper rejected | accepted |
 | [0007](adr/0007-http-codec.md) | HTTP/1.1 as a sans-io `httparse`-based state machine, outbound heads authored in JS | accepted |
 | [0008](adr/0008-processes-and-threads.md) | Threads and processes: nested isolate per worker, engine-serialized messages with a SAB table, proc/worker handle families, cooperative termination | accepted (M5) |
-| 0009 | Permissions model (deny-by-default `--allow-*`) | deferred to 1.1 (renumbered; 0008 taken by M5) |
+| [0009](adr/0009-async-context.md) | Async context: host-owned job queue, per-job tags, engine hooks | accepted (M6) |
+| — | Permissions model (deny-by-default `--allow-*`) | M9 (1.1); no ADR number assigned |
+| [0010](adr/0010-ffi-dlopen.md) | `dlopen` FFI: `libffi`, optional declarations, decoded structs; gated; M10 | proposed (M10) |
 
 ## 7. What we are explicitly not doing
 
