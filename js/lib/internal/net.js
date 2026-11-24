@@ -15,6 +15,14 @@
 // Everything here is dependency-free (`js/lib/net.js` supplies `Buffer`-aware behaviour), so a
 // surface can require it without creating a cycle.
 
+// The shared coded-error vocabulary. `internal/errors` is itself a leaf, so this keeps the
+// module's dependency-free property.
+const {
+  coded: codedError,
+  invalidArgType,
+  invalidArgValue,
+} = require("./errors.js");
+
 const kHandle = Symbol("onde.handle");
 const kHandleListeners = Symbol("onde.handle.listeners");
 const kParsed = Symbol("onde.handle.parsed");
@@ -160,6 +168,9 @@ function emitHandleEvent(socket, name, payload) {
 }
 
 // --- errors ----------------------------------------------------------------------------------
+//
+// `codedError`, `invalidArgType` and `invalidArgValue` come from `internal/errors`; `describe`
+// stays because the socket-specific errors below render values with it.
 
 function describe(value) {
   if (value === null) return "null";
@@ -173,34 +184,6 @@ function describe(value) {
   if (type === "symbol") return value.toString();
   const name = value && value.constructor && value.constructor.name;
   return `an instance of ${name || "Object"}`;
-}
-
-function codedError(Ctor, code, message) {
-  const error = new Ctor(message);
-  error.code = code;
-  return error;
-}
-
-function invalidArgType(name, expected, actual) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${describe(actual)}`,
-  );
-}
-
-function invalidArgValue(name, value, reason) {
-  let rendered;
-  try {
-    rendered = typeof value === "string" ? `'${value}'` : String(value);
-  } catch (_) {
-    rendered = "<value>";
-  }
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' ${reason}. Received ${rendered}`,
-  );
 }
 
 // Node uses ERR_SOCKET_BAD_PORT for both a wrong type and an out-of-range value in a port

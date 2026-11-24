@@ -16,6 +16,8 @@
 //     to match the local platform (e.g. darwin signal numbers).
 //   - `availableParallelism()` approximates with the CPU count.
 
+const { invalidArgValue } = require("./internal/errors.js");
+
 function hostObject() {
   const host = globalThis.__ln_host;
   return host !== undefined && host !== null && typeof host === "object" ? host : null;
@@ -196,14 +198,6 @@ function availableParallelism() {
   }
 }
 
-function invalidArgValue(value) {
-  const err = new TypeError(
-    `The argument 'options.encoding' is invalid. Received ${String(value)}`
-  );
-  err.code = "ERR_INVALID_ARG_VALUE";
-  return err;
-}
-
 function userInfo(options) {
   let encoding = "utf8";
   if (options !== undefined) {
@@ -216,7 +210,7 @@ function userInfo(options) {
     }
     if (options.encoding !== undefined) {
       if (options.encoding !== "utf8" && options.encoding !== "buffer") {
-        throw invalidArgValue(options.encoding);
+        throw invalidArgValue("options.encoding", options.encoding, "is invalid");
       }
       encoding = options.encoding;
     }

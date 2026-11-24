@@ -22,6 +22,8 @@ const captureRejectionsSymbol = kCapture;
 const captureRejectionSymbol = Symbol.for("nodejs.rejection");
 const errorMonitor = Symbol("events.errorMonitor");
 
+const { abortError, invalidArgType } = require("./internal/errors.js");
+
 let defaultCapture = false;
 let captureWasAssigned = false;
 
@@ -48,14 +50,6 @@ function describeValue(value) {
   return String(value);
 }
 
-function invalidArgType(name, expected, actual) {
-  const err = new TypeError(
-    `The "${name}" argument must be of type ${expected}. Received ${describeValue(actual)}`
-  );
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
 function checkListener(listener, name) {
   if (typeof listener !== "function") {
     throw invalidArgType(name || "listener", "function", listener);
@@ -73,17 +67,9 @@ function checkOptions(options) {
 function checkSignal(signal) {
   if (signal === undefined || signal === null) return null;
   if (typeof signal !== "object" || typeof signal.aborted !== "boolean") {
-    throw invalidArgType("options.signal", "AbortSignal", signal);
+    throw invalidArgType("options.signal", "an instance of AbortSignal", signal);
   }
   return signal;
-}
-
-function abortError(signal) {
-  const err = new Error("The operation was aborted");
-  err.name = "AbortError";
-  err.code = "ABORT_ERR";
-  if (signal && "reason" in signal) err.cause = signal.reason;
-  return err;
 }
 
 function addAbortListener(signal, listener) {
@@ -595,7 +581,7 @@ EventEmitter.once = function once(emitter, name, options) {
   const opts = checkOptions(options);
   const signal = checkSignal(opts.signal);
   if (signal !== null && signal.aborted) {
-    return Promise.reject(abortError(signal));
+    return Promise.reject(abortError(signal && "reason" in signal ? signal.reason : undefined));
   }
 
   return new Promise(function oncePromise(resolve, reject) {
@@ -629,7 +615,7 @@ EventEmitter.once = function once(emitter, name, options) {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(abortError(signal));
+      reject(abortError(signal && "reason" in signal ? signal.reason : undefined));
     }
 
     attachOnce(emitter, name, resolver);
@@ -721,14 +707,14 @@ EventEmitter.on = function on(emitter, name, options) {
   };
 
   if (signal !== null && signal.aborted) {
-    storedError = abortError(signal);
+    storedError = abortError(signal && "reason" in signal ? signal.reason : undefined);
     finished = true;
   } else {
     attach(emitter, name, eventHandler);
     if (name !== "error") attach(emitter, "error", errorHandler);
     if (signal !== null) {
       removeAbort = addAbortListener(signal, function abortListener() {
-        errorHandler(abortError(signal));
+        errorHandler(abortError(signal && "reason" in signal ? signal.reason : undefined));
       });
     }
   }

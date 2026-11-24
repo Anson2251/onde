@@ -33,6 +33,8 @@ js/
     process.js        the process object (created by bootstrap.js), IPC in a forked child
     loader.js         CJS cache, require(), builtin registry, runMain
     child_process.js  spawn/exec/execFile/fork over the proc handle family
+    internal/errors.js Node's coded-error vocabulary and argument validation
+    internal/bytes.js Buffer's non-UTF-8 codecs and shared byte coercion
     internal/pipe.js  child stdio pipes as Readable/Writable
     worker_threads.js Worker, MessageChannel, parentPort, workerData
     internal/worker.js the shared core under worker_threads (ports, Worker, parentPort)
@@ -89,6 +91,15 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `signalNumber` / `signalName` | `(name) => number \| null`, `(number) => string \| null` | platform signal table |
 | `kill` | `(pid, signal) => true` | throws `ESRCH`/`EPERM` like `process.kill` |
 | `cpuUsage` | `() => { user, system }` | `getrusage`, microseconds |
+| `buffer.encodeBase64` | `(view, start, end, urlSafe) => string` | borrowed view bytes; the JS seam clamps the range and picks the alphabet |
+| `buffer.decodeBase64` | `(text, urlSafe) => Uint8Array` | fresh array; ignores non-alphabet bytes and accepts both alphabets, as Node does |
+| `buffer.encodeHex` | `(view, start, end) => string` | lowercase; same borrowed-view and clamped-range rules as base64 |
+| `buffer.decodeHex` | `(text) => Uint8Array` | fresh array; stops at the first non-hex pair and drops an odd trailing digit |
+| `text.decodeStream` | `(data, start, end, pending, fatal) => { text, pending } \| null` | UTF-8 streaming split for `StringDecoder`; `null` means the prefix was invalid under `fatal` |
+
+`buffer` and `text` are nested members (`__ln_host.buffer.*`, `__ln_host.text.*`), installed only
+when the runtime provides the native codec; `internal/bytes.js` and `textcodec.js` fall back to
+their JavaScript loops when they are absent (the Node oracle does exactly that).
 
 `Resolved` is one of `{ type: "builtin", name }`, `{ type: "file", path }`,
 `{ type: "json", path }`, `{ type: "esm", path }`, `{ type: "addon", path }`. `"file"` always
@@ -100,6 +111,11 @@ Internal modules (not part of the public builtin list) are addressed as `interna
 `require("./sibling.js")` because the loader maps relative requires made from `<lite:...>` modules
 onto that registry. `internal/worker` is loaded eagerly on a worker isolate so a parent message
 that arrives before user code is queued for `parentPort` rather than dropped.
+
+`internal/errors` and `internal/bytes` are leaf helpers in that registry: `errors` requires
+nothing and `bytes` requires only `errors`, so either can be loaded from any stdlib module
+regardless of order. They are resolved through the same virtual tree as every other `internal/*`
+module, which means a new one must also be registered in `crates/ln-runtime/src/modules.rs`.
 
 ## Testing the stdlib without the runtime
 

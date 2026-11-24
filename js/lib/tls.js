@@ -19,15 +19,9 @@
 // `minVersion`/`maxVersion`, and a full `getPeerCertificate()` (there is no X.509 parser in M4, so
 // it returns `{}`).
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const net = requireInternal("net", "./net.js");
-const internal = requireInternal("internal/net", "./internal/net.js");
+const net = require("./net.js");
+const internal = require("./internal/net.js");
+const { invalidArgType, invalidArgValue } = require("./internal/errors.js");
 
 let BufferCtor = null;
 try {
@@ -41,14 +35,6 @@ const Buffer = BufferCtor;
 /// TLS 1.2/1.3; the constants are published for compatibility, not read per connection (D41).
 const DEFAULT_MIN_VERSION = "TLSv1.2";
 const DEFAULT_MAX_VERSION = "TLSv1.3";
-
-function invalidArgType(name, expected, actual) {
-  return internal.invalidArgType(name, expected, actual);
-}
-
-function invalidArgValue(name, value, reason) {
-  return internal.invalidArgValue(name, value, reason);
-}
 
 function unsupported(feature) {
   const error = new Error(`${feature} is not supported by this runtime (TLS is rustls-based)`);

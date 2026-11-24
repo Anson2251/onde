@@ -13,9 +13,10 @@ const hostBuffer = (() => {
 // and `Buffer.allocUnsafeSlow` therefore return zero-filled memory just like `alloc`; the only
 // difference is intent, since an onde embedder cannot expose uninitialised engine memory safely.
 //
-// Encodings are implemented here rather than delegated to the engine: utf8/utf-8, hex,
-// base64, base64url, latin1/binary, ascii and utf16le/ucs2/ucs-2. UTF-8 uses the same WHATWG
-// replacement rules as `textcodec.js`.
+// Encodings are not delegated to the engine: utf8/utf-8 comes from `textcodec.js` (the WHATWG
+// replacement rules and the host fast path), and hex, base64/base64url, latin1/binary, ascii and
+// utf16le/ucs2/ucs-2 come from `internal/bytes.js`. What stays here is Buffer's own policy:
+// validation, clamping and the label errors.
 
 let textcodec;
 try {
@@ -26,6 +27,17 @@ try {
 }
 const encodeUTF8 = textcodec.encodeUTF8;
 const decodeUTF8 = textcodec.decodeUTF8;
+// The non-UTF-8 Buffer codecs and the shared alias table live in `internal/bytes.js`.
+const bytecodec = require("./internal/bytes.js");
+
+const {
+  coded: makeError,
+  describeValue: describe,
+  invalidArgType,
+  invalidArgValue,
+  outOfRange,
+  unknownEncoding,
+} = require("./internal/errors.js");
 
 const MAX_LENGTH = Number.MAX_SAFE_INTEGER;
 const TWO_POW_32 = 4294967296;
@@ -35,46 +47,6 @@ const TWO_POW_64 = 1n << 64n;
 // ---------------------------------------------------------------------------------------------
 // Errors (Node names, codes and message shapes)
 // ---------------------------------------------------------------------------------------------
-
-function makeError(Ctor, code, message) {
-  const err = new Ctor(message);
-  if (code !== undefined) err.code = code;
-  return err;
-}
-
-function describe(value) {
-  if (value === null) return "null";
-  const type = typeof value;
-  if (type === "string") return `type string ('${value}')`;
-  if (type === "number" || type === "boolean" || type === "bigint" || type === "undefined") {
-    return `type ${type} (${String(value)})`;
-  }
-  if (type === "function") return `type function (${value.name || "anonymous"})`;
-  if (ArrayBuffer.isView(value)) {
-    const name = value.constructor && value.constructor.name;
-    return `an instance of ${name || "TypedArray"}`;
-  }
-  const name = value && value.constructor && value.constructor.name;
-  return `an instance of ${name || "Object"}`;
-}
-
-function invalidArgType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be ${expected}. Received ${describe(value)}`,
-  );
-}
-
-function outOfRange(name, range, value) {
-  const rendered =
-    typeof value === "bigint" ? `${String(value).replace(/\B(?=(\d{3})+(?!\d))/g, "_")}n` : String(value);
-  return makeError(
-    RangeError,
-    "ERR_OUT_OF_RANGE",
-    `The value of "${name}" is out of range. It must be ${range}. Received ${rendered}`,
-  );
-}
 
 function bufferOutOfBounds(name) {
   if (name === undefined) {
@@ -95,50 +67,19 @@ function invalidBufferSize(bits) {
   );
 }
 
-function invalidArgValue(name, value) {
-  let rendered;
-  if (value instanceof Uint8Array) {
-    rendered = value.length === 0 ? "<Buffer >" : `<Buffer ${hexEncode(value)}>`;
-  } else {
-    rendered = String(value);
-  }
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' is invalid. Received ${rendered}`,
-  );
-}
-
-function unknownEncoding(encoding) {
-  return makeError(TypeError, "ERR_UNKNOWN_ENCODING", `Unknown encoding: ${String(encoding)}`);
-}
-
 // ---------------------------------------------------------------------------------------------
-// Encoding tables and codecs
+// Encoding policy
 // ---------------------------------------------------------------------------------------------
-
-const ENCODING_ALIASES = Object.assign(Object.create(null), {
-  utf8: "utf8",
-  "utf-8": "utf8",
-  utf16le: "utf16le",
-  "utf-16le": "utf16le",
-  ucs2: "utf16le",
-  "ucs-2": "utf16le",
-  latin1: "latin1",
-  binary: "latin1",
-  base64: "base64",
-  base64url: "base64url",
-  ascii: "ascii",
-  hex: "hex",
-});
 
 function getEncoding(encoding) {
   if (encoding === undefined || encoding === null) return "utf8";
   // Node treats a non-string encoding as its default rather than throwing (it is coerced by
-  // the native binding); only unknown *strings* are an error.
+  // the native binding); only unknown *strings* are an error. The empty string is one: the
+  // shared table maps it to utf8 for `from`/`byteLength`, but `toString("")` throws in Node.
   if (typeof encoding !== "string") return "utf8";
-  const normalized = ENCODING_ALIASES[encoding.toLowerCase()];
-  if (normalized === undefined) throw unknownEncoding(encoding);
+  if (encoding === "") throw unknownEncoding(encoding);
+  const normalized = bytecodec.canonicalEncoding(encoding);
+  if (normalized === null) throw unknownEncoding(encoding);
   return normalized;
 }
 
@@ -161,125 +102,21 @@ function getFillEncoding(encoding) {
   return getEncoding(encoding);
 }
 
-const HEX_DIGITS = "0123456789abcdef";
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-const BASE64_LOOKUP = new Int16Array(128).fill(-1);
-for (let i = 0; i < 64; i++) {
-  BASE64_LOOKUP[BASE64_ALPHABET.charCodeAt(i)] = i;
-}
-// base64url shares the first 62 entries and remaps the last two.
-BASE64_LOOKUP[0x2d] = 62; // '-'
-BASE64_LOOKUP[0x5f] = 63; // '_'
-
-function hexValue(code) {
-  if (code >= 0x30 && code <= 0x39) return code - 0x30;
-  if (code >= 0x41 && code <= 0x46) return code - 0x37;
-  if (code >= 0x61 && code <= 0x66) return code - 0x57;
-  return -1;
-}
-
-function hexEncode(bytes, start, end) {
-  let out = "";
-  for (let i = start; i < end; i++) {
-    const byte = bytes[i];
-    out += HEX_DIGITS[byte >> 4] + HEX_DIGITS[byte & 0x0f];
-  }
-  return out;
-}
-
-function hexDecode(string) {
-  const bytes = [];
-  for (let i = 0; i + 1 < string.length; i += 2) {
-    // Node's native decoders mask each UTF-16 code unit to one byte; "š" (U+0161) is 'a'.
-    const hi = hexValue(string.charCodeAt(i) & 0xff);
-    const lo = hexValue(string.charCodeAt(i + 1) & 0xff);
-    if (hi < 0 || lo < 0) break;
-    bytes.push((hi << 4) | lo);
-  }
-  return Uint8Array.from(bytes);
-}
-
-function base64Encode(bytes, start, end, url) {
-  const alphabet = url ? BASE64URL_ALPHABET : BASE64_ALPHABET;
-  let out = "";
-  let i = start;
-  for (; i + 2 < end; i += 3) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
-    out +=
-      alphabet[n >> 18] +
-      alphabet[(n >> 12) & 0x3f] +
-      alphabet[(n >> 6) & 0x3f] +
-      alphabet[n & 0x3f];
-  }
-  const remaining = end - i;
-  if (remaining === 1) {
-    const n = bytes[i] << 16;
-    out += alphabet[n >> 18] + alphabet[(n >> 12) & 0x3f];
-    if (!url) out += "==";
-  } else if (remaining === 2) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
-    out += alphabet[n >> 18] + alphabet[(n >> 12) & 0x3f] + alphabet[(n >> 6) & 0x3f];
-    if (!url) out += "=";
-  }
-  return out;
-}
-
-// Node ignores whitespace and characters outside the base64 alphabet, stops at the first `=`,
-// and silently drops a trailing 1-character group. Both alphabets are accepted for either
-// encoding.
-function base64Decode(string) {
-  const bytes = [];
-  let accumulator = 0;
-  let bits = 0;
-  for (let i = 0; i < string.length; i++) {
-    // Node masks code units to one byte before its base64 table lookup; a surrogate such as
-    // U+D83D becomes '=' (0x3D) and therefore terminates decoding.
-    const code = string.charCodeAt(i) & 0xff;
-    if (code === 0x3d) break; // '='
-    const value = code < 128 ? BASE64_LOOKUP[code] : -1;
-    if (value < 0) continue;
-    accumulator = ((accumulator << 6) | value) & 0xffffff;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      bytes.push((accumulator >> bits) & 0xff);
-    }
-  }
-  return Uint8Array.from(bytes);
-}
-
 function encodeString(string, encoding) {
   switch (encoding) {
     case "utf8":
       return encodeUTF8(string);
-    case "utf16le": {
-      const out = new Uint8Array(string.length * 2);
-      for (let i = 0; i < string.length; i++) {
-        const code = string.charCodeAt(i);
-        out[i * 2] = code & 0xff;
-        out[i * 2 + 1] = code >> 8;
-      }
-      return out;
-    }
-    case "latin1": {
-      const out = new Uint8Array(string.length);
-      for (let i = 0; i < string.length; i++) out[i] = string.charCodeAt(i) & 0xff;
-      return out;
-    }
-    case "ascii": {
-      // Node truncates to 8 bits when *encoding* ascii ("é" becomes 0xE9); only decoding
-      // masks with 0x7F.
-      const out = new Uint8Array(string.length);
-      for (let i = 0; i < string.length; i++) out[i] = string.charCodeAt(i) & 0xff;
-      return out;
-    }
+    case "utf16le":
+      return bytecodec.encodeUtf16le(string);
+    case "latin1":
+      return bytecodec.encodeLatin1(string);
+    case "ascii":
+      return bytecodec.encodeAscii(string);
     case "hex":
-      return hexDecode(string);
+      return bytecodec.hexDecode(string);
     case "base64":
     case "base64url":
-      return base64Decode(string);
+      return bytecodec.base64Decode(string, encoding === "base64url");
     default:
       throw unknownEncoding(encoding);
   }
@@ -289,51 +126,18 @@ function bytesToString(bytes, start, end, encoding) {
   switch (encoding) {
     case "utf8":
       return decodeUTF8(bytes.subarray(start, end));
-    case "utf16le": {
-      let out = "";
-      let chunk = [];
-      for (let i = start; i + 1 < end; i += 2) {
-        chunk.push(bytes[i] | (bytes[i + 1] << 8));
-        if (chunk.length === 4096) {
-          out += String.fromCharCode.apply(null, chunk);
-          chunk = [];
-        }
-      }
-      if (chunk.length) out += String.fromCharCode.apply(null, chunk);
-      return out;
-    }
-    case "latin1": {
-      let out = "";
-      let chunk = [];
-      for (let i = start; i < end; i++) {
-        chunk.push(bytes[i]);
-        if (chunk.length === 4096) {
-          out += String.fromCharCode.apply(null, chunk);
-          chunk = [];
-        }
-      }
-      if (chunk.length) out += String.fromCharCode.apply(null, chunk);
-      return out;
-    }
-    case "ascii": {
-      let out = "";
-      let chunk = [];
-      for (let i = start; i < end; i++) {
-        chunk.push(bytes[i] & 0x7f);
-        if (chunk.length === 4096) {
-          out += String.fromCharCode.apply(null, chunk);
-          chunk = [];
-        }
-      }
-      if (chunk.length) out += String.fromCharCode.apply(null, chunk);
-      return out;
-    }
+    case "utf16le":
+      return bytecodec.decodeUtf16le(bytes, start, end);
+    case "latin1":
+      return bytecodec.decodeLatin1(bytes, start, end);
+    case "ascii":
+      return bytecodec.decodeAscii(bytes, start, end);
     case "hex":
-      return hexEncode(bytes, start, end);
+      return bytecodec.hexEncode(bytes, start, end);
     case "base64":
-      return base64Encode(bytes, start, end, false);
+      return bytecodec.base64Encode(bytes, start, end, false);
     case "base64url":
-      return base64Encode(bytes, start, end, true);
+      return bytecodec.base64Encode(bytes, start, end, true);
     default:
       throw unknownEncoding(encoding);
   }
@@ -577,7 +381,12 @@ class Buffer extends Uint8Array {
   }
 
   static isEncoding(encoding) {
-    return typeof encoding === "string" && ENCODING_ALIASES[encoding.toLowerCase()] !== undefined;
+    // The empty label means utf8 to `from`, but is not an encoding name; Node says false.
+    return (
+      typeof encoding === "string" &&
+      encoding !== "" &&
+      bytecodec.canonicalEncoding(encoding) !== null
+    );
   }
 
   static compare(buf1, buf2) {
@@ -621,7 +430,7 @@ class Buffer extends Uint8Array {
     const max = 50;
     const parts = [];
     const count = Math.min(this.length, max);
-    for (let i = 0; i < count; i++) parts.push(HEX_DIGITS[this[i] >> 4] + HEX_DIGITS[this[i] & 0x0f]);
+    for (let i = 0; i < count; i++) parts.push(bytecodec.hexEncode(this, i, i + 1));
     let out = `<Buffer ${parts.join(" ")}`;
     if (this.length > max) {
       const extra = this.length - max;
@@ -736,7 +545,7 @@ class Buffer extends Uint8Array {
     if (count <= 0) return this;
     if (pattern.length === 0) {
       // Only reachable for an empty Buffer pattern: Node rejects it when there is a range.
-      throw invalidArgValue("value", pattern);
+      throw invalidArgValue("value", pattern, "is invalid");
     }
 
     let position = start;
@@ -819,7 +628,7 @@ class Buffer extends Uint8Array {
     if (value instanceof Uint8Array) return value;
     throw invalidArgType(
       "value",
-      "one of type number or string or an instance of Buffer or Uint8Array",
+      "must be one of type number or string or an instance of Buffer or Uint8Array",
       value,
     );
   }

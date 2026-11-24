@@ -128,7 +128,7 @@ function createRequire(fromFile, parentModule) {
     // Builtin sources live in a virtual tree (`<lite:buffer>`), not on disk: resolve their
     // sibling requires against the embedded registry instead of the filesystem.
     if (fromFile.startsWith("<lite:")) {
-      const internal = resolveInternalSpecifier(specifier);
+      const internal = resolveInternalSpecifier(specifier, fromFile);
       if (internal !== null) return requireBuiltin(internal);
     }
     const resolution = host.resolve(specifier, fromFile, "require");
@@ -195,17 +195,45 @@ function canonicalBuiltin(specifier) {
   return specifier.startsWith("node:") ? specifier.slice(5) : specifier;
 }
 
+/// Join a relative specifier against the requiring module's virtual directory and flatten `.`
+/// and `..`. The registry names carry no `.js` suffix, so drop one if the specifier has it.
+function joinVirtualSpecifier(directory, specifier) {
+  const parts = (directory === "" ? specifier : `${directory}/${specifier}`).split("/");
+  const segments = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") segments.pop();
+    else segments.push(part);
+  }
+  return segments.join("/").replace(/\.js$/, "");
+}
+
 /// Map a require made from an embedded module onto a builtin name, or return null.
-function resolveInternalSpecifier(specifier) {
+///
+/// The embedded sources live in one flat registry, so only the requiring file says which
+/// directory a relative specifier means: `<lite:internal/fs>` is `internal/fs` on disk, while
+/// `<lite:fs>` is `fs`. Join the specifier against that virtual directory first, then fall back
+/// to the basename search for the shapes the flat registry does not mirror.
+function resolveInternalSpecifier(specifier, fromFile) {
   const name = canonicalBuiltin(specifier);
   if (host.builtinSource(name) !== null && host.builtinSource(name) !== undefined) return name;
-  if (name.startsWith("./") || name.startsWith("../")) {
-    const base = name.slice(name.lastIndexOf("/") + 1).replace(/\.js$/, "");
-    const candidates = [base, `internal/${base}`];
-    for (const candidate of candidates) {
-      const source = host.builtinSource(candidate);
-      if (source !== null && source !== undefined) return candidate;
-    }
+  if (!name.startsWith("./") && !name.startsWith("../")) return null;
+
+  const base = name.slice(name.lastIndexOf("/") + 1).replace(/\.js$/, "");
+  const candidates = [];
+  if (typeof fromFile === "string" && fromFile.startsWith("<lite:")) {
+    const embedded = fromFile.slice("<lite:".length);
+    const directory = embedded.startsWith("internal/") ? "internal" : "";
+    candidates.push(joinVirtualSpecifier(directory, name));
+  }
+  candidates.push(base, `internal/${base}`);
+  // The registry nests `fs/promises` and `readline/promises`, while the bundled files are
+  // hyphenated; keep the on-disk spelling reachable from an embedded sibling.
+  if (base.endsWith("-promises")) candidates.push(`${base.slice(0, -"-promises".length)}/promises`);
+  for (const candidate of candidates) {
+    if (candidate === "" || candidate === "internal/") continue;
+    const source = host.builtinSource(candidate);
+    if (source !== null && source !== undefined) return candidate;
   }
   return null;
 }
@@ -345,23 +373,8 @@ function runMain(filename) {
   return module.exports;
 }
 
-/// Evaluate an internal module source (loader, process factory, globals) without putting it in
-/// the public registry. Used only by bootstrap.
-function evalInternal(name, hostObject) {
-  const source = hostObject.builtinSource(name);
-  if (source === null || source === undefined) {
-    throw codedError(Error, "ERR_UNKNOWN_BUILTIN_MODULE", `No such internal module: ${name}`);
-  }
-  const filename = `<lite:${name}>`;
-  const module = { exports: {}, filename, loaded: false, children: [], parent: null };
-  hostObject.evalCjs(filename, source, module.exports, null, module, "<lite>");
-  module.loaded = true;
-  return module.exports;
-}
-
 module.exports = {
   install,
-  evalInternal,
   createRequire,
   requireBuiltin,
   isBuiltin,

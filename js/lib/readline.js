@@ -30,13 +30,15 @@
 //   * `crlfDelay` has no 100 ms floor (Node clamps smaller values up to 100 ms); `Infinity`
 //     holds a trailing `\r` until more input arrives or the stream ends.
 //   * `readline.promises` is not exported from this module; `readline/promises` is a separate
-//     builtin. The core module stays self-contained (`events` + `string_decoder` only).
+//     builtin. The core module stays self-contained (`events`, `string_decoder` and the leaf
+//     `internal/errors` only).
 //   * On a real canonical terminal `^\C` never reaches the interface, so `SIGINT` is only
 //     observable for programmatic input or a non-canonical reader. The process is never
 //     signalled or killed by this module.
 
 const EventEmitter = require("events");
 const { StringDecoder } = require("string_decoder");
+const { invalidArgType, invalidArgValue } = require("./internal/errors.js");
 
 const kHistorySize = 30;
 const kDefaultPrompt = "> ";
@@ -51,36 +53,6 @@ function codedError(Ctor, code, message) {
   const error = new Ctor(message);
   error.code = code;
   return error;
-}
-
-function describeValue(value) {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  const type = typeof value;
-  if (type === "string") return "type string";
-  if (type === "number" || type === "boolean" || type === "bigint") return `type ${type} (${String(value)})`;
-  if (type === "function") return `function ${value.name || "anonymous"}`;
-  if (ArrayBuffer.isView(value)) {
-    return `an instance of ${(value.constructor && value.constructor.name) || "TypedArray"}`;
-  }
-  const name = value && value.constructor && value.constructor.name;
-  return `an instance of ${name || "Object"}`;
-}
-
-function invalidArgType(name, expected, value) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${describeValue(value)}`,
-  );
-}
-
-function invalidArgValue(name, value, reason) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' ${reason || "is invalid"}. Received ${String(value)}`,
-  );
 }
 
 function outOfRangeSize(value) {

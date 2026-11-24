@@ -1,0 +1,41 @@
+empty base64: 0 
+empty hex: 0 
+base64 one char: 0 
+base64 two chars: 1 00
+base64 three chars: 2 0010
+base64 four chars: 3 001083
+base64 whitespace: 5 68656c6c6f
+base64 punctuation: 4 41424344
+base64 stops at padding: 1 41
+base64 only padding: 0 
+base64 invalid only: 0 
+base64 url-safe under base64: 2 fbff
+base64 standard under base64url: 2 fbff
+hex odd digit: 1 ab
+hex uppercase: 3 abcdef
+hex stops at a pair: 1 12
+hex bad first pair: 0 
+hex empty tail: 1 ab
+hex latin-1 masking: 1 a0
+hex astral masking: 1 ab
+base64 latin-1 masking: 3 414689
+base64 lone surrogate: 1 41
+base64 lone low surrogate: 3 414243
+base64 astral: 1 41
+base64 lone surrogate first: 0 
+encode 0 "" "" ""
+encode 1 "00" "AA==" "AA"
+encode 1 "0f" "Dw==" "Dw"
+encode 1 "ff" "/w==" "_w"
+encode 2 "ffff" "//8=" "__8"
+encode 2 "fbff" "+/8=" "-_8"
+encode 3 "414243" "QUJD" "QUJD"
+hex range 010203
+hex reversed ""
+hex past end 0607
+hex negative 000102
+base64 range AgMEBQY=
+base64url range AAECAwQFBgc
+uint8 view hex 02030405
+write+read 010203
+exit:0

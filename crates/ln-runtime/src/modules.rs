@@ -69,6 +69,8 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "child_process" => bundled_js!("lib/child_process.js"),
         "zlib" => bundled_js!("lib/zlib.js"),
         "internal/loader" | "loader" => bundled_js!("lib/loader.js"),
+        "internal/errors" => bundled_js!("lib/internal/errors.js"),
+        "internal/bytes" => bundled_js!("lib/internal/bytes.js"),
         "internal/fs" => bundled_js!("lib/internal/fs.js"),
         "internal/http" => bundled_js!("lib/internal/http.js"),
         "internal/net" => bundled_js!("lib/internal/net.js"),
@@ -618,6 +620,20 @@ mod tests {
                 "BUILTINS lists {name} but modules::builtin_source has no arm for it"
             );
         }
+    }
+
+    /// `internal/errors` is the shared JS error vocabulary: embedded and reachable from the
+    /// virtual tree, but not part of the public builtin namespace.
+    #[test]
+    fn internal_errors_is_reachable_without_being_public() {
+        assert!(builtin_source("internal/errors").is_some());
+        assert_eq!(ln_modules::lookup_builtin("internal/errors"), None);
+    }
+
+    #[test]
+    fn internal_bytes_is_reachable_without_being_public() {
+        assert!(builtin_source("internal/bytes").is_some());
+        assert_eq!(ln_modules::lookup_builtin("internal/bytes"), None);
     }
 
     #[test]

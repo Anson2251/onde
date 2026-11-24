@@ -91,65 +91,15 @@ const kFinalized = Symbol("lite.crypto.finalized");
 // ---------------------------------------------------------------------------------------------
 // Errors
 //
-// The Rust `ln-error` crate is not reachable from JavaScript, so the coded argument errors are
-// built here with Node's constructor, code and message text (probed against `node v26.10.0`).
+// The shared vocabulary lives in `internal/errors.js`; only crypto-specific errors belong here.
 // ---------------------------------------------------------------------------------------------
 
-function makeError(Ctor, code, message) {
-  const error = new Ctor(message);
-  if (code !== undefined) error.code = code;
-  return error;
-}
-
-/** Node's `determineSpecificType` rendering for `ERR_INVALID_ARG_TYPE`. */
-function describeValue(value) {
-  if (value === null || value === undefined) return String(value);
-  const type = typeof value;
-  if (type === "function") return `function ${value.name}`;
-  if (type === "object") {
-    const name = value.constructor && value.constructor.name;
-    return `an instance of ${name || "Object"}`;
-  }
-  if (type === "bigint") return `type bigint (${value}n)`;
-  if (type === "string") return `type string ('${value}')`;
-  return `type ${type} (${String(value)})`;
-}
-
-function invalidArgType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be ${expected}. Received ${describeValue(value)}`,
-  );
-}
-
-/** Node says "property" (not "argument") for a validated option field. */
-function invalidPropertyType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" property must be of type ${expected}. Received ${describeValue(value)}`,
-  );
-}
-
-/**
- * Node's `ERR_OUT_OF_RANGE` rendering: integers above 2^32 get `_` separators
- * (`281_474_976_710_656`), everything else is plain (`2147483648`).
- */
-function formatNumber(value) {
-  if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) > 2 ** 32) {
-    return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, "_");
-  }
-  return String(value);
-}
-
-function outOfRange(name, range, value) {
-  return makeError(
-    RangeError,
-    "ERR_OUT_OF_RANGE",
-    `The value of "${name}" is out of range. It must be ${range}. Received ${formatNumber(value)}`,
-  );
-}
+const {
+  coded: makeError,
+  invalidArgType,
+  invalidPropertyType,
+  outOfRange,
+} = require("./internal/errors.js");
 
 function hashFinalizedError() {
   return makeError(Error, "ERR_CRYPTO_HASH_FINALIZED", "Digest already called");
@@ -163,6 +113,14 @@ function invalidDigestError(digest) {
 // Host and byte helpers
 // ---------------------------------------------------------------------------------------------
 
+// Coercion is shared. `byteView` returns `null` for a non-byte value, and every call below is
+// guarded by `isAnyArrayBuffer`/`isArrayBufferView`, so only the non-null path is reachable.
+const {
+  byteView,
+  isAnyArrayBuffer,
+  isArrayBufferView,
+} = require("./internal/bytes.js");
+
 function hostCrypto() {
   const host = globalThis.__ln_host;
   const crypto = host === undefined || host === null ? undefined : host.crypto;
@@ -172,21 +130,6 @@ function hostCrypto() {
     throw new Error("crypto is unavailable: __ln_host.crypto is not installed");
   }
   return crypto;
-}
-
-function isAnyArrayBuffer(value) {
-  if (value instanceof ArrayBuffer) return true;
-  return typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
-}
-
-function isArrayBufferView(value) {
-  return Buffer.isBuffer(value) || ArrayBuffer.isView(value);
-}
-
-/** The exact bytes Node would hash/compare: raw view bytes, or a whole ArrayBuffer. */
-function byteView(value) {
-  if (isAnyArrayBuffer(value)) return new Uint8Array(value, 0, value.byteLength);
-  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 }
 
 function lookupAlgorithm(name) {
@@ -369,10 +312,10 @@ function randomInt(min, max, callback) {
     throw invalidArgType("callback", "of type function", callback);
   }
   if (!Number.isSafeInteger(min)) {
-    throw invalidArgType("min", "a safe integer", min);
+    throw invalidArgType("min", "must be a safe integer", min);
   }
   if (!Number.isSafeInteger(max)) {
-    throw invalidArgType("max", "a safe integer", max);
+    throw invalidArgType("max", "must be a safe integer", max);
   }
   if (max <= min) {
     throw outOfRange("max", `greater than the value of "min" (${min})`, max);

@@ -55,6 +55,10 @@ ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps
 | `ln-error` | `NodeError`, errno→code and message tables, argument-error constructors | know about QuickJS or any runtime policy |
 | `js/` | the user-visible Node API where JS is expressive enough | reach into engine internals |
 
+`js/lib/internal/*` (currently `errors` and `bytes`) are leaf helpers behind that JS surface: they
+hold the shared error vocabulary and byte codecs, require only each other, and make no syscall or
+engine access.
+
 The `ln-sched`/`ln-engine` split is the whole point: policy is testable without FFI, and the FFI
 adapter is thin enough to review.
 

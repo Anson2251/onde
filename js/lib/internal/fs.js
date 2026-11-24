@@ -59,14 +59,17 @@ try {
 }
 const { Readable, Writable, addAbortSignal } = streamModule;
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
+// The shared coded-error vocabulary. `internal/errors` is a leaf — it requires nothing — so this
+// cannot create a load-order cycle.
+const {
+  coded: codedError,
+  invalidArgType,
+  invalidArgValue,
+  outOfRange,
+} = require("./errors.js");
 
-// Resolve an internal module name without the embedded/on-disk ambiguity: `./internal/fs` from
-// `<lite:fs>` would resolve back to `fs` itself through the loader's base-name fallback.
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
+// `internal/bytes` owns byte coercion and concatenation; it is a leaf, like `errors`.
+const bytecodec = require("./bytes.js");
 
 // --- host bridge -----------------------------------------------------------------------------
 
@@ -85,52 +88,9 @@ function hostAsync(name, args, options) {
 }
 
 // --- error helpers ---------------------------------------------------------------------------
-
-function describe(value) {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  if (typeof value === "string") return `'${value}'`;
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return `${typeof value} (${String(value)})`;
-  }
-  if (typeof value === "symbol") return value.toString();
-  if (typeof value === "function") return `function ${value.name || "anonymous"}`;
-  try {
-    return JSON.stringify(value);
-  } catch (_) {
-    return typeof value;
-  }
-}
-
-function codedError(Ctor, code, message) {
-  const error = new Ctor(message);
-  error.code = code;
-  return error;
-}
-
-function invalidArgType(name, expected, actual) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${describe(actual)}`,
-  );
-}
-
-function invalidArgValue(name, value, reason) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' ${reason}. Received ${describe(value)}`,
-  );
-}
-
-function outOfRange(name, range, value) {
-  return codedError(
-    RangeError,
-    "ERR_OUT_OF_RANGE",
-    `The value of "${name}" is out of range. It must be ${range}. Received ${String(value)}`,
-  );
-}
+//
+// The coded argument errors (`codedError`, `invalidArgType`, `invalidArgValue`, `outOfRange`)
+// come from `internal/errors`; what remains here is the fs-specific syscall shape.
 
 // A syscall failure the JS layer detects itself (a closed FileHandle, a double `fs.close`). The
 // host produces these for real syscalls; this keeps the shape identical.
@@ -225,7 +185,7 @@ function abortSignalOf(options) {
   if (signal === undefined || signal === null) return undefined;
   if (typeof signal !== "object" || typeof signal.aborted !== "boolean" ||
       typeof signal.addEventListener !== "function") {
-    throw invalidArgType("options.signal", "AbortSignal", signal);
+    throw invalidArgType("options.signal", "an instance of AbortSignal", signal);
   }
   return signal;
 }
@@ -480,16 +440,19 @@ function decodeBytes(bytes, encoding) {
   return buffer.toString(encoding);
 }
 
+// The name stays for the fs callers; the view construction is `internal/bytes`'. A raw
+// SharedArrayBuffer stays rejected as data (fs accepts a view over one, not the buffer itself),
+// which `byteView` alone would widen.
+const concatBytes = bytecodec.concatBytes;
+
 function toBytes(value) {
-  if (value instanceof Uint8Array) return value;
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  return null;
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) return null;
+  return bytecodec.byteView(value);
 }
 
 function asUint8Array(value, name) {
   const bytes = toBytes(value);
-  if (bytes === null) throw invalidArgType(name, "Buffer, TypedArray, or DataView", value);
+  if (bytes === null) throw invalidArgType(name, "an instance of Buffer, TypedArray, or DataView", value);
   return bytes;
 }
 
@@ -520,17 +483,6 @@ function copyInto(bytes, target, offset) {
   return count;
 }
 
-function concatBytes(chunks, total) {
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (let index = 0; index < chunks.length; index++) {
-    const chunk = chunks[index];
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
 // --- option objects --------------------------------------------------------------------------
 
 function getOptions(options, defaultOptions) {
@@ -540,6 +492,56 @@ function getOptions(options, defaultOptions) {
     throw invalidArgType("options", "object", options);
   }
   return options;
+}
+
+// The two surfaces (`fs` and `fs/promises`) parse `readFile`/`writeFile` options identically; the
+// flag/default differences are what each caller passes, not a second parser. `flagGiven` and
+// `flush` are part of the merged shape even where a caller does not consult them.
+function parseReadFileOptions(options) {
+  const opts =
+    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
+  if (typeof opts !== "object") throw invalidArgType("options", "object", options);
+  return {
+    encoding:
+      opts.encoding === undefined || opts.encoding === null
+        ? null
+        : normalizeEncoding(opts.encoding),
+    flags: normalizeFlags(opts.flag, "options.flag"),
+    flagGiven: opts.flag !== undefined,
+    signal: abortSignalOf(opts),
+  };
+}
+
+function parseWriteFileOptions(options, defaultFlag) {
+  const opts =
+    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
+  if (typeof opts !== "object") throw invalidArgType("options", "object", options);
+  return {
+    encoding:
+      opts.encoding === undefined || opts.encoding === null
+        ? "utf8"
+        : normalizeEncoding(opts.encoding),
+    mode: opts.mode === undefined ? 0o666 : parseFileMode(opts.mode, "options.mode", 0o666),
+    flags: normalizeFlags(opts.flag === undefined ? defaultFlag : opts.flag, "options.flag"),
+    flush: opts.flush === true,
+    signal: abortSignalOf(opts),
+  };
+}
+
+// One `readdir` entry: a `Dirent`, a `Buffer` name for `encoding: "buffer"`, or a string name,
+// with `displayName` overriding the name for the recursive walk (the relative path).
+function entryValue(entry, encoding, parentPath, withFileTypes, displayName) {
+  const name = encoding === "buffer" ? Buffer.from(entry.name, "utf8") : entry.name;
+  if (withFileTypes) return new Dirent(name, entry.kind, parentPath);
+  const label = displayName === undefined ? entry.name : displayName;
+  return encoding === "buffer" ? Buffer.from(label, "utf8") : label;
+}
+
+// `"buffer"` is not a Buffer encoding; it means "return a Buffer" to the caller.
+function fileEncoding(encoding) {
+  if (encoding === undefined || encoding === null) return "utf8";
+  if (encoding === "buffer") return "buffer";
+  return normalizeEncoding(encoding);
 }
 
 // --- Stats / Dirent / Dir --------------------------------------------------------------------
@@ -1141,7 +1143,7 @@ function parseFhReadArgs(bufferOrOptions, offset, length, position) {
     opts = bufferOrOptions;
     buffer = opts.buffer === undefined ? Buffer.alloc(READ_CHUNK) : asUint8Array(opts.buffer, "options.buffer");
   } else {
-    throw invalidArgType("buffer", "Buffer, TypedArray, or DataView", bufferOrOptions);
+    throw invalidArgType("buffer", "an instance of Buffer, TypedArray, or DataView", bufferOrOptions);
   }
   const window = validateOffsetLength(buffer, opts.offset, opts.length);
   return { buffer, offset: window.offset, length: window.length, position: validatePosition(opts.position) };
@@ -1467,6 +1469,10 @@ module.exports = {
   normalizeEncoding,
   encodingOrNull,
   getOptions,
+  parseReadFileOptions,
+  parseWriteFileOptions,
+  entryValue,
+  fileEncoding,
   validateInteger,
   validatePosition,
   validateOffsetLength,
@@ -1508,5 +1514,4 @@ module.exports = {
   dataToBytes,
   READ_CHUNK,
   MAX_READ_LENGTH,
-  requireInternal,
 };

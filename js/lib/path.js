@@ -33,6 +33,8 @@ const platform =
     : "";
 const isWindows = platform === "win32";
 
+const { invalidArgType } = require("./internal/errors.js");
+
 function isPathSeparator(code) {
   return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
 }
@@ -56,39 +58,6 @@ function isWindowsReservedName(path, colonIndex) {
 // ---------------------------------------------------------------------------
 // Argument validation (Node's ERR_INVALID_ARG_TYPE shape)
 // ---------------------------------------------------------------------------
-
-function describeValue(value) {
-  if (value === null) return "null";
-  const type = typeof value;
-  switch (type) {
-    case "undefined":
-      return "undefined";
-    case "number":
-    case "boolean":
-    case "bigint":
-      return `type ${type} (${String(value)})`;
-    case "symbol":
-      return `type symbol (${String(value)})`;
-    case "string":
-      return `type string ('${value}')`;
-    case "function":
-      return `function ${value.name || "(anonymous)"}`;
-    case "object": {
-      const ctor = value.constructor && value.constructor.name;
-      return ctor ? `an instance of ${ctor}` : "an object";
-    }
-    default:
-      return type;
-  }
-}
-
-function invalidArgType(name, expected, actual) {
-  const err = new TypeError(
-    `The "${name}" argument must be of type ${expected}. Received ${describeValue(actual)}`,
-  );
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
 
 function validateString(value, name) {
   if (typeof value !== "string") throw invalidArgType(name, "string", value);

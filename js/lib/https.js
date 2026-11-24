@@ -15,16 +15,9 @@
 // options (m4-plan §2.5). Renegotiation, session reuse, client certificates and a full
 // `getPeerCertificate()` are not implemented; D41 records that.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const http = requireInternal("http", "./http.js");
-const tls = requireInternal("tls", "./tls.js");
-const internal = requireInternal("internal/http", "./internal/http.js");
+const http = require("./http.js");
+const tls = require("./tls.js");
+const internal = require("./internal/http.js");
 
 let BufferCtor = null;
 try {

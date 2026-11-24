@@ -13,16 +13,7 @@
 // `fs/promises` is a different API (D35) and lives in `fs-promises.js`; this module exposes it
 // through the `promises` getter only.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-// Resolve an internal sibling: embedded builds name the builtin, a checkout run resolves the
-// file next to this one. `./internal/fs` from `<lite:fs>` would otherwise resolve back to `fs`.
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const internal = requireInternal("internal/fs", "./internal/fs.js");
+const internal = require("./internal/fs.js");
 const { constants, Stats, Dirent, Dir, FileHandle } = internal;
 
 let BufferCtor = null;
@@ -105,34 +96,6 @@ function isPromise(value) {
   return value !== null && typeof value === "object" && typeof value.then === "function";
 }
 
-function parseReadFileOptions(options) {
-  const opts =
-    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
-  if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
-  const encoding =
-    opts.encoding === undefined || opts.encoding === null
-      ? null
-      : internal.normalizeEncoding(opts.encoding);
-  const flags = internal.normalizeFlags(opts.flag, "options.flag");
-  return { encoding, flags, signal: internal.abortSignalOf(opts) };
-}
-
-function parseWriteFileOptions(options, defaultFlag) {
-  const opts =
-    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
-  if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
-  return {
-    encoding:
-      opts.encoding === undefined || opts.encoding === null
-        ? "utf8"
-        : internal.normalizeEncoding(opts.encoding),
-    mode: opts.mode === undefined ? 0o666 : internal.parseFileMode(opts.mode, "options.mode", 0o666),
-    flags: internal.normalizeFlags(opts.flag === undefined ? defaultFlag : opts.flag, "options.flag"),
-    flush: opts.flush === true,
-    signal: internal.abortSignalOf(opts),
-  };
-}
-
 function requiredMode(mode) {
   if (mode === undefined || mode === null) {
     throw internal.invalidArgType("mode", "integer", mode);
@@ -148,7 +111,7 @@ function readFile(pathValue, options, callback) {
     options = undefined;
   }
   checkCallback(callback);
-  const parsed = parseReadFileOptions(options);
+  const parsed = internal.parseReadFileOptions(options);
   const target = internal.toPath(pathValue);
   if (parsed.flags === constants.O_RDONLY) {
     internal.callAsync("readFile", [target], {
@@ -180,7 +143,7 @@ function readFileWithFlags(target, parsed) {
 }
 
 function readFileSync(pathValue, options) {
-  const parsed = parseReadFileOptions(options);
+  const parsed = internal.parseReadFileOptions(options);
   const target = internal.toPath(pathValue);
   if (parsed.flags === constants.O_RDONLY) {
     return internal.decodeBytes(internal.sync("readFile", [target]), parsed.encoding);
@@ -209,7 +172,7 @@ function writeFile(file, data, options, callback) {
     options = undefined;
   }
   checkCallback(callback);
-  const parsed = parseWriteFileOptions(options, "w");
+  const parsed = internal.parseWriteFileOptions(options, "w");
   const target = internal.toPath(file);
   const bytes = internal.dataToBytes(data, parsed.encoding, true);
   const args = [target, bytes, parsed.mode, parsed.flags];
@@ -231,7 +194,7 @@ function writeFile(file, data, options, callback) {
 }
 
 function writeFileSync(file, data, options) {
-  const parsed = parseWriteFileOptions(options, "w");
+  const parsed = internal.parseWriteFileOptions(options, "w");
   const target = internal.toPath(file);
   const bytes = internal.dataToBytes(data, parsed.encoding, false);
   internal.sync("writeFile", [target, bytes, parsed.mode, parsed.flags]);
@@ -243,7 +206,7 @@ function appendFile(file, data, options, callback) {
     options = undefined;
   }
   checkCallback(callback);
-  const parsed = parseWriteFileOptions(options, "a");
+  const parsed = internal.parseWriteFileOptions(options, "a");
   const target = internal.toPath(file);
   const bytes = internal.dataToBytes(data, parsed.encoding, true);
   if (!isPromise(bytes)) {
@@ -264,7 +227,7 @@ function appendFile(file, data, options, callback) {
 }
 
 function appendFileSync(file, data, options) {
-  const parsed = parseWriteFileOptions(options, "a");
+  const parsed = internal.parseWriteFileOptions(options, "a");
   const target = internal.toPath(file);
   const bytes = internal.dataToBytes(data, parsed.encoding, false);
   internal.sync("appendFile", [target, bytes, parsed.mode, parsed.flags]);
@@ -548,13 +511,13 @@ function decodeStringResult(value, encoding) {
 
 function mkdtempOptions(options) {
   const opts = options === undefined || options === null ? {} : options;
-  if (typeof opts === "string") return { encoding: fileEncoding(opts) };
+  if (typeof opts === "string") return { encoding: internal.fileEncoding(opts) };
   if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
   return {
     encoding:
       opts.encoding === undefined || opts.encoding === null
         ? "utf8"
-        : fileEncoding(opts.encoding),
+        : internal.fileEncoding(opts.encoding),
   };
 }
 
@@ -612,13 +575,6 @@ function readdirOptions(options) {
   };
 }
 
-function entryValue(entry, encoding, parentPath, withFileTypes, displayName) {
-  const name = encoding === "buffer" ? Buffer.from(entry.name, "utf8") : entry.name;
-  if (withFileTypes) return new Dirent(name, entry.kind, parentPath);
-  const label = displayName === undefined ? entry.name : displayName;
-  return encoding === "buffer" ? Buffer.from(label, "utf8") : label;
-}
-
 function readdirSync(pathValue, options) {
   const opts = readdirOptions(options);
   const target = internal.toPath(pathValue);
@@ -629,7 +585,7 @@ function readdirSync(pathValue, options) {
       const entry = entries[index];
       const rel = relative === "" ? entry.name : path().join(relative, entry.name);
       const childParent = relative === "" ? parentPath : path().join(parentPath, relative);
-      result.push(entryValue(entry, opts.encoding, childParent, opts.withFileTypes, rel));
+      result.push(internal.entryValue(entry, opts.encoding, childParent, opts.withFileTypes, rel));
       if (opts.recursive && entry.kind === constants.UV_DIRENT_DIR) {
         walk(path().join(directory, entry.name), rel, parentPath);
       }
@@ -656,7 +612,7 @@ function readdir(pathValue, options, callback) {
         }
         const result = [];
         for (let index = 0; index < entries.length; index++) {
-          result.push(entryValue(entries[index], opts.encoding, target, opts.withFileTypes));
+          result.push(internal.entryValue(entries[index], opts.encoding, target, opts.withFileTypes));
         }
         callback(null, result);
       },
@@ -671,7 +627,7 @@ function readdir(pathValue, options, callback) {
         const entry = entries[index];
         const rel = relative === "" ? entry.name : path().join(relative, entry.name);
         const childParent = relative === "" ? parentPath : path().join(parentPath, relative);
-        result.push(entryValue(entry, opts.encoding, childParent, opts.withFileTypes, rel));
+        result.push(internal.entryValue(entry, opts.encoding, childParent, opts.withFileTypes, rel));
         if (entry.kind === constants.UV_DIRENT_DIR) {
           const name = entry.name;
           chain = chain.then(() =>
@@ -694,7 +650,7 @@ function opendirSync(pathValue, options) {
   const entries = internal.sync("readdir", [target, true]);
   const dirents = [];
   for (let index = 0; index < entries.length; index++) {
-    dirents.push(entryValue(entries[index], opts.encoding, target, true));
+    dirents.push(internal.entryValue(entries[index], opts.encoding, target, true));
   }
   return new Dir(target, dirents);
 }
@@ -715,7 +671,7 @@ function opendir(pathValue, options, callback) {
       }
       const dirents = [];
       for (let index = 0; index < entries.length; index++) {
-        dirents.push(entryValue(entries[index], opts.encoding, target, true));
+        dirents.push(internal.entryValue(entries[index], opts.encoding, target, true));
       }
       callback(null, new Dir(target, dirents));
     },
@@ -904,20 +860,15 @@ function ftruncateSync(fd, len) {
 
 // --- links / realpath / utimes ---------------------------------------------------------------
 
-function fileEncoding(encoding) {
-  if (encoding === "buffer") return "buffer";
-  return internal.normalizeEncoding(encoding);
-}
-
 function readlinkOptions(options) {
   const opts = options === undefined || options === null ? {} : options;
-  if (typeof opts === "string") return { encoding: fileEncoding(opts) };
+  if (typeof opts === "string") return { encoding: internal.fileEncoding(opts) };
   if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
   return {
     encoding:
       opts.encoding === undefined || opts.encoding === null
         ? "utf8"
-        : fileEncoding(opts.encoding),
+        : internal.fileEncoding(opts.encoding),
   };
 }
 
@@ -1000,13 +951,13 @@ function linkSync(existingPath, newPath) {
 
 function realpathOptions(options) {
   const opts = options === undefined || options === null ? {} : options;
-  if (typeof opts === "string") return { encoding: fileEncoding(opts) };
+  if (typeof opts === "string") return { encoding: internal.fileEncoding(opts) };
   if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
   return {
     encoding:
       opts.encoding === undefined || opts.encoding === null
         ? "utf8"
-        : fileEncoding(opts.encoding),
+        : internal.fileEncoding(opts.encoding),
   };
 }
 
@@ -1825,7 +1776,7 @@ function createWriteStream(pathValue, options) {
 let promisesModule = null;
 function loadPromises() {
   if (promisesModule === null) {
-    promisesModule = EMBEDDED ? require("fs/promises") : require("./fs-promises.js");
+    promisesModule = require("./fs-promises.js");
   }
   return promisesModule;
 }

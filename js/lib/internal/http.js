@@ -24,15 +24,6 @@
 // `headersDistinct`, CONNECT tunnelling beyond the upgrade handover, and TLS (`https` surfaces
 // `ERR_FEATURE_UNAVAILABLE` until WP6).
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-// Embedded builds resolve internal siblings by builtin name; a checkout run (`lite
-// test/js/lib/http.test.js`) resolves the file next to this one.
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
 const host = globalThis.__ln_host;
 
 let BufferCtor = null;
@@ -59,12 +50,20 @@ try {
 }
 const { Readable, Writable } = streamModule;
 
+// The shared coded-error vocabulary. `internal/errors` is a leaf, so requiring it here cannot
+// create a load-order cycle.
+const {
+  coded: codedError,
+  invalidArgType,
+  invalidArgValue,
+} = require("./errors.js");
+
 // `internal/net` owns the id source, the single-sink registry and `onHandleEvent`. `net` owns the
 // socket and server classes. Both are loaded lazily so this module can be required first.
 let internalNetModule = null;
 function internalNet() {
   if (internalNetModule === null) {
-    internalNetModule = requireInternal("internal/net", "./net.js");
+    internalNetModule = require("./net.js");
   }
   return internalNetModule;
 }
@@ -72,7 +71,7 @@ function internalNet() {
 let netModule = null;
 function net() {
   if (netModule === null) {
-    netModule = requireInternal("net", "../net.js");
+    netModule = require("../net.js");
   }
   return netModule;
 }
@@ -191,6 +190,9 @@ const DEFAULT_MAX_HEADERS = 2000;
 const EXPECTS_BODY = new Set(["POST", "PUT", "PATCH"]);
 
 // --- errors ----------------------------------------------------------------------------------
+//
+// `codedError`, `invalidArgType` and `invalidArgValue` come from `internal/errors`; `describe`
+// stays because the HTTP-specific errors below render values with it.
 
 function describe(value) {
   if (value === null) return "null";
@@ -203,34 +205,6 @@ function describe(value) {
   if (typeof value === "symbol") return value.toString();
   const name = value && value.constructor && value.constructor.name;
   return `an instance of ${name || "Object"}`;
-}
-
-function codedError(Ctor, code, message) {
-  const error = new Ctor(message);
-  error.code = code;
-  return error;
-}
-
-function invalidArgType(name, expected, actual) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${describe(actual)}`,
-  );
-}
-
-function invalidArgValue(name, value, reason) {
-  let rendered;
-  try {
-    rendered = typeof value === "string" ? `'${value}'` : String(value);
-  } catch (_) {
-    rendered = "<value>";
-  }
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' ${reason}. Received ${rendered}`,
-  );
 }
 
 function httpTokenError(name) {

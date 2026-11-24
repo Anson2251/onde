@@ -10,15 +10,8 @@
 // one read is in flight per stream. `drain` from the task releases the pending write callback when
 // the write queue empties.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const { Readable, Writable } = requireInternal("stream", "./stream.js");
-const { Buffer } = requireInternal("buffer", "./buffer.js");
+const { Readable, Writable } = require("./stream.js");
+const { Buffer } = require("./buffer.js");
 
 const host = globalThis.__ln_host;
 const MAX_CHUNK = 64 * 1024;

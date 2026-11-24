@@ -27,121 +27,34 @@ const decodeUTF8 = textcodec.decodeUTF8;
 
 const EMPTY = new Uint8Array(0);
 
-const ENCODING_ALIASES = Object.assign(Object.create(null), {
-  utf8: "utf8",
-  "utf-8": "utf8",
-  utf16le: "utf16le",
-  "utf-16le": "utf16le",
-  ucs2: "utf16le",
-  "ucs-2": "utf16le",
-  latin1: "latin1",
-  binary: "latin1",
-  base64: "base64",
-  base64url: "base64url",
-  ascii: "ascii",
-  hex: "hex",
-});
+// One call per `write` finds the held suffix and decodes the rest in Rust. The JavaScript loop in
+// `_writeUtf8` remains the reference path for the node leg, where `__ln_host` has no `text`.
+const hostText = (() => {
+  const host = globalThis.__ln_host;
+  return host === undefined || host === null || host.text === undefined ? null : host.text;
+})();
+const decodeStream = hostText === null ? null : hostText.decodeStream;
 
-function makeError(Ctor, code, message) {
-  const err = new Ctor(message);
-  err.code = code;
-  return err;
-}
-
-function unknownEncoding(encoding) {
-  return makeError(TypeError, "ERR_UNKNOWN_ENCODING", `Unknown encoding: ${String(encoding)}`);
-}
-
-function invalidArgType(name, expected, value) {
-  let received;
-  if (value === null) received = "null";
-  else if (typeof value === "string") received = `type string ('${value}')`;
-  else if (ArrayBuffer.isView(value)) {
-    received = `an instance of ${(value.constructor && value.constructor.name) || "TypedArray"}`;
-  } else received = `type ${typeof value} (${String(value)})`;
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be ${expected}. Received ${received}`,
-  );
-}
+const {
+  invalidArgType,
+  unknownEncoding,
+} = require("./internal/errors.js");
+// The stateless codecs, the alias table and the two-byte concatenation live in
+// `internal/bytes.js`; the chunk-boundary state machines below stay here.
+const bytecodec = require("./internal/bytes.js");
 
 function normalizeEncoding(encoding) {
   if (encoding === undefined || encoding === null || encoding === "") return "utf8";
   if (typeof encoding !== "string") return null;
-  return ENCODING_ALIASES[encoding.toLowerCase()] || null;
+  return bytecodec.canonicalEncoding(encoding);
 }
 
 function toBytes(value) {
-  if (value instanceof Uint8Array) return value;
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  const bytes = bytecodec.byteView(value);
+  if (bytes === null) {
+    throw invalidArgType("buf", "an instance of Buffer, ArrayBuffer or ArrayBufferView", value);
   }
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
-    return new Uint8Array(value);
-  }
-  throw invalidArgType("buf", "an instance of Buffer, ArrayBuffer or ArrayBufferView", value);
-}
-
-function concatBytes(first, second) {
-  if (first.length === 0) return second;
-  if (second.length === 0) return first;
-  const out = new Uint8Array(first.length + second.length);
-  out.set(first, 0);
-  out.set(second, first.length);
-  return out;
-}
-
-const HEX_DIGITS = "0123456789abcdef";
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-function hexEncode(bytes) {
-  let out = "";
-  for (let i = 0; i < bytes.length; i++) {
-    out += HEX_DIGITS[bytes[i] >> 4] + HEX_DIGITS[bytes[i] & 0x0f];
-  }
-  return out;
-}
-
-function base64Encode(bytes, url) {
-  const alphabet = url ? BASE64URL_ALPHABET : BASE64_ALPHABET;
-  let out = "";
-  let i = 0;
-  for (; i + 2 < bytes.length; i += 3) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
-    out +=
-      alphabet[n >> 18] +
-      alphabet[(n >> 12) & 0x3f] +
-      alphabet[(n >> 6) & 0x3f] +
-      alphabet[n & 0x3f];
-  }
-  const remaining = bytes.length - i;
-  if (remaining === 1) {
-    const n = bytes[i] << 16;
-    out += alphabet[n >> 18] + alphabet[(n >> 12) & 0x3f];
-    if (!url) out += "==";
-  } else if (remaining === 2) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
-    out += alphabet[n >> 18] + alphabet[(n >> 12) & 0x3f] + alphabet[(n >> 6) & 0x3f];
-    if (!url) out += "=";
-  }
-  return out;
-}
-
-function latin1Text(bytes, mask) {
-  let out = "";
-  let chunk = [];
-  for (let i = 0; i < bytes.length; i++) {
-    chunk.push(bytes[i] & mask);
-    if (chunk.length === 4096) {
-      out += String.fromCharCode.apply(null, chunk);
-      chunk = [];
-    }
-  }
-  if (chunk.length) out += String.fromCharCode.apply(null, chunk);
-  return out;
+  return bytes;
 }
 
 // Decode one chunk of UTF-8, holding back at most a single incomplete sequence at the end.
@@ -189,17 +102,17 @@ class StringDecoder {
         text = this._writeBase64(bytes);
         break;
       case "hex":
-        text = hexEncode(bytes);
+        text = bytecodec.hexEncode(bytes, 0, bytes.length);
         this.lastNeed = 0;
         this.lastTotal = 0;
         break;
       case "latin1":
-        text = latin1Text(bytes, 0xff);
+        text = bytecodec.decodeLatin1(bytes, 0, bytes.length);
         this.lastNeed = 0;
         this.lastTotal = 0;
         break;
       case "ascii":
-        text = latin1Text(bytes, 0x7f);
+        text = bytecodec.decodeAscii(bytes, 0, bytes.length);
         this.lastNeed = 0;
         this.lastTotal = 0;
         break;
@@ -242,7 +155,12 @@ class StringDecoder {
       case "base64":
       case "base64url":
         if (this._pending.length > 0) {
-          text += base64Encode(this._pending, this.encoding === "base64url");
+          text += bytecodec.base64Encode(
+            this._pending,
+            0,
+            this._pending.length,
+            this.encoding === "base64url",
+          );
           this._pending = EMPTY;
         }
         break;
@@ -256,7 +174,21 @@ class StringDecoder {
   }
 
   _writeUtf8(bytes) {
-    const combined = concatBytes(this._pending, bytes);
+    if (typeof decodeStream === "function") {
+      const result = decodeStream(bytes, 0, bytes.length, this._pending, false);
+      this._pending = result.pending;
+      const pending = result.pending;
+      if (pending.length > 0) {
+        this.lastNeed = utf8SequenceLength(pending[0]) - pending.length;
+        this.lastTotal = utf8SequenceLength(pending[0]);
+      } else {
+        this.lastNeed = 0;
+        this.lastTotal = 0;
+      }
+      return result.text;
+    }
+
+    const combined = bytecodec.concatBytes(this._pending, bytes);
     let out = "";
     let i = 0;
     let pending = EMPTY;
@@ -411,10 +343,12 @@ class StringDecoder {
   }
 
   _writeBase64(bytes) {
-    const combined = concatBytes(this._pending, bytes);
+    const combined = bytecodec.concatBytes(this._pending, bytes);
     const complete = combined.length - (combined.length % 3);
-    const text = base64Encode(
-      complete === combined.length ? combined : combined.subarray(0, complete),
+    const text = bytecodec.base64Encode(
+      combined,
+      0,
+      complete,
       this.encoding === "base64url",
     );
     this._pending = complete === combined.length ? EMPTY : combined.slice(complete);

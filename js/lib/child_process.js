@@ -10,34 +10,13 @@
 // (`ONDE_IPC_FD`) and `process.send`/`message` are wired in `process.js`. The frame payload is
 // JSON, not Node's wire format (D50).
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const { EventEmitter } = requireInternal("events", "./events.js");
-const { Buffer } = requireInternal("buffer", "./buffer.js");
-const path = requireInternal("path", "./path.js");
-const pipes = requireInternal("internal/pipe", "./internal/pipe.js");
+const { EventEmitter } = require("./events.js");
+const { Buffer } = require("./buffer.js");
+const path = require("./path.js");
+const pipes = require("./internal/pipe.js");
+const { invalidArgType, invalidArgValue } = require("./internal/errors.js");
 
 const host = globalThis.__ln_host;
-
-function invalidArgType(name, expected, actual) {
-  const received = typeof actual === "string" ? `'${actual}'` : String(actual);
-  const error = new TypeError(
-    `The "${name}" argument must be of type ${expected}. Received ${received}`,
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  return error;
-}
-
-function invalidArgValue(name, value, reason) {
-  const error = new TypeError(`The argument '${name}' ${reason}. Received ${String(value)}`);
-  error.code = "ERR_INVALID_ARG_VALUE";
-  return error;
-}
 
 // --- stdio normalization ---------------------------------------------------------------------
 

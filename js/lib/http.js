@@ -11,15 +11,8 @@
 // HTTP policy — codec attach on `'connection'`, request/response objects, `checkContinue`,
 // upgrades, `clientError` and the JS keep-alive/headers/request timers.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const internal = requireInternal("internal/http", "./internal/http.js");
-const net = requireInternal("net", "./net.js");
+const internal = require("./internal/http.js");
+const net = require("./net.js");
 const { Server: NetServer } = net;
 
 const {

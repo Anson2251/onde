@@ -6,6 +6,8 @@
 // separators, `maxKeys`, the `+`/custom-decoder interaction and the
 // null-prototype result object). Ported from Node's `lib/querystring.js`.
 
+const textcodec = require("./textcodec.js");
+
 const hexTable = new Array(256);
 for (let i = 0; i < 256; ++i) {
   hexTable[i] = "%" + (i < 16 ? "0" : "") + i.toString(16).toUpperCase();
@@ -48,73 +50,6 @@ const unhexTable = new Int8Array([
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // ... 255
 ]);
-
-// Decode a byte sequence as UTF-8, replacing malformed sequences with
-// U+FFFD (the same behaviour as Buffer#toString('utf8')).
-function utf8DecodeBytes(bytes) {
-  let out = "";
-  let i = 0;
-  const len = bytes.length;
-  while (i < len) {
-    const b0 = bytes[i];
-    if (b0 < 0x80) {
-      out += String.fromCharCode(b0);
-      i++;
-      continue;
-    }
-    let need = 0;
-    if (b0 >= 0xc2 && b0 <= 0xdf) need = 2;
-    else if (b0 >= 0xe0 && b0 <= 0xef) need = 3;
-    else if (b0 >= 0xf0 && b0 <= 0xf4) need = 4;
-
-    if (need === 0) {
-      out += "\uFFFD";
-      i++;
-      continue;
-    }
-
-    let seen = 1;
-    while (seen < need && i + seen < len &&
-           (bytes[i + seen] & 0xc0) === 0x80) {
-      seen++;
-    }
-    if (seen < need) {
-      // Truncated / interrupted sequence: one replacement for the bytes
-      // consumed so far, then continue after them.
-      out += "\uFFFD";
-      i += seen;
-      continue;
-    }
-
-    let cp;
-    if (need === 2) {
-      cp = ((b0 & 0x1f) << 6) | (bytes[i + 1] & 0x3f);
-    } else if (need === 3) {
-      cp = ((b0 & 0x0f) << 12) |
-        ((bytes[i + 1] & 0x3f) << 6) |
-        (bytes[i + 2] & 0x3f);
-    } else {
-      cp = ((b0 & 0x07) << 18) |
-        ((bytes[i + 1] & 0x3f) << 12) |
-        ((bytes[i + 2] & 0x3f) << 6) |
-        (bytes[i + 3] & 0x3f);
-    }
-    if ((need === 2 && cp < 0x80) ||
-        (need === 3 && cp < 0x800) ||
-        (need === 4 && cp < 0x10000) ||
-        (cp >= 0xd800 && cp <= 0xdfff) ||
-        cp > 0x10ffff) {
-      // Structurally complete but not a valid scalar value; like Node's
-      // UTF-8 decoder, emit one replacement per byte.
-      out += "\uFFFD";
-      i++;
-      continue;
-    }
-    out += String.fromCodePoint(cp);
-    i += need;
-  }
-  return out;
-}
 // A safe fast alternative to decodeURIComponent.
 function unescapeBuffer(s, decodeSpaces) {
   const out = new Uint8Array(s.length);
@@ -165,7 +100,7 @@ function qsUnescape(s, decodeSpaces) {
   try {
     return decodeURIComponent(s);
   } catch {
-    return utf8DecodeBytes(unescapeBuffer(s, decodeSpaces));
+    return textcodec.decodeUTF8(unescapeBuffer(s, decodeSpaces));
   }
 }
 

@@ -14,15 +14,8 @@
 // Bad arguments reject (every exported function is an async function) except `watch`, which
 // returns an iterator synchronously and therefore throws synchronously like Node's does.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const internal = requireInternal("internal/fs", "./internal/fs.js");
-const fs = EMBEDDED ? require("fs") : require("./fs.js");
+const internal = require("./internal/fs.js");
+const fs = require("./fs.js");
 const { constants } = internal;
 
 let BufferCtor = null;
@@ -34,36 +27,6 @@ try {
 const Buffer = BufferCtor;
 
 // --- option helpers --------------------------------------------------------------------------
-
-function parseReadFileOptions(options) {
-  const opts =
-    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
-  if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
-  return {
-    encoding:
-      opts.encoding === undefined || opts.encoding === null
-        ? null
-        : internal.normalizeEncoding(opts.encoding),
-    flags: internal.normalizeFlags(opts.flag, "options.flag"),
-    flagGiven: opts.flag !== undefined,
-    signal: internal.abortSignalOf(opts),
-  };
-}
-
-function parseWriteFileOptions(options, defaultFlag) {
-  const opts =
-    typeof options === "string" ? { encoding: options } : options === undefined || options === null ? {} : options;
-  if (typeof opts !== "object") throw internal.invalidArgType("options", "object", options);
-  return {
-    encoding:
-      opts.encoding === undefined || opts.encoding === null
-        ? "utf8"
-        : internal.normalizeEncoding(opts.encoding),
-    mode: opts.mode === undefined ? 0o666 : internal.parseFileMode(opts.mode, "options.mode", 0o666),
-    flags: internal.normalizeFlags(opts.flag === undefined ? defaultFlag : opts.flag, "options.flag"),
-    signal: internal.abortSignalOf(opts),
-  };
-}
 
 function parseMode(options) {
   if (options === undefined || options === null) return {};
@@ -93,19 +56,6 @@ function dirOptions(options) {
   };
 }
 
-function fileEncoding(encoding) {
-  if (encoding === undefined || encoding === null) return "utf8";
-  if (encoding === "buffer") return "buffer";
-  return internal.normalizeEncoding(encoding);
-}
-
-function entryValue(entry, encoding, parentPath, withFileTypes) {
-  const name = encoding === "buffer" ? Buffer.from(entry.name, "utf8") : entry.name;
-  if (withFileTypes) return new internal.Dirent(name, entry.kind, parentPath);
-  return name;
-}
-
-
 // Composite helpers in `fs` (recursive readdir, cp, streams) are the same behaviour in both
 // shapes; adapt their callback form here instead of keeping a second implementation.
 function fromCallback(fn, args) {
@@ -134,7 +84,7 @@ async function access(path, mode) {
 
 async function readFile(path, options) {
   if (path instanceof internal.FileHandle) return path.readFile(options);
-  const parsed = parseReadFileOptions(options);
+  const parsed = internal.parseReadFileOptions(options);
   const target = internal.toPath(path);
   if (parsed.flags === constants.O_RDONLY) {
     const bytes = await internal.promise("readFile", [target], parsed.signal);
@@ -156,7 +106,7 @@ async function readFile(path, options) {
 
 async function writeFile(file, data, options) {
   if (file instanceof internal.FileHandle) return file.writeFile(data, options);
-  const parsed = parseWriteFileOptions(options, "w");
+  const parsed = internal.parseWriteFileOptions(options, "w");
   const target = internal.toPath(file);
   const bytes = await internal.dataToBytes(data, parsed.encoding, true);
   await internal.promise("writeFile", [target, bytes, parsed.mode, parsed.flags], parsed.signal);
@@ -164,7 +114,7 @@ async function writeFile(file, data, options) {
 
 async function appendFile(file, data, options) {
   if (file instanceof internal.FileHandle) return file.appendFile(data, options);
-  const parsed = parseWriteFileOptions(options, "a");
+  const parsed = internal.parseWriteFileOptions(options, "a");
   const target = internal.toPath(file);
   const bytes = await internal.dataToBytes(data, parsed.encoding, true);
   await internal.promise("appendFile", [target, bytes, parsed.mode, parsed.flags], parsed.signal);
@@ -221,8 +171,8 @@ async function mkdir(path, options) {
 async function mkdtemp(prefix, options) {
   const opts = options === undefined || options === null ? {} : options;
   let encoding = "utf8";
-  if (typeof opts === "string") encoding = fileEncoding(opts);
-  else if (typeof opts === "object") encoding = fileEncoding(opts.encoding);
+  if (typeof opts === "string") encoding = internal.fileEncoding(opts);
+  else if (typeof opts === "object") encoding = internal.fileEncoding(opts.encoding);
   else throw internal.invalidArgType("options", "object", options);
   const value = await internal.promise("mkdtemp", [internal.toPath(prefix, "prefix")]);
   return encoding === "buffer" ? Buffer.from(value) : value;
@@ -251,7 +201,7 @@ async function readdir(path, options) {
   const entries = await internal.promise("readdir", [target, true]);
   const result = [];
   for (let index = 0; index < entries.length; index++) {
-    result.push(entryValue(entries[index], opts.encoding, target, opts.withFileTypes));
+    result.push(internal.entryValue(entries[index], opts.encoding, target, opts.withFileTypes));
   }
   return result;
 }
@@ -262,7 +212,7 @@ async function opendir(path, options) {
   const entries = await internal.promise("readdir", [target, true]);
   const dirents = [];
   for (let index = 0; index < entries.length; index++) {
-    dirents.push(entryValue(entries[index], opts.encoding, target, true));
+    dirents.push(internal.entryValue(entries[index], opts.encoding, target, true));
   }
   return new internal.Dir(target, dirents);
 }
@@ -405,14 +355,14 @@ async function symlink(target, path, type) {
 }
 
 async function readlink(path, options) {
-  const encoding = fileEncoding(typeof options === "string" ? options : options && options.encoding);
+  const encoding = internal.fileEncoding(typeof options === "string" ? options : options && options.encoding);
   const raw = await internal.promise("readlink", [internal.toPath(path)]);
   if (encoding === "buffer") return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
   return internal.decodeBytes(raw, encoding);
 }
 
 async function realpath(path, options) {
-  const encoding = fileEncoding(typeof options === "string" ? options : options && options.encoding);
+  const encoding = internal.fileEncoding(typeof options === "string" ? options : options && options.encoding);
   const value = await internal.promise("realpath", [internal.toPath(path)]);
   return encoding === "buffer" ? Buffer.from(value) : value;
 }

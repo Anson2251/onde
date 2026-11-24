@@ -43,6 +43,7 @@ use crate::{Bridge, ExitState, RejectionEvent};
 use ln_error::NodeError;
 
 mod buffer;
+mod codec;
 mod crypto;
 mod dns;
 mod fs;

@@ -18,14 +18,8 @@
 // Gaps recorded for M4 (D40): there is no JS-visible fd, so `new net.Socket({ fd })`,
 // `socket._handle` and `socket.fd` do not exist. `cluster`/`SO_REUSEPORT` are out of scope.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const internal = requireInternal("internal/net", "./internal/net.js");
+const internal = require("./internal/net.js");
+const { coded: codedError, invalidArgType } = require("./internal/errors.js");
 const {
   nextId,
   command,
@@ -34,7 +28,6 @@ const {
   isHttpParsed,
   addressToNode,
   errorFromPayload,
-  invalidArgType,
   normalizeConnectArgs,
   normalizeConnectOptions,
   connectHostArgs,
@@ -81,12 +74,6 @@ const scheduleTick =
     : (fn, arg) => queueMicrotask(() => fn(arg));
 
 // --- errors ----------------------------------------------------------------------------------
-
-function codedError(Ctor, code, message) {
-  const error = new Ctor(message);
-  error.code = code;
-  return error;
-}
 
 function socketClosedError(syscall) {
   return codedError(

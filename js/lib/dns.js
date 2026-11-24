@@ -11,35 +11,13 @@
 // platform-specific address selection), `options.verbatim` is not consulted (the resolver's order
 // is preserved as-is), and `options.order` does not exist yet.
 
+const {
+  coded: codedError,
+  invalidArgType,
+  invalidArgValue,
+} = require("./internal/errors.js");
+
 // --- argument helpers ------------------------------------------------------------------------
-
-function codedError(Base, code, message) {
-  const error = new Base(message);
-  error.code = code;
-  return error;
-}
-
-function invalidArgType(name, expected, actual) {
-  let received;
-  try {
-    received = typeof actual === "string" ? `'${actual}'` : String(actual);
-  } catch (_) {
-    received = "<unprintable>";
-  }
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${received}`,
-  );
-}
-
-function invalidArgValue(name, value, reason) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_VALUE",
-    `The argument '${name}' ${reason}. Received ${value}`,
-  );
-}
 
 function invalidFamily(family) {
   return codedError(
@@ -77,7 +55,7 @@ function validateHostname(hostname) {
     throw invalidArgType("hostname", "string", hostname);
   }
   if (hostname.length === 0) {
-    throw invalidArgValue("hostname", "''", "must be a non-empty string");
+    throw invalidArgValue("hostname", hostname, "must be a non-empty string");
   }
 }
 

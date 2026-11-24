@@ -1162,6 +1162,7 @@ dependencies = [
 name = "ln-runtime"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "libc",
  "ln-crypto",
  "ln-engine",

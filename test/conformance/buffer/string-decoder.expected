@@ -1,0 +1,24 @@
+hex "dead" "beef" ""
+hex lastNeed 0 lastTotal 0
+hex "00" "0f" "ff" ""
+hex lastNeed 0 lastTotal 0
+hex "" ""
+hex lastNeed 0 lastTotal 0
+base64 "" "AAEC" "AwQF" "" "+/8="
+base64 lastNeed 0 lastTotal 0
+base64 "" "" "QUJD" "" "RA=="
+base64 lastNeed 0 lastTotal 0
+base64 "" ""
+base64 lastNeed 0 lastTotal 0
+base64url "" "-_8A" ""
+base64url lastNeed 0 lastTotal 0
+base64url "" "" "-__-" ""
+base64url lastNeed 0 lastTotal 0
+text ""
+text again ""
+text end "AwQ="
+from aGVsbG8= 68656c6c6f
+from aGVsbG8 68656c6c6f
+from aGVs bG8= 68656c6c6f
+from aGVsbG8= 68656c6c6f
+exit:0

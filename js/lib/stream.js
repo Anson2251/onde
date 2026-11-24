@@ -54,6 +54,8 @@ try {
 const Buffer = BufferCtor;
 const StringDecoder = StringDecoderCtor;
 
+const { abortError, invalidArgType } = require("./internal/errors.js");
+
 // The M3 contract pins 16 KiB / 16 objects. Node 22+ uses 64 KiB; keep this one constant so the
 // choice is a one-line change (see the module comment).
 const DEFAULT_HIGH_WATER_MARK = 16 * 1024;
@@ -69,28 +71,6 @@ function codedError(Ctor, code, message) {
   const err = new Ctor(message);
   err.code = code;
   return err;
-}
-
-function describeValue(value) {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  const type = typeof value;
-  if (type === "string") return `type string ('${value.length > 28 ? value.slice(0, 25) + "..." : value}')`;
-  if (type === "number" || type === "boolean" || type === "bigint") return `type ${type} (${String(value)})`;
-  if (type === "function") return `function ${value.name || "anonymous"}`;
-  if (ArrayBuffer.isView(value)) {
-    return `an instance of ${(value.constructor && value.constructor.name) || "TypedArray"}`;
-  }
-  const name = value && value.constructor && value.constructor.name;
-  return `an instance of ${name || "Object"}`;
-}
-
-function invalidArgType(name, expected, value) {
-  return codedError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be of type ${expected}. Received ${describeValue(value)}`,
-  );
 }
 
 function invalidArgValue(name, value, reason) {
@@ -137,14 +117,6 @@ function nullValuesError() {
 
 function prematureCloseError() {
   return codedError(Error, "ERR_STREAM_PREMATURE_CLOSE", "Premature close");
-}
-
-function abortError(signal) {
-  const err = new Error("The operation was aborted");
-  err.name = "AbortError";
-  err.code = "ABORT_ERR";
-  if (signal && "reason" in signal) err.cause = signal.reason;
-  return err;
 }
 
 function methodNotImplemented(name) {
@@ -1772,7 +1744,7 @@ function finished(stream, opts, callback) {
   if (options.signal !== undefined && options.signal !== null) {
     const signal = options.signal;
     if (typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function") {
-      throw invalidArgType("options.signal", "AbortSignal", signal);
+      throw invalidArgType("options.signal", "an instance of AbortSignal", signal);
     }
   }
 
@@ -1864,10 +1836,10 @@ function finished(stream, opts, callback) {
   if (options.signal !== undefined && options.signal !== null) {
     const signal = options.signal;
     if (signal.aborted) {
-      scheduleTick(complete, abortError(signal));
+      scheduleTick(complete, abortError(signal && "reason" in signal ? signal.reason : undefined));
     } else {
       const onabort = function onabort() {
-        complete(abortError(signal));
+        complete(abortError(signal && "reason" in signal ? signal.reason : undefined));
       };
       signal.addEventListener("abort", onabort, { once: true });
       removeAbort = function removeAbortListener() {
@@ -1900,20 +1872,20 @@ function isOptionsObject(value) {
 
 function addAbortSignal(signal, stream) {
   if (signal === null || typeof signal !== "object" || typeof signal.aborted !== "boolean") {
-    throw invalidArgType("signal", "AbortSignal", signal);
+    throw invalidArgType("signal", "an instance of AbortSignal", signal);
   }
   if (stream === null || typeof stream !== "object" || typeof stream.destroy !== "function") {
     throw invalidArgType("stream", "stream.Readable", stream);
   }
   if (signal.aborted) {
-    destroyStream(stream, abortError(signal));
+    destroyStream(stream, abortError(signal && "reason" in signal ? signal.reason : undefined));
     return stream;
   }
   if (typeof signal.addEventListener === "function") {
     signal.addEventListener(
       "abort",
       function onabort() {
-        destroyStream(stream, abortError(signal));
+        destroyStream(stream, abortError(signal && "reason" in signal ? signal.reason : undefined));
       },
       { once: true },
     );
@@ -1996,13 +1968,13 @@ function pipeline() {
 
   if (signal !== undefined && signal !== null) {
     if (typeof signal.aborted !== "boolean") {
-      throw invalidArgType("options.signal", "AbortSignal", signal);
+      throw invalidArgType("options.signal", "an instance of AbortSignal", signal);
     }
     if (signal.aborted) {
-      finish(abortError(signal));
+      finish(abortError(signal && "reason" in signal ? signal.reason : undefined));
     } else {
       const onabort = function onabort() {
-        finish(abortError(signal));
+        finish(abortError(signal && "reason" in signal ? signal.reason : undefined));
       };
       signal.addEventListener("abort", onabort, { once: true });
       removeAbort = function removeAbortListener() {

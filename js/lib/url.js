@@ -13,16 +13,10 @@
 // The legacy `parse`/`format`/`resolve` implementation follows Node's
 // `lib/url.js` (MIT) so its quirks are preserved.
 
-function loadModule(relative, builtin) {
-  try {
-    return require(relative);
-  } catch {
-    return require(builtin);
-  }
-}
-
-const querystring = loadModule("./querystring.js", "querystring");
-const punycode = loadModule("./punycode.js", "punycode");
+const querystring = require("./querystring.js");
+const punycode = require("./punycode.js");
+const textcodec = require("./textcodec.js");
+const { invalidArgType, missingArgs } = require("./internal/errors.js");
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -32,24 +26,6 @@ function invalidURL(input) {
   const err = new TypeError("Invalid URL");
   err.code = "ERR_INVALID_URL";
   err.input = input;
-  return err;
-}
-
-function invalidArgType(name, expected, actual) {
-  let received;
-  if (actual === null) received = "null";
-  else if (typeof actual === "object") received = "an instance of " + (actual.constructor && actual.constructor.name || "Object");
-  else received = "type " + typeof actual + " (" + String(actual) + ")";
-  const err = new TypeError(
-    `The "${name}" argument must be ${expected}. Received ${received}`,
-  );
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
-function missingArgs(name) {
-  const err = new TypeError(`The "${name}" argument must be specified`);
-  err.code = "ERR_MISSING_ARGS";
   return err;
 }
 
@@ -246,74 +222,10 @@ function formDecode(str) {
         bytes.push(c & 0xff);
       }
     }
-    return utf8DecodeBytes(bytes);
+    return textcodec.decodeUTF8(bytes);
   }
 }
 
-function utf8DecodeBytes(bytes) {
-  let out = "";
-  let i = 0;
-  const len = bytes.length;
-  while (i < len) {
-    const b0 = bytes[i];
-    if (b0 < 0x80) {
-      out += String.fromCharCode(b0);
-      i++;
-      continue;
-    }
-    let need = 0;
-    if (b0 >= 0xc2 && b0 <= 0xdf) need = 2;
-    else if (b0 >= 0xe0 && b0 <= 0xef) need = 3;
-    else if (b0 >= 0xf0 && b0 <= 0xf4) need = 4;
-
-    if (need === 0) {
-      out += "\uFFFD";
-      i++;
-      continue;
-    }
-
-    let seen = 1;
-    while (seen < need && i + seen < len &&
-           (bytes[i + seen] & 0xc0) === 0x80) {
-      seen++;
-    }
-    if (seen < need) {
-      // Truncated / interrupted sequence: one replacement for the bytes
-      // consumed so far, then continue after them.
-      out += "\uFFFD";
-      i += seen;
-      continue;
-    }
-
-    let cp;
-    if (need === 2) {
-      cp = ((b0 & 0x1f) << 6) | (bytes[i + 1] & 0x3f);
-    } else if (need === 3) {
-      cp = ((b0 & 0x0f) << 12) |
-        ((bytes[i + 1] & 0x3f) << 6) |
-        (bytes[i + 2] & 0x3f);
-    } else {
-      cp = ((b0 & 0x07) << 18) |
-        ((bytes[i + 1] & 0x3f) << 12) |
-        ((bytes[i + 2] & 0x3f) << 6) |
-        (bytes[i + 3] & 0x3f);
-    }
-    if ((need === 2 && cp < 0x80) ||
-        (need === 3 && cp < 0x800) ||
-        (need === 4 && cp < 0x10000) ||
-        (cp >= 0xd800 && cp <= 0xdfff) ||
-        cp > 0x10ffff) {
-      // Structurally complete but not a valid scalar value; like Node's
-      // UTF-8 decoder, emit one replacement per byte.
-      out += "\uFFFD";
-      i++;
-      continue;
-    }
-    out += String.fromCodePoint(cp);
-    i += need;
-  }
-  return out;
-}
 // ---------------------------------------------------------------------------
 // IDNA (punycode + the practical UTS46 mappings)
 // ---------------------------------------------------------------------------

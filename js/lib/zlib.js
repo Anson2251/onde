@@ -86,54 +86,15 @@ const constants = Object.freeze({
 // ---------------------------------------------------------------------------------------------
 // Errors
 //
-// The Rust `ln-error` crate is not reachable from JavaScript, so the coded argument errors are
-// built here with Node's constructor, code and message text (probed against `node v26.10.0`).
+// The shared vocabulary lives in `internal/errors.js`; only zlib-specific errors belong here.
 // ---------------------------------------------------------------------------------------------
 
-function makeError(Ctor, code, message) {
-  const error = new Ctor(message);
-  if (code !== undefined) error.code = code;
-  return error;
-}
-
-/** Node's `determineSpecificType` rendering for `ERR_INVALID_ARG_TYPE`. */
-function describeValue(value) {
-  if (value === null || value === undefined) return String(value);
-  const type = typeof value;
-  if (type === "function") return `function ${value.name}`;
-  if (type === "object") {
-    const name = value.constructor && value.constructor.name;
-    return `an instance of ${name || "Object"}`;
-  }
-  if (type === "bigint") return `type bigint (${value}n)`;
-  if (type === "string") return `type string ('${value}')`;
-  return `type ${type} (${String(value)})`;
-}
-
-function invalidArgType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be ${expected}. Received ${describeValue(value)}`,
-  );
-}
-
-/** Node says "property" (not "argument") for a validated option field. */
-function invalidPropertyType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" property must be of type ${expected}. Received ${describeValue(value)}`,
-  );
-}
-
-function outOfRange(name, range, value) {
-  return makeError(
-    RangeError,
-    "ERR_OUT_OF_RANGE",
-    `The value of "${name}" is out of range. It must be ${range}. Received ${String(value)}`,
-  );
-}
+const {
+  coded: makeError,
+  invalidArgType,
+  invalidPropertyType,
+  outOfRange,
+} = require("./internal/errors.js");
 
 function tooLarge(limit) {
   return makeError(
@@ -147,6 +108,14 @@ function tooLarge(limit) {
 // Host and byte helpers
 // ---------------------------------------------------------------------------------------------
 
+// Coercion is shared. `byteView` returns `null` for a non-byte value, but `inputBytes` checks the
+// type first, so the non-null path is the only one reached.
+const {
+  byteView,
+  isAnyArrayBuffer,
+  isArrayBufferView,
+} = require("./internal/bytes.js");
+
 function hostZlib() {
   const host = globalThis.__ln_host;
   const zlib = host === undefined || host === null ? undefined : host.zlib;
@@ -156,21 +125,6 @@ function hostZlib() {
     throw new Error("zlib is unavailable: __ln_host.zlib is not installed");
   }
   return zlib;
-}
-
-function isAnyArrayBuffer(value) {
-  if (value instanceof ArrayBuffer) return true;
-  return typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
-}
-
-function isArrayBufferView(value) {
-  return Buffer.isBuffer(value) || ArrayBuffer.isView(value);
-}
-
-/** The exact bytes Node would compress: raw view bytes, or a whole ArrayBuffer. */
-function byteView(value) {
-  if (isAnyArrayBuffer(value)) return new Uint8Array(value, 0, value.byteLength);
-  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 }
 
 /**

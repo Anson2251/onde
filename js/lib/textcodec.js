@@ -25,11 +25,11 @@ const hostText = (() => {
 // Errors
 // ---------------------------------------------------------------------------------------------
 
-function makeError(Ctor, code, message) {
-  const err = new Ctor(message);
-  err.code = code;
-  return err;
-}
+const {
+  coded: makeError,
+  describeValue: describe,
+  invalidArgType,
+} = require("./internal/errors.js");
 
 function encodingInvalid(encoding) {
   return makeError(
@@ -45,26 +45,6 @@ function encodingNotSupported(label) {
     "ERR_ENCODING_NOT_SUPPORTED",
     `The "${label}" encoding is not supported`,
   );
-}
-
-function invalidArgType(name, expected, value) {
-  return makeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be ${expected}. Received ${describe(value)}`,
-  );
-}
-
-function describe(value) {
-  if (value === null) return "null";
-  const type = typeof value;
-  if (type === "string") return `type string ('${value}')`;
-  if (type === "number" || type === "boolean" || type === "bigint" || type === "undefined") {
-    return `type ${type} (${String(value)})`;
-  }
-  if (type === "function") return `type function (${value.name || "anonymous"})`;
-  const name = value && value.constructor && value.constructor.name;
-  return `an instance of ${name || "Object"}`;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -38,6 +38,8 @@ jobs:
           node-version: "26"
       - name: stdlib tests (node + lite) and Node oracles
         run: ./test/js/run.sh
+      - name: stdlib duplication guard
+        run: node scripts/check-duplication.mjs
       - name: M5 acceptance (children, workers, shared memory, signals)
         run: ./test/proc/run.sh
       - name: M6 acceptance (async_hooks, AsyncLocalStorage, 1M promises)

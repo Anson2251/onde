@@ -27,6 +27,13 @@ const inspect = util.inspect;
 const isDeepStrictEqual = util.isDeepStrictEqual;
 const isDeepEqual = util._isDeepEqual;
 
+const {
+  describeValue,
+  invalidArgType,
+  invalidArgValue,
+  missingArgs,
+} = require("./internal/errors.js");
+
 const NO_EXCEPTION = Symbol("no exception");
 
 const diffInspectOptions = {
@@ -52,51 +59,6 @@ function isErrorValue(value) {
 
 function isRegExpValue(value) {
   return value instanceof RegExp;
-}
-
-function invalidArgType(name, expected, actual) {
-  const err = new TypeError(
-    `The "${name}" argument must be ${expected}. Received ${describeValue(actual)}`,
-  );
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
-function describeValue(value) {
-  if (value === null) return "null";
-  const type = typeof value;
-  if (type === "object" || type === "function") {
-    let name = "Object";
-    try {
-      if (value.constructor && value.constructor.name) {
-        name = value.constructor.name;
-      }
-    } catch {
-      // ignore
-    }
-    return `an instance of ${name}`;
-  }
-  if (type === "string") return `type string ('${value}')`;
-  return `type ${type} (${String(value)})`;
-}
-
-function missingArgs(...names) {
-  const quoted = names.map((name) => `"${name}"`);
-  const list =
-    quoted.length === 1
-      ? quoted[0]
-      : quoted.slice(0, -1).join(", ") + " and " + quoted[quoted.length - 1];
-  const err = new TypeError(`The ${list} argument${names.length > 1 ? "s" : ""} must be specified`);
-  err.code = "ERR_MISSING_ARGS";
-  return err;
-}
-
-function invalidArgValue(name, value, reason) {
-  const err = new TypeError(
-    `The argument '${name}' ${reason}. Received ${inspectValue(value)}`,
-  );
-  err.code = "ERR_INVALID_ARG_VALUE";
-  return err;
 }
 
 function invalidReturnValue(expected, name, actual) {

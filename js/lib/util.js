@@ -17,6 +17,8 @@ const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const customPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
 const customPromisifyArgsSymbol = Symbol.for("nodejs.util.promisify.customArgs");
 
+const { invalidArgType } = require("./internal/errors.js");
+
 const ObjectPrototypeToString = Object.prototype.toString;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
@@ -1790,28 +1792,6 @@ function mapEquiv(a, b, strict, memo) {
 // ---------------------------------------------------------------------------
 // util.inherits / promisify / callbackify / deprecate / debuglog
 // ---------------------------------------------------------------------------
-
-function invalidArgType(name, expected, actual) {
-  const err = new TypeError(
-    `The "${name}" argument must be ${expected}. Received ${describeValue(actual)}`,
-  );
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
-function describeValue(value) {
-  if (value === null) return "null";
-  const type = typeof value;
-  if (type === "object" || type === "function") {
-    const name = constructorName(value);
-    return `an instance of ${name || "Object"}`;
-  }
-  if (type === "string") return `type string ('${value}')`;
-  if (type === "number" || type === "boolean" || type === "bigint") {
-    return `type ${type} (${String(value)})`;
-  }
-  return `type ${type} (${String(value)})`;
-}
 
 function inherits(ctor, superCtor) {
   if (typeof ctor !== "function") {

@@ -32,6 +32,8 @@
 //   * Net/http sockets and child processes do not mint their own resource ids yet: callbacks
 //     inherit the context of whatever dispatched them (D57).
 
+const { invalidArgType } = require("./internal/errors.js");
+
 const host = globalThis.__ln_host;
 
 const kInit = 0;
@@ -54,30 +56,6 @@ const alsInstances = new Set();
 // tracked promise into a leak): the entry is deleted when the promise is collected, which is also
 // when Node emits a promise's `destroy`.
 let promiseFinalizer = null;
-
-// Node's `ERR_INVALID_ARG_TYPE` wording: primitives carry their type and value, objects an
-// instance description. Kept here rather than shared because async_hooks is loadable before the
-// rest of the stdlib.
-function describeReceived(value) {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  const type = typeof value;
-  if (type === "string") return `type string ('${value}')`;
-  if (type === "number" || type === "boolean" || type === "bigint") {
-    return `type ${type} (${String(value)})`;
-  }
-  if (type === "symbol") return `type symbol (${String(value)})`;
-  const name = value.constructor !== undefined && value.constructor.name;
-  return `an instance of ${name === undefined ? "Object" : name}`;
-}
-
-function invalidArgType(name, expected, actual) {
-  const error = new TypeError(
-    `The "${name}" argument must be of type ${expected}. Received ${describeReceived(actual)}`,
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  return error;
-}
 
 function invalidCallback(name) {
   const error = new TypeError(`hook.${name} must be a function`);

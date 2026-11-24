@@ -11,19 +11,9 @@
 // `code: "ABORT_ERR"`). The core interface drops the pending question and moves the cursor to
 // a new line on abort; the Promise rejects on the same signal.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-// Under lite the embedded builtin is the one real core module. Under Node (for the stdlib
-// tests and oracle runs) resolve the sibling source so behaviour and state are ours, not
-// Node's own `readline`.
-const readline = EMBEDDED ? require("readline") : require("./readline.js");
-
-function abortError() {
-  const error = new Error("The operation was aborted");
-  error.name = "AbortError";
-  error.code = "ABORT_ERR";
-  return error;
-}
+// Resolve the sibling source so behaviour and state are ours, not Node's own `readline`.
+const readline = require("./readline.js");
+const { abortError } = require("./internal/errors.js");
 
 function signalOf(options) {
   if (options === null || options === undefined || typeof options !== "object") return undefined;
@@ -38,11 +28,11 @@ class Interface extends readline.Interface {
 
       if (signal !== undefined && signal !== null) {
         if (signal.aborted === true) {
-          reject(abortError());
+          reject(abortError(signal.reason));
           return;
         }
         onAbort = () => {
-          reject(abortError());
+          reject(abortError(signal.reason));
         };
         signal.addEventListener("abort", onAbort, { once: true });
       }

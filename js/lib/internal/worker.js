@@ -13,29 +13,14 @@
 // is the exception that matters: the engine's serializer shares the backing memory, so workers
 // see each other's `Atomics` stores.
 
-const EMBEDDED = typeof __filename === "string" && __filename.startsWith("<lite:");
-
-function requireInternal(name, relative) {
-  if (EMBEDDED) return require(name);
-  return require(relative);
-}
-
-const { EventEmitter } = requireInternal("events", "./events.js");
+const { EventEmitter } = require("./events.js");
+const { invalidArgType } = require("./errors.js");
 
 const host = globalThis.__ln_host;
 const info = host.workerInfo;
 const isMainThread = info === null || info === undefined;
 const threadId = isMainThread ? 0 : info.threadId;
 const workerData = isMainThread ? null : info.workerData;
-
-function invalidArgType(name, expected, actual) {
-  const received = typeof actual === "string" ? `'${actual}'` : String(actual);
-  const error = new TypeError(
-    `The "${name}" argument must be of type ${expected}. Received ${received}`,
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  return error;
-}
 
 function dataCloneError(message) {
   const error = new Error(message);
@@ -257,13 +242,15 @@ class Worker extends EventEmitter {
 
     let target = filename;
     if (target !== null && typeof target === "object" && typeof target.href === "string") {
-      target = requireInternal("url", "./url.js").fileURLToPath(target);
+      target = require("./url.js").fileURLToPath(target);
     }
-    if (typeof target !== "string") throw invalidArgType("filename", "string", target);
+    if (typeof target !== "string") {
+      throw invalidArgType("filename", "string or an instance of URL", target);
+    }
 
     const evalMode = settings.eval === true;
     const source = evalMode ? target : null;
-    const path = evalMode ? "[worker eval]" : requireInternal("path", "./path.js").resolve(target);
+    const path = evalMode ? "[worker eval]" : require("./path.js").resolve(target);
 
     this.threadId = undefined;
     this.argv = Array.isArray(settings.argv) ? settings.argv.slice() : [];

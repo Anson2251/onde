@@ -497,6 +497,10 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
   (`JS_WriteObject`/`JS_ReadObject`), load at boot; lazy-compile optional modules.
 - Fast paths: cached atoms, pre-sized arrays, avoid `String` allocs in `readFile`, zero-copy
   `Buffer` over `Vec<u8>`, op dispatch table instead of name lookup.
+- **Stdlib consolidation and Tier 1 codecs (M7 task).** Run phases A0–A5 and B1–B2 of
+  [stdlib-consolidation-plan.md](stdlib-consolidation-plan.md): remove the duplicated JS error,
+  byte, `fs`-option and loader-shim code, then move base64/hex and the `StringDecoder` boundary
+  into the host behind one JS seam. Exit: the plan's §11 checklist; no codec regression.
 - Memory: `JS_SetMemoryLimit` + `--max-old-space-size` equivalent, `process.memoryUsage`,
   GC pressure heuristics, finalizer-based fd/lifetime audits in debug builds.
 - Diagnostics: `--cpu-prof`-lite (sampling profiler is out of scope; do **timing breakdown** by
@@ -511,6 +515,8 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 
 - Startup: < 15 ms hello-world, < 25 ms with `http` imported (p50 over 100 runs, cold cache).
 - `fs.readFile` 10 MB within 1.2x of Node; TCP echo within 1.5x; HTTP within 1.5x.
+- Stdlib consolidation checklist green: one `invalidArgType`, no loader shims, base64/hex
+  encoders ≤2 µs/1 KB and decoders ≤3 µs/1 KB; `StringDecoder.write` is one host call per chunk.
 - RSS < 25 MB for the hello server; no growth over 1h soak.
 - `--trace-events` output loads in `chrome://tracing`.
 

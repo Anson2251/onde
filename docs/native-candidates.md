@@ -1,5 +1,9 @@
 # Native candidates in `js/lib`
 
+> Execution order, host contracts and the interaction with the deduplication work live in
+> [stdlib-consolidation-plan.md](stdlib-consolidation-plan.md). This page stays the measurement
+> appendix for the native track.
+
 Which JavaScript modules are worth moving into the host, measured rather than guessed. The moving
 part is the ratio against the engine baseline: on this machine a plain JS loop runs at ~1.3x Node
 and an allocation-heavy one at ~12x, so **~12x means "this is what QuickJS costs" and the hundreds
