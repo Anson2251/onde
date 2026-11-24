@@ -54,12 +54,17 @@ class Server extends NetServer {
       settings.maxHeadersCount === undefined ? DEFAULT_MAX_HEADERS : settings.maxHeadersCount;
     this.maxHeaderSize =
       settings.maxHeaderSize === undefined ? maxHeaderSize : settings.maxHeaderSize;
-    this._sessions = new Set();
     this._closing = false;
     // One timer for every connection waiting on its first head (see `_armHeadersTimer`). A timer
     // per connection was the first thing this milestone removed: at 2,000 half-open connections it
     // cost ~1.2 KB each. The sweep keeps the deadline as a number on the socket instead.
     this._headersTimer = null;
+    this._headersEarliest = Infinity;
+    // Sockets accepted by this server, including sessionless ones. Not `net`'s `_connections`: for
+    // https the socket handed to the HTTP layer is the TLS one, which belongs to the TLS server's
+    // set, and this set is also what the deadline sweep walks. It is the one membership list the
+    // close helpers and the first-head bound share (m7-plan §12.6).
+    this._sockets = new Set();
 
     if (typeof requestListener === "function") this.on("request", requestListener);
 
@@ -76,31 +81,40 @@ class Server extends NetServer {
 
   close(callback) {
     this._closing = true;
-    if (this._headersTimer !== null) {
-      clearTimeout(this._headersTimer);
-      this._headersTimer = null;
-    }
+    // Keep sweeping: a peer that was half-open at close() still holds a descriptor, and the
+    // deadline it was given is the only thing that will reclaim it (D73, §12.6). The timer is
+    // unref'd, so it cannot hold the loop open on its own.
+    this._armHeadersTimer();
     return super.close(callback);
   }
 
-  /// Arm one timer for the earliest connection still waiting on its first request head.
+  /// Arm the sweep for the earliest connection still waiting on its first request head.
   ///
   /// Node emits its headers timeout per socket; onde keeps a deadline on the socket and one sweep
   /// here, because a timer object per idle peer is exactly the per-connection cost the lazy session
   /// exists to avoid. Exactness is preserved: the timer is set for the earliest deadline and
   /// re-armed after each sweep.
-  _armHeadersTimer() {
+  ///
+  /// `deadline` is the one just taken at accept. When the armed timer already fires no later than
+  /// it, nothing needs doing — which is the common case, because deadlines move forward with the
+  /// clock. Without that shortcut every accept would rescan every socket, O(n²) on a 2,000-peer
+  /// burst.
+  _armHeadersTimer(deadline) {
+    if (deadline !== undefined && this._headersTimer !== null && this._headersEarliest <= deadline) {
+      return;
+    }
+    let earliest = deadline === undefined ? Infinity : deadline;
+    for (const socket of this._sockets) {
+      const candidate = socket._lnHeadersDeadline;
+      if (candidate !== undefined && candidate < earliest) earliest = candidate;
+    }
     if (this._headersTimer !== null) {
       clearTimeout(this._headersTimer);
       this._headersTimer = null;
     }
-    if (this._sockets === undefined) return;
-    let earliest = Infinity;
-    for (const socket of this._sockets) {
-      const deadline = socket._lnHeadersDeadline;
-      if (deadline !== undefined && deadline < earliest) earliest = deadline;
-    }
+    this._headersEarliest = Infinity;
     if (earliest === Infinity) return;
+    this._headersEarliest = earliest;
     this._headersTimer = unrefTimer(
       setTimeout(() => this._sweepHeaders(), Math.max(0, earliest - Date.now())),
     );
@@ -108,7 +122,7 @@ class Server extends NetServer {
 
   _sweepHeaders() {
     this._headersTimer = null;
-    if (this._sockets === undefined) return;
+    this._headersEarliest = Infinity;
     const now = Date.now();
     const expired = [];
     for (const socket of this._sockets) {
@@ -126,13 +140,13 @@ class Server extends NetServer {
   /// created on the first byte (D73), so a connection that has not sent one has no session and is
   /// idle by definition.
   closeAllConnections() {
-    if (this._sockets === undefined) return;
-    for (const socket of this._sockets) socket.destroy();
+    // `Array.from`, like `net`'s own helpers: destroying a socket removes it from the set it is
+    // being iterated.
+    for (const socket of Array.from(this._sockets)) socket.destroy();
   }
 
   closeIdleConnections() {
-    if (this._sockets === undefined) return;
-    for (const socket of this._sockets) {
+    for (const socket of Array.from(this._sockets)) {
       const session = socket._lnSession;
       if (session === undefined || (session.req === null && session.res === null)) {
         socket.destroy();
@@ -141,7 +155,7 @@ class Server extends NetServer {
   }
 
   getConnections(callback) {
-    const count = this._sockets === undefined ? 0 : this._sockets.size;
+    const count = this._sockets.size;
     if (typeof callback === "function") process.nextTick(callback, null, count);
     return count;
   }

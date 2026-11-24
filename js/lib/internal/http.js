@@ -1475,8 +1475,6 @@ function isUpgradeRequest(req) {
 /// sessionless socket is still a connection, and it is idle by definition.
 function attachServerSocket(server, socket) {
   const id = internalNet().handleIdOf(socket);
-  server._sessions = server._sessions || new Set();
-  server._sockets = server._sockets || new Set();
   server._sockets.add(socket);
 
   // The first head has no session yet, so its deadline cannot live on one. It used to be a timer
@@ -1487,7 +1485,7 @@ function attachServerSocket(server, socket) {
   // paying a timer object per connection.
   if (server.headersTimeout > 0) {
     socket._lnHeadersDeadline = Date.now() + server.headersTimeout;
-    server._armHeadersTimer();
+    server._armHeadersTimer(socket._lnHeadersDeadline);
   }
 
   let session = null;
@@ -1499,7 +1497,6 @@ function attachServerSocket(server, socket) {
     session = new ServerSession(server, socket, id);
     session.off = off;
     socket._lnSession = session;
-    server._sessions.add(session);
     return session;
   };
 
@@ -1519,7 +1516,6 @@ function attachServerSocket(server, socket) {
       session.off();
       session.off = null;
     }
-    server._sessions.delete(session);
     socket._lnSession = undefined;
   };
 
@@ -1559,7 +1555,8 @@ function attachServerSocket(server, socket) {
     // made `server.timeout` a no-op for exactly the connections it is meant to reclaim (D74).
     socket.setTimeout(server.timeout, () => socket.destroy());
   }
-  return session;
+  // Nothing to return: the session may not exist yet. `socket._lnSession` is the handle after the
+  // first event, and `'connection'` listeners get the socket, as in Node.
 }
 
 function handleServerEvent(server, session, name, payload) {

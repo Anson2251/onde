@@ -813,6 +813,12 @@ important defects, all fixed in a follow-up commit:
   Node's chunking produces. The counter is now monotonic — a socket that has proved it delivers
   keeps the larger buffer — and the same stream reads 130 events of 8 KiB, matching Node.
 
+The review's minor items were fixed in the same follow-up: the write-only `_sessions` set is gone
+(every reader walks sockets now), the sweep is re-armed at `close()` instead of being cancelled,
+arming is O(1) on accept rather than rescanning every socket per accept, the close helpers snapshot
+the set they iterate, and `attachServerSocket` no longer returns a session handle that is always
+`null`. `d75-server-bookkeeping.js` pins the drain and the post-close reclaim.
+
 ### 12.7 The one-page summary
 
 M7's headline claim — "a bytecode snapshot closes the startup gap" — turned out to be worth ~0.7 ms
