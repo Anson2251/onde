@@ -238,15 +238,35 @@ function resolveInternalSpecifier(specifier, fromFile) {
   return null;
 }
 
+// The names that only resolve with the `node:` prefix (Node's `sqlite`, `test`). The host owns
+// the list because it is the same table the resolver uses.
+let nodeOnlyBuiltins = null;
+
+function nodeOnly() {
+  if (nodeOnlyBuiltins === null) {
+    const names =
+      typeof host.nodeOnlyBuiltins === "function" ? host.nodeOnlyBuiltins() : [];
+    nodeOnlyBuiltins = new Set(names);
+  }
+  return nodeOnlyBuiltins;
+}
+
 function isBuiltin(specifier) {
   if (typeof specifier !== "string") return false;
   const name = canonicalBuiltin(specifier);
   if (name === "process") return true;
-  return host.builtinSource(name) !== null && host.builtinSource(name) !== undefined;
+  const source = host.builtinSource(name);
+  if (source === null || source === undefined) return false;
+  // `module.isBuiltin("sqlite")` is false in Node; only `"node:sqlite"` is a builtin.
+  if (!specifier.startsWith("node:") && nodeOnly().has(name)) return false;
+  return true;
 }
 
 function builtinNames() {
-  return host.builtinNames();
+  const names = host.builtinNames();
+  const only = nodeOnly();
+  // `module.builtinModules` does not list node:-only modules.
+  return only.size === 0 ? names : names.filter((name) => !only.has(name));
 }
 
 function requireBuiltin(specifier) {

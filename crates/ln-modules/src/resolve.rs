@@ -730,9 +730,10 @@ fn match_map(
             continue;
         }
         let score = (prefix.len(), pattern.len());
-        if best.as_ref().map_or(true, |(prefix_len, pattern_len, ..)| {
-            score > (*prefix_len, *pattern_len)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|(prefix_len, pattern_len, ..)| score > (*prefix_len, *pattern_len))
+        {
             best = Some((prefix.len(), pattern.len(), pattern, target));
         }
     }

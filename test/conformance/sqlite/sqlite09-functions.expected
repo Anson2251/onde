@@ -1,0 +1,16 @@
+scalar: {"v":42}
+typed: {"v":1,"t":"real"}
+typed: {"v":1.5,"t":"real"}
+typed: {"v":"text","t":"text"}
+typed: {"v":null,"t":"null"}
+typed: {"v":1099511627776,"t":"real"}
+bigint return: {"v":1099511627776,"t":"integer"}
+boolean return: ERR_SQLITE_ERROR | Returned JavaScript value cannot be converted to a SQLite value
+throw: TypeError | function failed
+bigint argument: bigint
+varargs: {"a":0,"b":1,"c":2}
+aggregate: {"total":6}
+start function: {"total":3}
+empty aggregate: {"total":5}
+window: [{"total":1},{"total":3},{"total":5}]
+exit:0

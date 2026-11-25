@@ -11,6 +11,12 @@ publish = false
 name = "lite"
 path = "src/main.rs"
 
+[features]
+# `node:sqlite` (and the bundled SQLite it needs) is on by default; `--no-default-features` builds
+# a slim `lite` that answers `ERR_UNKNOWN_BUILTIN_MODULE`, without touching any other code.
+default = ["sqlite"]
+sqlite = ["ln-runtime/sqlite"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-ln-runtime = { path = "../ln-runtime" }
+ln-runtime = { path = "../ln-runtime", default-features = false }

@@ -1,0 +1,17 @@
+row: null null
+row: null null
+row: 1 integer
+row: 0 integer
+row: 42 real
+row: -1.5 real
+row: "text" text
+row: bytes blob
+row: 1099511627776 integer
+row: null null
+row: null real
+range: RangeError ERR_OUT_OF_RANGE
+bigint read: bigint {"v":"9007199254740993n"}
+bigint run: bigint bigint
+arrays: [[null,"null"],[null,"null"],[1,"integer"]]
+expression columns: [{"column":null,"database":null,"name":"one","table":null,"type":null},{"column":null,"database":null,"name":"none","table":null,"type":null}]
+exit:0

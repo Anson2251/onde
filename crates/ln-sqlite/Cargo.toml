@@ -1,0 +1,33 @@
+[package]
+name = "ln-sqlite"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SQLite connections, statements and values for onde's node:sqlite, engine-free and tokio-free"
+publish = false
+
+[dependencies]
+# The bindings. `bundled` compiles the SQLite amalgamation with `cc` in this crate, so the binary
+# has one deterministic SQLite (3.53.2 at this pin) instead of whatever the host ships. This is
+# the same trade as the vendored quickjs: no system dependency, no version surprises. `cargo deny`
+# covers the Rust crates (MIT); the amalgamation itself is public domain.
+#
+# `functions`, `window`, `vtab`, `session` and `load_extension` are intentionally off in v1: the
+# synchronous core does not register callbacks, sessions or extensions yet (docs/sqlite-plan.md
+# §6). They are enabled when WP5/WP6 land.
+rusqlite = { version = "=0.40.2", default-features = false, features = [
+    "bundled",
+    "backup",
+    "serialize",
+    "limits",
+    "column_decltype",
+    "column_metadata",
+    # WP5/WP6: user-defined functions and window functions, sessions/changesets (which needs
+    # SQLITE_ENABLE_SESSION + PREUPDATE_HOOK in the bundled C), and extension loading.
+    "functions",
+    "window",
+    "session",
+    "load_extension",
+    "vtab",
+] }

@@ -8,12 +8,15 @@ Two things are tracked separately:
 A module is only "✅" when its tests are green; "🟡" means the common path works and the gaps are
 listed. Status: 🟢 engine provides · 🔵 we build (small) · 🟠 we build (substantial) · ⚪ absent.
 
-**Last verified: M6, 2026-11-21** (`node v26.12.1` as the oracle). The M3–M5 rows and D35–D53 are
-green: `fs`, `fs/promises`, `stream`, `crypto`, `perf_hooks`, `tty`, `net`, `http`/`https`, `tls`,
-`dns`, `zlib`, `child_process`, `worker_threads` and `readline` are exercised by the corpus, the JS
-suites, `test/programs/run.sh`, `test/net/run.sh` and `test/proc/run.sh`. The M6 rows
-(`async_hooks`, `AsyncLocalStorage`) are exercised by `test/async/run.sh` (a 96-cell propagation
-matrix, hook semantics and a 1M-promise retention check) and `test/conformance/async_hooks/`.
+**Last verified: M7 plus `node:sqlite`, 2026-11-24** (`node v26.12.1` as the oracle). The M3–M5
+rows and D35–D53 are green: `fs`, `fs/promises`, `stream`, `crypto`, `perf_hooks`, `tty`, `net`,
+`http`/`https`, `tls`, `dns`, `zlib`, `child_process`, `worker_threads` and `readline` are exercised
+by the corpus, the JS suites, `test/programs/run.sh`, `test/net/run.sh` and `test/proc/run.sh`.
+The `sqlite` row is exercised by `test/conformance/sqlite/` (thirteen Node-recorded cases,
+including user-defined functions, the authorizer, sessions/changesets, virtual tables and
+extension gating) and `test/js/lib/sqlite.test.js`. The M6 rows (`async_hooks`, `AsyncLocalStorage`) are exercised by
+`test/async/run.sh` (a 96-cell propagation matrix, hook semantics and a 1M-promise retention check)
+and `test/conformance/async_hooks/`.
 
 ## 1. What quickjs-ng 0.17.0 gives us
 
@@ -116,8 +119,14 @@ Measured on the pinned engine (2026-11-13):
 | `vm` | ⚪ | non-goal (D6) |
 | `inspector` | ⚪ | non-goal |
 | `diagnostics_channel` | ⚪ | 1.1 candidate. npm 11.20 needs it for any command that walks the tree (`npm ls` fails with `ERR_UNKNOWN_BUILTIN_MODULE`); its `--help` and `--version` paths do not |
-| `cluster`, `dgram`, `http2`, `sqlite` | ⚪ | not in 1.0 |
+| `cluster`, `dgram`, `http2` | ⚪ | not in 1.0 |
 | `node:test` | ✅ M7 | `test`/`describe`/`it`, `before`/`after`/`beforeEach`/`afterEach`, `t.test()` subtests, `t.diagnostic()`, `t.plan(n)`, `t.assert` (a thin alias over `node:assert`), promise tests and `(t, done)` callback tests, per-test `{ timeout }` over a 30 s default (0/`Infinity` disables), `lite --test [FILES…]` with discovery of a named file, `*.test.js` under a named directory, or every `test/**/*.js` when no path is given, the spec reporter (`▶`/`✔`/`✖`, one line per test, a summary) and exit code 1 on any failure. **Not shipped (D71):** mocks, snapshots, coverage, watch mode, `--test-only`, `--test-name-pattern`, extra reporters and TAP; test files are loaded through the CommonJS loader, so `.mjs` test files are not supported yet, and a file that merely `require`s `node:test` outside `lite --test` registers nothing. The 238-case conformance corpus is deliberately **not** migrated — that is M8. Pinned by `test/node-test/run.sh`, which runs the same files under `node --test` and `lite --test` and compares the transcripts |
+
+### Storage — after M7
+
+| Module | Status | Notes |
+|---|---|---|
+| `sqlite` | 🟡 | `node:sqlite` over a bundled SQLite 3.53.2. `Database`/`DatabaseSync` (open, close, exec, prepare, location, isOpen, isTransaction, limits, serialize, deserialize, enableDefensive, `function`, `aggregate`, `setAuthorizer`, `createSession`, `applyChangeset`, `loadExtension`/`enableLoadExtension`, `createModule` for JavaScript-backed virtual tables, `[Symbol.dispose]`), `Statement`/`StatementSync` (run, get, all, iterate, columns, stat, resetStats, the four `set*` policies, sourceSQL, expandedSQL, close, `[Symbol.dispose]`), `Session` (changeset, patchset, close, dispose), `SQLTagStore`, `backup()`, the 45 `constants`, Node's type conversion (numbers bind `REAL`, BigInts `INTEGER`, booleans `1`/`0`, byte views `BLOB`, `undefined`/`NaN` `NULL`) and binding rules (bare named parameters, unknown names, `?`/`?NNN` positional slots), foreign keys on and double-quoted strings off by default, null-prototype result objects, original JavaScript exceptions propagating out of user functions and authorizers. `require("node:sqlite")` only — `module.builtinModules` omits it and `isBuiltin("sqlite")` is false, as in Node. Not implemented: `diagnostics_channel` `'sqlite.db.query'` events (D77). `--no-default-features` drops the module entirely (D76–D79) |
 
 ## 3. Divergences (deliberate, tested)
 
@@ -206,6 +215,10 @@ this document applies unchanged; these are the differences a compiled app can ob
 | D73 | The HTTP server creates its per-connection session — request/response slots, socket listeners, per-request timers — on the first parsed event, not at accept. `headersTimeout` is still a deadline taken at accept, kept as a number on the socket and swept by one server-wide timer that keeps running after `server.close()`, so a peer that was half-open at shutdown is still reclaimed; `getConnections()` and `close*Connections()` count sockets, because a sessionless socket is still a connection. A peer that never sends a byte costs one handle listener and one number instead of a session object and a timer | the session and its per-request timers are state only a request needs; measuring the eager version showed 2.5 KiB per half-open connection, and 2,000 idle connections are exactly the slow-loris case the bound is about (m7-plan §12.3). One timer per connection would have cost ~1.2 KiB of that back, hence the sweep | `test/net/slowloris.sh`, `test/conformance/divergences/d74-first-head-timeout.js`, `test/js/lib/http.test.js` |
 | D74 | onde closes a connection whose first request head never completes, and one that `server.timeout` covers, at the configured deadline. Node 26.12.1 held both when measured: a 300 ms `headersTimeout` left a partial head open past 5 s, and `timeout` emitted `'timeout'` without closing the socket | an idle peer that holds a descriptor forever is the case the slow-loris bound exists for, and a timeout that only logs is not a bound. Being stricter than Node here is deliberate; `test/conformance/divergences/d74-first-head-timeout.js` pins it | `test/conformance/divergences/d74-first-head-timeout.js` |
 | D72 | A release build embeds the bootstrap snapshot only; `ONDE_BOOTSTRAP=source` in such a build is a hard error. Debug builds embed the source and can select either path, and the `bootstrap-source` feature adds the source to a release build for A/B measurement only | a released binary that cannot read its own snapshot is a build bug; a silent fallback to source would hide it and pay the parse cost anyway (m7-plan §4.3) | `crates/ln-runtime/tests/snapshot.rs`, `crates/ln-runtime/src/bootstrap.rs` |
+| D76 | `node:sqlite` is synchronous and whole-call: `Database`/`Statement` never touch a thread pool, and `backup()` is a Promise whose loop yields through `setImmediate` between page batches instead of stepping on a libuv thread | a SQLite connection must stay on its isolate thread, and onde has no database thread pool; yielding between batches is observable only as timing, never as a different result | `test/conformance/sqlite/sqlite08-backup.js` |
+| D77 | No `diagnostics_channel` `'sqlite.db.query'` events | `diagnostics_channel` is not implemented at all, so there is no channel to publish them on; every other `node:sqlite` entry point exists | `test/conformance/sqlite/` |
+| D78 | A `Database`/`Statement` that is never closed is not closed by a GC finalizer; it stays open until the isolate tears down, where the registry finalizes statements and closes connections. `db.close()` and `statement.close()` are explicit, and `[Symbol.dispose]` is the `using`-friendly spelling | QuickJS 0.17 does not deliver `FinalizationRegistry` cleanup callbacks reliably, and a finalizer must not run SQLite calls | `test/js/lib/sqlite.test.js` |
+| D79 | The bundled SQLite is 3.53.2, not Node 26.12.1's 3.54.1; `process.versions.sqlite` reports the bundled version, and the corpus never asserts version-dependent behaviour | one self-contained binary, no system libsqlite3, and no drift with a host's SQLite features | `test/conformance/sqlite/` |
 
 How a compiled app is produced, what the payload contains and why the engine stamp exists is
 `docs/standalone-build.md`; this section only records what a user can notice.

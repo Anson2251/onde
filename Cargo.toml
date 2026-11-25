@@ -10,6 +10,7 @@ members = [
     "crates/ln-error",
     "crates/ln-http",
     "crates/ln-zlib",
+    "crates/ln-sqlite",
     "crates/ln-engine",
     "crates/ln-io",
     "crates/ln-crypto",
@@ -19,7 +20,11 @@ members = [
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.80"
+# Raised from 1.80 with `node:sqlite`: `rusqlite`'s policy is "latest stable at the time of
+# release", so the old floor was never true for it, and the rest of the graph is only tested on
+# current stable (1.100 at the time of writing). 1.89 is the floor of the current rusqlite
+# generation, which keeps a later upgrade from needing another bump.
+rust-version = "1.89"
 license = "MIT"
 
 [profile.release]

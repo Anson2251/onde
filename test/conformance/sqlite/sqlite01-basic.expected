@@ -1,0 +1,16 @@
+open: true tx: false location: null
+insert: {"changes":1,"lastInsertRowid":2} {"changes":1,"lastInsertRowid":3}
+all: [{"id":1,"name":"seed"},{"id":2,"name":"a"},{"id":3,"name":"b"}]
+get: {"id":1,"name":"seed"}
+row prototype is null: true
+run on select: {"changes":1,"lastInsertRowid":3}
+source: "SELECT id, name FROM t ORDER BY id"
+expanded: "SELECT id, name FROM t ORDER BY id"
+empty get: undefined empty all: []
+columns: [{"column":"id","database":"main","name":"id","table":"t","type":"INTEGER"},{"column":"name","database":"main","name":"name","table":"t","type":"TEXT"}]
+column prototype is null: true
+closed statement: ERR_INVALID_STATE statement has been finalized
+closed database open: false
+closed database use: ERR_INVALID_STATE database is not open
+close twice: ERR_INVALID_STATE database is not open
+exit:0

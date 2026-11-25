@@ -2,7 +2,7 @@
 name = "ondec"
 version = "0.1.0"
 edition.workspace = true
-# Not the workspace's 1.80: the bundler's tree (oxc 0.158) requires 1.97. `ondec` is a host-only
+# Not the workspace's 1.89: the bundler's tree (oxc 0.158) requires 1.97. `ondec` is a host-only
 # build tool and never part of the SDK, so this does not raise the runtime's floor.
 rust-version = "1.97"
 license.workspace = true

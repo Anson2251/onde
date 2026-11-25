@@ -1,0 +1,13 @@
+prefixed: {"a":1,"b":2,"c":3}
+bare: {"a":1,"b":2,"c":3}
+unknown: ERR_INVALID_STATE Unknown named parameter 'z'
+unknown allowed: {"a":1,"b":null,"c":null}
+bare off with prefix: {"a":1,"b":null,"c":null}
+ambiguous: ERR_INVALID_STATE Cannot create bare named parameter 'k' because of conflicting names '$k' and '@k'.
+anonymous: {"a":"x","b":42}
+missing: {"a":1,"b":null}
+extra: ERR_SQLITE_ERROR 25 column index out of range
+numbered: {"a":"second","b":"first"}
+named positional: ERR_SQLITE_ERROR 25 column index out of range
+mixed: {"a":null,"b":5}
+exit:0

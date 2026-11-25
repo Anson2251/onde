@@ -423,6 +423,9 @@ pub struct Isolate {
     signals: Rc<SignalBridge>,
     /// Child processes: spawned processes and their pipes (M5).
     procs: Rc<ProcBridge>,
+    /// SQLite connections, statements and backups (`node:sqlite`).
+    #[cfg(feature = "sqlite")]
+    sqlite: Rc<host::sqlite::SqliteState>,
     /// async_hooks ids and the execution context (M6).
     async_hooks: Rc<AsyncTracker>,
     /// The forked child's IPC channel, if this process has one.
@@ -540,6 +543,8 @@ impl Isolate {
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .filter(|fd| *fd > 0)
         };
+        #[cfg(feature = "sqlite")]
+        let sqlite = Rc::new(host::sqlite::SqliteState::new());
         let async_hooks = AsyncTracker::new();
         // A worker gets no diagnostics of its own: one trace file per process is the contract, and
         // a worker's turns would need a lane in the main isolate's file (m7-plan §3.4).
@@ -577,6 +582,8 @@ impl Isolate {
             workers,
             signals,
             procs,
+            #[cfg(feature = "sqlite")]
+            sqlite,
             async_hooks,
             ipc,
             ipc_fd,
@@ -632,6 +639,8 @@ impl Isolate {
             ops: self.ops.clone(),
             ids: self.ops.ids().clone(),
             handles: self.handles.clone(),
+            #[cfg(feature = "sqlite")]
+            sqlite: self.sqlite.clone(),
             async_hooks: self.async_hooks.clone(),
             async_forced: self.async_hooks.is_started(),
         };
@@ -1439,6 +1448,10 @@ impl Isolate {
         self.ipc.shutdown();
         self.handles.shutdown();
         self.workers.shutdown();
+        // Close every SQLite connection while the engine is still alive: a future user-defined
+        // function must not outlive the context that owns its callback.
+        #[cfg(feature = "sqlite")]
+        self.sqlite.shutdown();
         // No completion may be delivered after shutdown (O4); release the refs of the parked
         // results the loop will never dispatch.
         let dropped = self.ops.discard_pending();
@@ -1642,6 +1655,10 @@ impl Drop for Isolate {
         self.ipc.shutdown();
         self.handles.shutdown();
         self.workers.shutdown();
+        // Close every SQLite connection while the engine is still alive: a future user-defined
+        // function must not outlive the context that owns its callback.
+        #[cfg(feature = "sqlite")]
+        self.sqlite.shutdown();
         // The pinned dispatcher must not outlive the runtime it belongs to.
         self.async_hooks.forget_dispatch();
     }

@@ -1,0 +1,7 @@
+callback: true true
+deny create: ERR_SQLITE_ERROR | not authorized
+ignore read: [{"a":null}]
+deny select: ERR_SQLITE_ERROR | not authorized
+cleared: [{"a":1}]
+after clear create: 1
+exit:0

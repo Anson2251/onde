@@ -21,6 +21,9 @@ ln-modules = { path = "../ln-modules" }
 # `node:zlib`'s whole-buffer gzip/deflate/crc32 implementation (host/zlib.rs), and the inflater
 # for a `--compress`ed compiled-app payload at startup.
 ln-zlib = { path = "../ln-zlib" }
+# `node:sqlite` (host/sqlite.rs). Optional so a size-sensitive build can drop the bundled SQLite
+# with one feature flag; `default = ["sqlite"]` keeps the normal binary complete.
+ln-sqlite = { path = "../ln-sqlite", optional = true }
 # The payload format a compiled app carries: parsed here, encoded by `ondec`.
 ln-payload = { path = "../ln-payload" }
 # A compiled app's `--compress zstd` payload. Optional because it is the only decoder here that
@@ -36,9 +39,11 @@ base64 = "0.23"
 serde_json = "1"
 
 [features]
-# Empty by default: `lite` needs no payload decoder, and the SDK's archive enables what it ships
-# (see `ln-embed`'s `zstd-payload`).
-default = []
+# `sqlite` is on by default because `node:sqlite` is a Node core module; turning it off drops the
+# bundled SQLite and the embedded module without touching any other code (modules.rs and
+# host/mod.rs are `cfg`-gated, and the builtin table hides a name with no source).
+default = ["sqlite"]
+sqlite = ["dep:ln-sqlite"]
 # Embeds the bootstrap source in a release build as well as the snapshot, so the two boot paths can
 # be A/B measured in one optimized binary (m7-plan §4.3). Never on in a shipped build: it is ~55 KiB
 # of source that only exists to be compared against (D72).
@@ -56,7 +61,7 @@ libc = "0.2"
 ln-engine = { path = "../ln-engine" }
 ln-payload = { path = "../ln-payload" }
 # Build-time only: the JS stdlib is minified into `OUT_DIR/js` (see build.rs). Pinned to the
-# series whose MSRV matches the workspace (1.80); newer oxc releases need a newer toolchain.
+# series whose MSRV matches the workspace floor (1.89); newer oxc releases need a newer toolchain.
 oxc_allocator = "0.48.2"
 oxc_codegen = "0.48.2"
 oxc_minifier = "0.48.2"

@@ -5,8 +5,8 @@ A Node-compatible JavaScript runtime: QuickJS as the engine, Rust as the host.
 onde runs the code around the work: CLIs, build steps, config, request handlers with light logic,
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
-`dns`, `zlib`, `child_process`, `worker_threads`) and its globals, and it installs as a 5.5 MB
-binary.
+`dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and it installs as a
+7.6 MB binary (5.5 MB without the bundled SQLite).
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
 > commands below still say `target/debug/lite`.
@@ -17,6 +17,13 @@ and fixed an idle socket that held 64 KiB of read buffer — the half-open case 
 41 MB at 2,000 connections. One measured gap is recorded rather than closed: HTTP throughput is
 0.45x of Node in one isolate. The half-open case went from 67 MB to 45 MB: the server stopped
 building a session, and its timers, for a connection that never sent a byte. [docs/m7-plan.md](docs/m7-plan.md) is the record.
+
+`node:sqlite` landed after M7 as a standalone work package: `Database`/`Statement`/`Session`/
+`SQLTagStore`, the 45 `constants`, `backup()`, user-defined functions and aggregates, the
+authorizer, sessions and changesets, JavaScript-backed virtual tables and extension loading, all
+over a bundled SQLite 3.53.2 with Node's type conversion and parameter-binding rules. The one
+Node surface left out is `diagnostics_channel`'s `'sqlite.db.query'` events;
+[docs/sqlite-plan.md](docs/sqlite-plan.md) records the contract and that gap.
 
 M6 is the milestone that changes the engine: quickjs-ng
 is now vendored and patched (`vendor/`, 0.17.0 plus a ~260-line job-queue patch), the host owns the
@@ -45,10 +52,12 @@ bundles an app and links it with the runtime into one executable, see
 ## What you trade
 
 Measured on one machine (M3 MacBook Air, macOS arm64) on 2026-11-24, release build, Node 26.12.1
-and Bun 1.3.10; the onde column was re-measured after M7 on the same machine with `lowpowermode`
-off and a load average near 5, which is why the three runtimes reproduce their earlier figures while
-onde's moved. Cold start and HTTP are medians of three (HTTP: 100 keep-alive connections, 20 warm-up
-+ 200 measured requests each); compute is medians of five repetitions per workload. Harnesses:
+and Bun 1.3.10; the onde column was re-measured after M7 and again after `node:sqlite` landed, on
+the same machine with `lowpowermode` off and a load average near 5, which is why the three runtimes
+reproduce their earlier figures while onde's moved. The install size now includes the bundled
+SQLite; the slim row is the same build with `--no-default-features`. Cold start and HTTP are
+medians of three (HTTP: 100 keep-alive connections, 20 warm-up + 200 measured requests each);
+compute is medians of five repetitions per workload. Harnesses:
 `test/net/bench.sh`, `test/net/coldstart.js` and `test/bench/run.js`. Peak RSS is the one figure not
 re-measured: this machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resolve
 the change (an M7 soak of the same server peaked at 8.0 MB).
@@ -57,12 +66,13 @@ the change (an M7 soak of the same server peaked at 8.0 MB).
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
-| install size | 5.5 MB | 77 MB | 58 MB |
+| install size | 7.6 MB | 77 MB | 58 MB |
+| install size, `--no-default-features` (no `sqlite`) | 5.5 MB | — | — |
 | cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
 | cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
 | 100 processes, same server (derived) | 927 MB | 4.42 GB | 3.32 GB |
-| embedded JS stdlib | 581 KB from 925 KB source (540 KB of module source + a 41 KB compiled bootstrap) | — | — |
+| embedded JS stdlib | 617 KB from 984 KB source (575 KB of minified module source + a 42 KB compiled bootstrap) | — | — |
 
 At 9.3 MB resident, a hundred onde processes cost less than the tool around them; the same
 hundred Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's
@@ -160,8 +170,14 @@ release build):
 
 A compiled app never parses its sources: a 1.9 MiB module loads from bytecode in about 5 ms where
 `lite` needs about 790 ms to parse it. A hello-world app is also smaller than the interpreter that
-produced it — 4.8 MB against `lite`'s 5.5 MB — because only the runtime code the app reaches is
+produced it — 6.9 MB against `lite`'s 7.6 MB — because only the runtime code the app reaches is
 linked in.
+
+The size table above was measured before `node:sqlite` landed. The default SDK now carries the
+bundled SQLite as well: a hello world links at 6.6 MiB (6.9 MB) instead of 4.8 MB, and every row
+grows by the same archive code. An archive built with
+`cargo build --release -p ln-embed --no-default-features` leaves SQLite out and links the same
+hello world at 4.4 MiB (4.6 MB); payload and startup figures are unaffected either way.
 
 Compression buys size, not speed. `--compress` takes `none` (the default), `zlib`, or
 `zstd[:level]`: zlib costs nothing because the runtime already links it for `node:zlib`, while zstd
@@ -227,9 +243,11 @@ is the honest line: the CLI loads and runs, the module it needs for real work is
 | M4 network | `net`, `http`, `https`, `tls`, `dns`, `zlib` |
 | M5 processes and threads | `child_process`, `worker_threads` with `SharedArrayBuffer`/`Atomics`, `readline`, signals |
 | M6 async context | `async_hooks`, `AsyncLocalStorage`, `AsyncResource`, `--async-stack-traces` |
-| next | performance and diagnostics (M7) |
+| M7 diagnostics | bootstrap snapshot, `--trace-events`/`--timing`/`--trace-gc`, `--max-old-space-size`, `node:test` |
+| storage (after M7) | `sqlite`/`node:sqlite`: bundled SQLite 3.53.2, `Database`, `Statement`, `Session`/changesets, `SQLTagStore`, user-defined functions/aggregates, authorizer, virtual tables, extensions, `backup`, limits, serialize/deserialize |
+| next | compatibility sweep and packaging (M8) |
 
-Per-module detail and all 52 deliberate divergences are in [docs/compat.md](docs/compat.md). The
+Per-module detail and all 77 deliberate divergences are in [docs/compat.md](docs/compat.md). The
 full inventory, repo layout and every harness are in [docs/internals.md](docs/internals.md).
 
 ## Why
@@ -255,6 +273,7 @@ an explicit microtask model.
 4. [docs/architecture.md](docs/architecture.md) for the component map and boot sequence.
 5. [docs/tuckbox.md](docs/tuckbox.md) for the demo: a package installer on onde.
 6. [docs/standalone-build.md](docs/standalone-build.md) for packaging an app as one executable.
+7. [docs/sqlite-plan.md](docs/sqlite-plan.md) for the `node:sqlite` contract and what is still open.
 
 The decisions behind the structure (scheduler, event loop, module system, handles, HTTP codec) are
 in [docs/adr/](docs/adr/), and [internals.md](docs/internals.md) §5 gives the reading order.

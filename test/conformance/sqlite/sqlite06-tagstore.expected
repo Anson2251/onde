@@ -1,0 +1,10 @@
+rows: [{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]
+get: {"id":1,"name":"Alice"}
+size after two shapes: 3
+same shape reuses: 3
+case sensitive: 4
+capacity: 1000 db: true
+eviction: 2 2
+clear: 0
+store clear: 0
+exit:0

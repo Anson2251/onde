@@ -1,0 +1,5 @@
+not allowed: ERR_INVALID_STATE | Cannot enable extension loading because it was disabled at database creation.
+enabled: true
+missing library: ERR_LOAD_SQLITE_EXTENSION
+disabled: ERR_INVALID_STATE | extension loading is not allowed
+exit:0

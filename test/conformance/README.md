@@ -15,11 +15,12 @@ rejections/   unhandledRejection / rejectionHandled protocol
 modules/      CJS/ESM entries, resolution, cycles, interop, import.meta, TLA
 stdlib/       path, url, util, assert, events, buffer, os, console, process, module, …
 zlib/         gzip/zlib/raw-deflate round trips, crc32 and coded errors
+sqlite/       node:sqlite: schema, types, bindings, iterators, limits, backup, coded errors
 divergences/  deliberate differences; expectations recorded from onde
 ```
 
-113 cases total (M1: 72, M2: 41). The Node self-test skips `divergences/` (9 cases) and any
-`.nodiff` case, so the differential harness compares 103.
+253 cases total. The Node self-test skips `divergences/` (13 cases) and the one `.nodiff` case,
+so the differential harness compares 239.
 
 ## Running
 
@@ -37,7 +38,7 @@ SUITES="modules stdlib" ./test/conformance/run.sh
 SUITES=divergences RECORD_DIVERGENCES=1 REGEN=1 ./test/conformance/run.sh
 ```
 
-Divergence cases are small and cite their D-number from [docs/compat.md](../compat.md) in a
+Divergence cases are small and cite their D-number from [docs/compat.md](../../docs/compat.md) in a
 comment. A new deliberate difference should add one.
 
 ## `.nodiff`

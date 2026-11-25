@@ -36,6 +36,7 @@ pub const BUILTINS: &[&str] = &[
     "querystring",
     "readline",
     "readline/promises",
+    "sqlite",
     "stream",
     "stream/promises",
     "string_decoder",
@@ -48,13 +49,28 @@ pub const BUILTINS: &[&str] = &[
     "zlib",
 ];
 
+/// Builtins that exist only under the `node:` scheme, as in Node.
+///
+/// `require("sqlite")` must fall through to `node_modules` and end as `MODULE_NOT_FOUND`;
+/// `module.builtinModules` must not list these names. The loader applies the same rule for
+/// `module.isBuiltin`, using `__ln_host.nodeOnlyBuiltins()`.
+pub const NODE_ONLY: &[&str] = &["sqlite"];
+
 /// Resolve a specifier to a canonical builtin name.
 ///
 /// Accepts both `path` and `node:path`; returns `None` for anything else, including unknown
-/// `node:` names (the caller turns that into `ERR_UNKNOWN_BUILTIN_MODULE`).
+/// `node:` names (the caller turns that into `ERR_UNKNOWN_BUILTIN_MODULE`) and a bare name that
+/// is only reachable with the prefix.
 pub fn lookup(specifier: &str) -> Option<&'static str> {
-    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
-    BUILTINS.iter().copied().find(|builtin| *builtin == name)
+    let (name, prefixed) = match specifier.strip_prefix("node:") {
+        Some(name) => (name, true),
+        None => (specifier, false),
+    };
+    let builtin = BUILTINS.iter().copied().find(|builtin| *builtin == name)?;
+    if !prefixed && NODE_ONLY.contains(&builtin) {
+        return None;
+    }
+    Some(builtin)
 }
 
 /// True when the specifier is explicitly prefixed with `node:`.
@@ -87,6 +103,14 @@ mod tests {
         assert_eq!(lookup("not-a-module"), None);
         // A prefix match is not a match.
         assert_eq!(lookup("pathish"), None);
+    }
+
+    #[test]
+    fn node_only_names_require_the_prefix() {
+        assert_eq!(lookup("sqlite"), None);
+        assert_eq!(lookup("node:sqlite"), Some("sqlite"));
+        assert_eq!(lookup("node:zlib"), Some("zlib"));
+        assert_eq!(lookup("zlib"), Some("zlib"));
     }
 
     #[test]

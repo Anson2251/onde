@@ -1,0 +1,9 @@
+self: true
+first: {"done":false,"value":{"a":1}}
+result prototype is null: true
+return: {"done":true,"value":null}
+after return: {"done":true,"value":null}
+again: {"done":false,"value":{"a":1}}
+invalidated: ERR_INVALID_STATE iterator was invalidated
+closed statement: ERR_INVALID_STATE statement has been finalized
+exit:0

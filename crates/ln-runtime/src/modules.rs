@@ -69,6 +69,10 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "worker_threads" => bundled_js!("lib/worker_threads.js"),
         "child_process" => bundled_js!("lib/child_process.js"),
         "zlib" => bundled_js!("lib/zlib.js"),
+        // `sqlite` is a Node core module and is compiled in by default; a `--no-default-features`
+        // build drops it (the match arm is gone and `builtinNames` stops advertising it).
+        #[cfg(feature = "sqlite")]
+        "sqlite" => bundled_js!("lib/sqlite.js"),
         "internal/loader" | "loader" => bundled_js!("lib/loader.js"),
         "internal/errors" => bundled_js!("lib/internal/errors.js"),
         "internal/bytes" => bundled_js!("lib/internal/bytes.js"),
@@ -616,6 +620,11 @@ mod tests {
     #[test]
     fn every_builtin_has_an_embedded_source() {
         for name in ln_modules::BUILTINS {
+            // A build without the `sqlite` feature lists the name for the resolver's error
+            // message but deliberately has no source for it.
+            if !cfg!(feature = "sqlite") && *name == "sqlite" {
+                continue;
+            }
             assert!(
                 builtin_source(name).is_some(),
                 "BUILTINS lists {name} but modules::builtin_source has no arm for it"

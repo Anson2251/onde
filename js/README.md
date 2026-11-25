@@ -40,6 +40,7 @@ js/
     internal/worker.js the shared core under worker_threads (ports, Worker, parentPort)
     readline.js       line-oriented Interface + ANSI helpers
     readline-promises.js readline/promises
+    sqlite.js         Database, Statement, SQLTagStore, constants, backup
 ```
 
 Each `lib/*.js` is a **CommonJS module**: `"use strict";`, `module.exports = ...`, no top-level
@@ -96,6 +97,8 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `buffer.encodeHex` | `(view, start, end) => string` | lowercase; same borrowed-view and clamped-range rules as base64 |
 | `buffer.decodeHex` | `(text) => Uint8Array` | fresh array; stops at the first non-hex pair and drops an odd trailing digit |
 | `text.decodeStream` | `(data, start, end, pending, fatal) => { text, pending } \| null` | UTF-8 streaming split for `StringDecoder`; `null` means the prefix was invalid under `fatal` |
+| `sqlite` | object of primitives | `node:sqlite` handles: `open`, `close`, `exec`, `prepare`, `finalize`, `bind`, `run`, `all`, `first`, `begin`, `next`, `finish`, `columns`, `stat`, `resetStats`, `sourceSQL`, `expandedSQL`, `isOpen`, `isTransaction`, `location`, `serialize`, `deserialize`, `limit`, `setLimit`, `enableDefensive`, `backupInit`/`backupStep`/`backupFinish`, `version`, and the callback/session/extension entry points (`createFunction`, `createAggregate`, `setAuthorizer`, `createSession`, `sessionChangeset`, `sessionPatchset`, `sessionClose`, `applyChangeset`, `createModule`, `enableLoadExtension`, `loadExtension`); installed only when the `sqlite` feature is on |
+| `nodeOnlyBuiltins` | `() => string[]` | builtin names reachable only as `node:<name>` (`sqlite`), so `isBuiltin` and `builtinModules` match Node |
 
 `buffer` and `text` are nested members (`__ln_host.buffer.*`, `__ln_host.text.*`), installed only
 when the runtime provides the native codec; `internal/bytes.js` and `textcodec.js` fall back to

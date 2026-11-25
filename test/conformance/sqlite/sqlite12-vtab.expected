@@ -1,0 +1,12 @@
+counter: [{"value":1},{"value":2}]
+storage classes: [{"t":"real","value":1},{"t":"integer","value":2}]
+table-valued function: [{"value":2},{"value":3},{"value":4}]
+defaults: [{"value":1},{"value":2},{"value":3}]
+hidden column: [{"value":2,"start":2},{"value":3,"start":2},{"value":4,"start":2}]
+bigint argument: [{"kind":"bigint"}]
+array rows: [{"x":1},{"x":2},{"x":3}]
+empty columns: TypeError ERR_INVALID_ARG_VALUE | The "options.columns" array must not be empty.
+bad type: TypeError ERR_INVALID_ARG_VALUE | The column "type" property must be one of 'INTEGER', 'TEXT', 'REAL', 'BLOB', or 'ANY'.
+non iterable: ERR_SQLITE_ERROR | The "options.rows" function must return an iterable object
+row throw: Error | row failed
+exit:0

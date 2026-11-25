@@ -1,0 +1,9 @@
+syntax: Error ERR_SQLITE_ERROR 1 SQL logic error | near "FROM": syntax error
+empty sql: TypeError ERR_INVALID_ARG_VALUE
+bad path: TypeError ERR_INVALID_ARG_TYPE
+bad option: TypeError ERR_INVALID_ARG_TYPE
+bigint range: TypeError ERR_INVALID_ARG_VALUE
+dqs: ERR_SQLITE_ERROR 1 | no such column: "abc" - should this be a string literal in single-quotes?
+stat name: TypeError ERR_INVALID_ARG_VALUE
+exec stops: ERR_SQLITE_ERROR {"n":1}
+exit:0

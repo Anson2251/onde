@@ -64,6 +64,11 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 - `dns`: `lookup` over the OS resolver
 - `zlib`: `gzip`/`gunzip`/`deflate`/`inflate` (and `Raw`) in sync and callback forms,
   `crc32`, `constants`
+- `sqlite` (after M7): `Database`/`Statement`/`Session`/`SQLTagStore`, the 45 `constants` and
+  `backup` over a bundled SQLite 3.53.2; user-defined functions and aggregates, the authorizer,
+  changesets, JavaScript-backed virtual tables and extension loading. Sync-only, with Node's type
+  conversion and binding rules. The host `sqlite` feature can drop the whole module (and the
+  bundled C) from a build.
 
 ### Processes, threads and lines — M5
 
@@ -124,6 +129,7 @@ crates/
   ln-http/       sans-io HTTP/1.1 codec: framing and limits            [M4]
   ln-crypto/     hash/HMAC/HKDF/random, engine-free and tokio-free     [M3]
   ln-zlib/       gzip/deflate + crc32, engine-free and tokio-free      [M4]
+  ln-sqlite/     SQLite connections/statements/backup, engine-free     [after M7]
   ln-error/      errno→code and message tables                         [M3]
 js/
   bootstrap.js   install order: host, events/process, globals, hooks
@@ -132,13 +138,13 @@ js/
                  module, process, loader, fs, fs-promises, internal/fs,
                  stream, stream-promises, crypto, tty, perf_hooks,
                  net, internal/net, http, https, internal/http, tls,
-                 dns, zlib, child_process, internal/pipe,
+                 dns, zlib, sqlite, child_process, internal/pipe,
                  worker_threads, internal/worker, readline,
-                 readline-promises, async_hooks
+                 readline-promises, async_hooks, test
 test/
-  conformance/   232 cases: scheduler (M1), modules, stdlib,
-                 fs, stream, zlib, net, http, https, child_process,
-                 workers, readline, async_hooks, divergences
+  conformance/   253 cases: scheduler (M1), modules, stdlib,
+                 fs, stream, zlib, sqlite, net, http, https,
+                 child_process, workers, readline, async_hooks, divergences
   js/            stdlib tests (run under node and lite) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   programs/      cat, wc -l, cp -r as real programs (M3 acceptance)
@@ -155,15 +161,15 @@ vendor/          rquickjs-sys 0.14.0 + patched quickjs-ng 0.17.0        [M6]
 ## 3. Build and test
 
 ```sh
-cargo test --all                                # 378 tests across the crates
+cargo test --all                                # 549 tests across the crates
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 232/232 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 253/253 corpus cases against target/debug/lite
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (223)
+./test/differential.sh                          # node vs lite, same stdout + exit code (239)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 77 stdlib suites under node and lite + oracles
+./test/js/run.sh                                # 85 stdlib suites under node and lite + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
 ./test/async/run.sh                             # M6 acceptance: ALS matrix, hooks, 1M promises
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark

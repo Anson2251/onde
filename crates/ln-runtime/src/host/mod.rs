@@ -50,6 +50,8 @@ mod fs;
 mod net;
 mod proc;
 mod signal;
+#[cfg(feature = "sqlite")]
+pub(crate) mod sqlite;
 mod stdio;
 mod text;
 mod worker;
@@ -87,11 +89,28 @@ pub(crate) struct HostState {
     pub ipc_fd: Option<i32>,
     /// `Some` when this isolate is a worker.
     pub worker: Option<Rc<crate::WorkerRole>>,
+    /// SQLite handles: connections, statements and in-flight backups (`node:sqlite`).
+    #[cfg(feature = "sqlite")]
+    pub sqlite: Rc<sqlite::SqliteState>,
     /// async_hooks ids and the execution context (M6).
     pub async_hooks: Rc<crate::async_hooks::AsyncTracker>,
     /// True when `--async-stack-traces` started tracking before the bootstrap ran, so the
     /// stdlib must mint ids from the first callback.
     pub async_forced: bool,
+}
+
+/// The builtin names this build can actually load.
+///
+/// A feature-off build must not advertise `sqlite` (the loader asks `builtinSource`, which has no
+/// arm for it). The node:-only names are filtered by the loader, which knows the specifier.
+fn public_builtin_names() -> impl Iterator<Item = &'static str> {
+    ln_modules::BUILTINS.iter().copied().filter(|_name| {
+        #[cfg(feature = "sqlite")]
+        let available = true;
+        #[cfg(not(feature = "sqlite"))]
+        let available = *_name != "sqlite";
+        available
+    })
 }
 
 pub(crate) fn install<'js>(
@@ -679,7 +698,23 @@ pub(crate) fn install<'js>(
             ctx.clone(),
             |ctx: js::Ctx<'js>| -> js::Result<js::Array<'js>> {
                 let names = js::Array::new(ctx.clone())?;
-                for (index, name) in ln_modules::BUILTINS.iter().enumerate() {
+                for (index, name) in public_builtin_names().enumerate() {
+                    names.set(index, name)?;
+                }
+                Ok(names)
+            },
+        )?,
+    )?;
+
+    // The names that only resolve with the `node:` prefix (`sqlite`), so the loader can answer
+    // `module.isBuiltin("sqlite") === false` while `isBuiltin("node:sqlite") === true`.
+    host.set(
+        "nodeOnlyBuiltins",
+        js::Function::new(
+            ctx.clone(),
+            |ctx: js::Ctx<'js>| -> js::Result<js::Array<'js>> {
+                let names = js::Array::new(ctx.clone())?;
+                for (index, name) in ln_modules::builtin::NODE_ONLY.iter().enumerate() {
                     names.set(index, *name)?;
                 }
                 Ok(names)
@@ -743,6 +778,11 @@ pub(crate) fn install<'js>(
     // --- compression primitives -------------------------------------------------------------
 
     zlib::install(ctx, &host, state)?;
+
+    // --- the database (node:sqlite) ---------------------------------------------------------
+
+    #[cfg(feature = "sqlite")]
+    sqlite::install(ctx, &host, state)?;
     text::install(ctx, &host, state)?;
     buffer::install(ctx, &host, state)?;
 

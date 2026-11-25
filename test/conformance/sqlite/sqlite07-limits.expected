@@ -1,0 +1,12 @@
+limit names: length,sqlLength,column,exprDepth,compoundSelect,vdbeOp,functionArg,attach,likePatternLength,variableNumber,triggerDepth
+default length: true
+set: 100000
+reset: true
+negative: RangeError ERR_OUT_OF_RANGE
+transaction before: false
+transaction inside: true
+transaction after: false
+serialize: true false true
+round trip: [{"v":1},{"v":2}]
+file location: true
+exit:0

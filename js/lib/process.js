@@ -178,6 +178,10 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
         onde: host.version.replace(/^v/, ""),
         lite: host.version.replace(/^v/, ""),
       };
+      // `node:sqlite` reports the bundled SQLite, as Node reports its own.
+      if (host.sqlite !== undefined && host.sqlite !== null) {
+        this.versions.sqlite = host.sqlite.version();
+      }
       this.release = { name: "node" };
       this.config = {};
       this.features = {};
