@@ -23,6 +23,11 @@ if [ ! -x "$onde" ]; then
   echo "no onde binary at '$onde'; run 'cargo build' or set ONDE=" >&2
   exit 2
 fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "timeout not found: install GNU coreutils and put its gnubin on PATH" >&2
+  echo "  brew install coreutils && export PATH=\"$(brew --prefix coreutils)/libexec/gnubin:$PATH\"" >&2
+  exit 2
+fi
 
 pass=0
 fail=0
@@ -32,9 +37,9 @@ for file in "$here"/*.js; do
   name="$(basename "$file")"
   node_out="$(mktemp)"
   lite_out="$(mktemp)"
-  timeout "$case_timeout" node "$file" >"$node_out" 2>&1
+  timeout -k 5 "$case_timeout" node "$file" >"$node_out" 2>&1
   node_code=$?
-  timeout "$case_timeout" "$onde" "$file" >"$lite_out" 2>&1
+  timeout -k 5 "$case_timeout" "$onde" "$file" >"$lite_out" 2>&1
   lite_code=$?
 
   if [ "$node_code" -ne 0 ]; then

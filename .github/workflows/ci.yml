@@ -19,6 +19,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: GNU timeout for the harnesses
+        # macOS ships no `timeout`; conformance, the net fdleak check and the M6 async harness all
+        # bound a case with it. Homebrew's coreutils exposes the unprefixed binary only from
+        # gnubin, and putting all of gnubin on PATH would shadow the BSD tools the rest of the
+        # suite was written against, so link just `timeout`.
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(brew --prefix coreutils)/libexec/gnubin/timeout" "$HOME/.local/bin/timeout"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

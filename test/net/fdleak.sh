@@ -18,9 +18,6 @@
 # Back-to-back runs are fine: three in a row completed in 3, 4 and 6 seconds. A connection that
 # cannot open fails with ETIMEDOUT and a hint after 15 s rather than stalling the worker.
 #
-# If a piped invocation ever appears to hang, check for a leaked `sleep 180`: the watchdog used to
-# inherit stdout and hold the pipe open after the script itself had exited.
-#
 # fd sampling: /proc/<pid>/fd on Linux, `lsof -p` on macOS. /dev/fd is per-process (it describes
 # the shell's own fds), so it cannot sample a child; lsof is the macOS equivalent. No hardcoded
 # ports: the server binds :0 and writes the port to a temp file.
@@ -33,6 +30,7 @@ onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 cycles="${NET_CYCLES:-10000}"
 warmup="${NET_FDLEAK_WARMUP:-100}"
 concurrency="${NET_CONCURRENCY:-50}"
+client_timeout="${NET_FDLEAK_TIMEOUT:-180}"
 server_js="$here/fixtures/fd-server.js"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
@@ -46,19 +44,17 @@ if ! command -v node >/dev/null 2>&1; then
   echo "node is required for the connection churn client" >&2
   exit 2
 fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "timeout not found: install GNU coreutils and put it on PATH" >&2
+  echo "  brew install coreutils && export PATH=\"$(brew --prefix coreutils)/libexec/gnubin:$PATH\"" >&2
+  exit 2
+fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/ln-fdleak.XXXXXX")"
 server_pid=""
-client_pid=""
-watchdog=""
 
 cleanup() {
-  # The watchdog outlives the script on any early exit unless it is killed here, and because it
-  # inherits stdout, a leaked one keeps `fdleak.sh | anything` waiting for the full 180 s.
-  [ -n "$watchdog" ] && kill "$watchdog" 2>/dev/null || true
-  [ -n "$client_pid" ] && kill "$client_pid" 2>/dev/null || true
   [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
-  [ -n "$client_pid" ] && wait "$client_pid" 2>/dev/null || true
   [ -n "$server_pid" ] && wait "$server_pid" 2>/dev/null || true
   rm -rf "$tmp"
 }
@@ -98,27 +94,17 @@ fi
 echo "fdleak: before fd=$fd_before rss=${rss_before}KB"
 
 started_at="$(node -e 'process.stdout.write(String(Date.now()))')"
-NET_CONCURRENCY="$concurrency" node "$client_js" "$tmp/port" "$cycles" >"$tmp/client.log" 2>&1 &
-client_pid=$!
-
-# Watchdog: 10k cycles on a slow machine is still well under two minutes.
-(
-  sleep 180
-  if kill -0 "$client_pid" 2>/dev/null; then
-    echo "fdleak: client timed out" >&2
-    kill -9 "$client_pid" 2>/dev/null || true
-  fi
-) >/dev/null 2>&1 &
-watchdog=$!
-
-wait "$client_pid"
+# 10k cycles on a slow machine is still well under two minutes. `timeout` exits 124 when it fires
+# and 137 when `-k 5` had to send KILL because the client ignored TERM; both are the bound firing.
+NET_CONCURRENCY="$concurrency" timeout -k 5 "$client_timeout" node "$client_js" "$tmp/port" "$cycles" >"$tmp/client.log" 2>&1
 client_code=$?
-client_pid=""
-kill "$watchdog" 2>/dev/null || true
-wait "$watchdog" 2>/dev/null || true
 elapsed="$((($(node -e 'process.stdout.write(String(Date.now()))') - started_at) / 1000))"
 
 cat "$tmp/client.log"
+if [ "$client_code" -eq 124 ] || [ "$client_code" -eq 137 ]; then
+  echo "fdleak: client timed out after ${client_timeout}s" >&2
+  exit 1
+fi
 if [ "$client_code" -ne 0 ]; then
   echo "fdleak: client failed (exit $client_code)" >&2
   exit 1

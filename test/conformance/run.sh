@@ -31,6 +31,12 @@ case "$runner_path" in
 esac
 runner_name="$(basename "$runner_path")"
 
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "timeout not found: install GNU coreutils and put it on PATH" >&2
+  echo "  brew install coreutils && export PATH=\"$(brew --prefix coreutils)/libexec/gnubin:$PATH\"" >&2
+  exit 2
+fi
+
 default_suites=(microtasks timers loop nexttick uncaught rejections modules stdlib buffer fs stream zlib sqlite http https net child_process workers readline async_hooks divergences)
 suites=()
 if [ -n "${SUITES:-}" ]; then
@@ -51,36 +57,17 @@ failed_names=()
 # line explaining why. 20 s is far above the slowest case (the fs and net suites finish in ms).
 CASE_TIMEOUT="${CONFORMANCE_CASE_TIMEOUT:-20}"
 
-# Run `runtime src` into `out`, killing it after CASE_TIMEOUT. The watchdog writes to /dev/null:
-# a background subshell that inherits the capture pipe makes the caller's `$(...)` wait for the
-# sleep even after the case has exited, which is indistinguishable from a hang.
-run_bounded() {
-  local runtime="$1" src="$2" out="$3" marker="$4"
-  "$runtime" "$src" >"$out" 2>/dev/null &
-  local pid=$!
-  (
-    sleep "$CASE_TIMEOUT"
-    : >"$marker"
-    kill -9 "$pid" 2>/dev/null
-  ) >/dev/null 2>&1 &
-  local watchdog=$!
-  local code=0
-  wait "$pid" 2>/dev/null || code=$?
-  kill "$watchdog" 2>/dev/null || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$code"
-}
-
+# Run `runtime src` into `out` under the wall-clock bound. `timeout` exits 124 when it fires on
+# its own, and 137 when `-k 5` had to send KILL because the case ignored TERM; both mean the bound
+# fired and are reported as a timeout. `-k 5` is what keeps a TERM-ignoring case from pinning the
+# corpus run.
 run_case() {
   local runtime="$1" src="$2"
-  local out marker code=0
+  local out code=0
   out="$(mktemp)"
-  marker="$out.timeout"
-  run_bounded "$runtime" "$src" "$out" "$marker" || code=$?
-  if [ -f "$marker" ]; then
+  timeout -k 5 "$CASE_TIMEOUT" "$runtime" "$src" >"$out" 2>/dev/null || code=$?
+  if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
     printf 'killed by the %ss case timeout\n' "$CASE_TIMEOUT" >"$out"
-    code=124
-    rm -f "$marker"
     : >"$out.timedout"
   fi
   printf 'exit:%d\n' "$code" >>"$out"
@@ -127,12 +114,12 @@ for suite in "${suites[@]}"; do
       fi
       node_src="$(mktemp)"
       node_code=0
-      run_bounded node "$src" "$node_src" "$node_src.timeout" || node_code=$?
+      timeout -k 5 "$CASE_TIMEOUT" node "$src" >"$node_src" 2>/dev/null || node_code=$?
       printf 'exit:%d\n' "$node_code" >>"$node_src"
 
       lite_src="$(mktemp)"
       lite_code=0
-      run_bounded "$runner_path" "$src" "$lite_src" "$lite_src.timeout" || lite_code=$?
+      timeout -k 5 "$CASE_TIMEOUT" "$runner_path" "$src" >"$lite_src" 2>/dev/null || lite_code=$?
       printf 'exit:%d\n' "$lite_code" >>"$lite_src"
 
       if diff -u "$node_src" "$lite_src" >/dev/null 2>&1; then
@@ -144,7 +131,7 @@ for suite in "${suites[@]}"; do
         fail=$((fail + 1))
         failed_names+=("$name")
       fi
-      rm -f "$node_src" "$node_src.timeout" "$lite_src" "$lite_src.timeout"
+      rm -f "$node_src" "$lite_src"
       continue
     fi
 
