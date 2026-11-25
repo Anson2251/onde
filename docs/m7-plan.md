@@ -534,7 +534,7 @@ it.
 | 8 | The `node:test` pilot produces the same transcript under `node --test` and `onde --test` | `test/node-test/run.sh` | hard |
 | 9 | The bytecode bootstrap produces the same output as the source bootstrap across the corpus | `./test/conformance/run.sh` against a release binary | hard |
 | 10 | Binary size ≤ 6.0 MB (was 5.4 MB) | `test/perf/run.sh` | hard; the snapshot is allowed +600 KB, and §12 records the actual |
-| 11 | Stdlib consolidation checklist | `test/js/run.sh`, `scripts/check-duplication.mjs` | already green at plan time; kept as a regression gate |
+| 11 | Stdlib consolidation checklist | `test/js/run.sh` | already green at plan time; kept as a regression gate (the duplication guard was later deleted) |
 
 ### 6.1 The half-open bound cannot be 25 MB, and the plan says so instead of trying
 

@@ -351,7 +351,17 @@ mod tests {
     #[test]
     fn the_link_command_puts_the_archive_before_the_libraries() {
         let target = Target::parse("aarch64-apple-darwin").unwrap();
-        let toolchain = Toolchain::resolve(&target, &Options::default()).unwrap();
+        // Name the compiler: the link line does not depend on the host, and this test must pass
+        // when the suite runs on a different one (x86_64 macOS, Linux CI), where this is a cross
+        // target and the implicit host `cc` is refused by design.
+        let toolchain = Toolchain::resolve(
+            &target,
+            &Options {
+                cc: Some("cc".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let command = toolchain.link_command(&LinkJob {
             c_file: Path::new("app.c"),
             assembly: None,
@@ -413,9 +423,28 @@ mod tests {
     }
 
     #[test]
+    fn the_host_target_resolves_without_an_explicit_compiler() {
+        // The one case where the tool may fall back to `$CC`/`cc`: the target is the machine
+        // running the build. Guarded rather than hard-coded so an unsupported host does not fail
+        // a test about compiler choice.
+        let Ok(host) = Target::host() else {
+            return;
+        };
+        assert!(Toolchain::resolve(&host, &Options::default()).is_ok());
+    }
+
+    #[test]
     fn section_embedding_adds_the_macho_linker_flag() {
         let target = Target::parse("aarch64-apple-darwin").unwrap();
-        let toolchain = Toolchain::resolve(&target, &Options::default()).unwrap();
+        // Explicit `cc` for the same reason as above: only the flag spelling is under test here.
+        let toolchain = Toolchain::resolve(
+            &target,
+            &Options {
+                cc: Some("cc".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let command = toolchain.link_command(&LinkJob {
             c_file: Path::new("app.c"),
             assembly: None,

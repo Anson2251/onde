@@ -204,7 +204,7 @@ and may throw, but it must not become user-visible Node semantics.
 | A2 | JS | `internal/bytes.js` + decoder dedup | A1 | medium | 2–3 d |
 | A3 | JS | `fs` option parsers into `internal/fs.js` | A0 (A1 preferred) | low | 0.5 d |
 | A4 | JS | residual helpers | A1, A2 | low | 0.5–1 d |
-| A5 | JS | duplication guardrail + docs | A2 | low | 0.5 d |
+| A5 | JS | duplication guardrail + docs (guardrail later deleted) | A2 | low | 0.5 d |
 | B1 | Native | buffer base64/hex/fill behind A2 | A2 | medium | 1.5–2 d |
 | B2 | Native | `string_decoder` boundary in one host call | A2 | medium-high | 1–1.5 d |
 | C1 | Native | path/querystring/punycode (1.2) | B1, A2 | medium | 1–2 w |
@@ -223,7 +223,7 @@ milestone, with C2 the bulk of it.
 3. A1b — Node message rules and the oracle (separate review because it changes text).
 4. A2 — `internal/bytes` and the two decoder deletions.
 5. A3 — `fs` option parsers (can go in parallel with 4).
-6. A4/A5 — residuals, then the duplication check and docs.
+6. A4/A5 — residuals and docs (the duplication check was later removed from CI).
 7. B1 — buffer codecs behind the seam, with the differential corpus.
 8. B2 — `string_decoder` boundary, with the split corpus.
 
@@ -356,10 +356,10 @@ rewrite: the string/object/`undefined`/`null` precedence is the behavior.
 
 ### A5 — Guardrail and docs
 
-* `scripts/check-duplication.mjs`: dependency-free Node script, same normalisation as the audit,
-  allowlist for the intentional copies in §6, and a budget for redundant lines. Start advisory;
-  add the CI step next to the stdlib tests once the budget is met. The allowlist must accept the
-  native/fallback pair in `bytes.js` and `textcodec.js` as a shape, not a clone.
+* `scripts/check-duplication.mjs` was built: a dependency-free Node script with the audit's
+  normalisation, the §6 allowlist and a 40-line budget, run in CI after the stdlib tests. It has
+  since been **deleted along with its CI step**; the allowlist, budget and cluster counts in this
+  document record the state when it was retired, and duplication is review work again.
 * `js/README.md`: add the two modules and the virtual-relative rule; `docs/architecture.md` §2:
   one sentence on the two JS seams; `docs/compat.md`: only if A1b changes a message not already
   covered.
@@ -529,7 +529,6 @@ New tests:
 | `codec-differential.test.js` | A2/B1 | same inputs under Node (fallback) and onde (native), both against pinned literals |
 | `string-decoder-boundary.test.js` | B2 | every split point, fatal and replacement |
 | existing `fs*.test.js` | A3 | option precedence, `flush`/`flagGiven` |
-| `scripts/check-duplication.mjs` | A5 | no new cluster above the allowlist |
 
 Perf gates:
 
@@ -580,8 +579,9 @@ payload; per-call = total / iterations, 20k for the Buffer operations and 50k fo
 
 "onde before" is the pre-move JavaScript loop recorded in
 [native-candidates.md](native-candidates.md); `from(hex)` was not measured separately before the
-move. The duplication guard reports five allowlisted clusters (25 redundant lines, within the
-40-line budget) and zero unallowlisted clusters, and CI runs it after the stdlib tests. Tested
+move. At retirement the duplication guard reported five allowlisted clusters (25 redundant lines,
+within the 40-line budget) and one unallowlisted cluster (`invalidArgType`, 8 lines, in
+`bootstrap.js` and `test.js`); it has since been deleted and is no longer part of CI. Tested
 state: `./test/js/run.sh` 83 passed, `./test/conformance/run.sh` 235 passed,
 `cargo test --all` 490 passed, `cargo fmt --all -- --check` and
 `cargo clippy --all-targets -- -D warnings` clean.
@@ -604,7 +604,7 @@ Done means:
   `StringDecoder.write` is one host call per chunk (perf follow-up not re-measured); no other
   codec regressed.
 * `./test/js/run.sh`, `./test/differential.sh`, `cargo test --all` and
-  `./test/conformance/run.sh` green; `docs/` updated; the duplication check in CI.
+  `./test/conformance/run.sh` green; `docs/` updated.
 
 ## 12. Open questions
 
@@ -632,15 +632,16 @@ Done means:
    from one data file?
 8. **Guardrail strength**: advisory report first, hard CI failure once the budget is met
    (recommended), or hard failure from day one?
-   **Settled:** hard CI failure with the budget met; `scripts/check-duplication.mjs` runs after the
-   stdlib tests and reports zero unallowlisted clusters plus the five §6 exceptions by name.
+   **Settled:** hard CI failure with the budget met; `scripts/check-duplication.mjs` ran after the
+   stdlib tests and reported the five §6 exceptions by name. Superseded: the script and its CI
+   step were deleted, so the ratchet no longer exists.
 
 ## Appendix A — duplication inventory (2026-11-23)
 
 Method: every `function` declaration in `js/**/*.js` (1,127 definitions), bodies normalised for
 comments, whitespace, string literals and numbers, hashed; a cluster is an exact body in two or
-more files. Cross-file 10-line windows were used as a second, independent check. Reproduce with
-the scripts described in A5.
+more files. Cross-file 10-line windows were used as a second, independent check. The A5 guard
+script that reproduced this has since been deleted; the numbers below are the audit's record.
 
 ### A.1 Error and validation helpers
 
