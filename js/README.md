@@ -146,3 +146,9 @@ Two test conventions live in `test/js/lib/`:
 common path matches Node, argument validation throws the same error *name* and (where practical)
 `code`, and every known gap is listed in `docs/compat.md` with a divergence id rather than
 silently different.
+
+## License
+
+Everything under `js/` is MIT, not MPL-2.0. The full text is [LICENSE-MIT](../LICENSE-MIT). The
+Rust crates that parse and embed these files are licensed separately; see
+[README § Licensing](../README.md#licensing).

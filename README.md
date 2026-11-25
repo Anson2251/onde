@@ -356,9 +356,11 @@ the files you changed stay under MPL-2.0 and their source must be made available
 are yours to license as you like. Distributing an unmodified build only asks that recipients can
 reach the source, which for this repository is a URL.
 
-**MIT — the reusable bricks:** `ln-abi`, `ln-payload`, `ln-crypto`, `ln-error`, `ln-http`,
-`ln-sched`, `ln-sqlite`, `ln-zlib`, `ln-modules`. Take them anywhere, including into closed-source
-products, as long as the copyright notice travels with them.
+**MIT — the reusable bricks and the JavaScript surface:** `ln-abi`, `ln-payload`, `ln-crypto`,
+`ln-error`, `ln-http`, `ln-sched`, `ln-sqlite`, `ln-zlib`, `ln-modules`, plus everything under
+`js/` and the `tuckbox` demo. Take them anywhere, including into closed-source products, as long as
+the copyright notice travels with them. The `js/` files are embedded into the binary at build time,
+so a shipped `onde` is a mixed work: MPL-2.0 for the Rust crates, MIT for the JavaScript.
 
 The full texts are [LICENSE](LICENSE) (MPL-2.0, canonical copy from mozilla.org) and
 [LICENSE-MIT](LICENSE-MIT).
