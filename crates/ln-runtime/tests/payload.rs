@@ -215,6 +215,7 @@ fn rejects_a_truncated_payload_without_reading_bytecode() {
         .contains("bad payload"));
 }
 
+#[cfg(feature = "zlib-payload")]
 #[test]
 fn a_compressed_payload_runs() {
     let image = payload(

@@ -794,12 +794,12 @@ Rules:
 
   On a 147-byte payload every codec starts in 20.4–21.7 ms: the difference is noise, and the only
   cost is the decoder in the image — **+249 KB** (4.54 MB → 4.79 MB) when the archive carries
-  zstd, paid whether or not the payload is compressed. zlib costs nothing extra because
-  `node:zlib` already links `flate2`.
+  zstd, paid whether or not the payload is compressed. zlib costs nothing extra because the SDK's
+  `zlib-payload` feature already links `flate2` for this decoder.
 
   **The decision.** Bare is the default (`--compress none`): startup is what small tools feel, and
   a bare payload is the fastest and makes the 147-byte app cost nothing. zlib stays available
-  because it is free — `flate2` is already in the image for `node:zlib` — and it is the codec to
+  because it is free — `flate2` is already in the image for `zlib-payload` — and it is the codec to
   pick when even the zstd decoder's bytes are unwanted. zstd is the size option: `zstd:9` by
   default, `zstd:19` when the executable is the thing that matters, and both decode faster than
   zlib. The zstd decoder lives in the one archive (+249 KB, 5.5% of a 4.5 MB app).

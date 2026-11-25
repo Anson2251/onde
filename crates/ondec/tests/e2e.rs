@@ -211,6 +211,7 @@ fn section_embedding_and_compression_still_run() {
     for (name, extra) in [
         ("section", vec!["--embed", "section"]),
         ("compressed", vec!["--compress"]),
+        ("compressed-zlib", vec!["--compress", "zlib"]),
         ("source", vec!["--no-bytecode"]),
         ("stripped", vec!["--strip-source"]),
     ] {

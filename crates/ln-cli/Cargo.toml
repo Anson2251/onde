@@ -17,6 +17,9 @@ path = "src/main.rs"
 default = ["node-sqlite", "node-zlib"]
 node-sqlite = ["ln-runtime/node-sqlite"]
 node-zlib = ["ln-runtime/node-zlib"]
+# `lite` never executes a compiled payload, so this is not in `default`; the mapping exists so the
+# feature set is complete for a caller that wants it.
+zlib-payload = ["ln-runtime/zlib-payload"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -97,17 +97,23 @@ looking like safe code, and the raw calls are about 250 lines.
 
 ```toml
 [features]
-default = ["node-sqlite", "node-zlib"]
+default = ["node-sqlite", "node-zlib", "zlib-payload"]
 node-sqlite = ["dep:ln-sqlite"]
-node-zlib = []
+node-zlib = ["dep:ln-zlib"]
+zlib-payload = ["dep:ln-zlib"]
 ```
 
-`ln-cli` and `ln-embed` mirror them (`node-sqlite = ["ln-runtime/node-sqlite"]`,
-`node-zlib = ["ln-runtime/node-zlib"]`); `ln-cli` and `ln-embed` no longer take `ln-runtime`'s
-defaults, so the SDK keeps both unless a caller asks otherwise. Turning `node-sqlite` off drops
-the bundled SQLite. `node-zlib` only removes the module surface: `ln-zlib` (and flate2 under it)
-is a transitive dependency of the payload decoder, so it stays linked whether or not the feature
-is on, and a `--no-default-features` build still inflates `--compress zlib` payloads.
+The two module features are what `ln-cli` takes (`default-features = false` plus
+`node-sqlite`/`node-zlib`); `lite` never executes a compiled payload, so it does not carry
+`zlib-payload`. `ln-embed` adds `zlib-payload` to its defaults, because a compiled app may be
+built with `--compress zlib`. The consequences:
+
+* `node-sqlite` off drops the bundled SQLite; nothing else links it.
+* `node-zlib` off drops the module, and in `lite` that also drops zlib, because the module is the
+  only consumer there.
+* `zlib-payload` off does not remove the module, but a zlib-compressed app is refused with a
+  message instead of misread. `zlib-payload` on with `node-zlib` off keeps zlib only for the
+  payload decoder (the SDK's default when the module is not wanted).
 
 A module that a build leaves out must read as a build choice, not a typo. `modules::
 builtin_unavailable_message` produces the same text for CommonJS and ESM:
@@ -120,12 +126,15 @@ advertise a module that cannot load (the default-on build advertises `node:zlib`
 `builtinModules`, `node:sqlite` only through `isBuiltin("node:sqlite")`, matching Node's node:-only
 rule).
 
-Size, measured 2026-11-24 (release, macOS arm64, no strip): **5,496,752 bytes with neither
-module feature**, **7,595,296 with `node-sqlite` only**, **5,534,352 with `node-zlib` only**, and
-**7,648,576 with both**. The `node-sqlite` delta (~2.0 MB) is the bundled SQLite; the `node-zlib`
-delta (~38 KB) is the embedded module and host binding, because the inflater is already linked
-through the payload decoder. The sqlite delta (+2.15 MB, +39%) is above the plan's original 1.5 MB
-target and is recorded rather than hidden; the features are the documented opt-out. An `ondec` hello-world link measured 6,892,976 bytes with SQLite (6.6 MiB) and 4,627,480
+Size, measured 2026-11-24 (release, macOS arm64, no strip), for `lite`: **5,443,552 bytes with
+neither module feature**, **5,533,552 with `node-zlib` only**, **7,542,224 with `node-sqlite`
+only**, and **7,647,760 with both**. The `node-zlib` delta (~90 KB) is zlib plus the module,
+because `lite` has no payload decoder; in an SDK archive, where `zlib-payload` is already linked,
+the module alone is ~40 KB. The sqlite delta (~2.1 MB) is the bundled SQLite. A default-SDK hello
+world links at 6,892,976 bytes; a `--no-default-features` SDK archive drops zlib with the rest and
+links it at 4,526,280 bytes. The sqlite delta (+2.2 MB over the slim build, +40%) is above the
+plan's original 1.5 MB target and is recorded rather than hidden; the features are the documented
+opt-out. An `ondec` hello-world link measured 6,892,976 bytes with SQLite (6.6 MiB) and 4,627,480
 bytes with a slim archive (4.4 MiB).
 
 ## 3. The host boundary

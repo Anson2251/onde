@@ -6,7 +6,7 @@ onde runs the code around the work: CLIs, build steps, config, request handlers 
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
 `dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and installs as a
-7.6 MB binary (5.5 MB without the bundled SQLite).
+7.6 MB binary (5.4 MB without the optional modules).
 
 > Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
 > commands below still say `target/debug/lite`.
@@ -52,7 +52,8 @@ console.log(db.prepare("SELECT v FROM t").get()); // [Object: null prototype] { 
 ## Building
 
 `node:sqlite` and `node:zlib` are Cargo features named `node-sqlite` and `node-zlib`, and both are
-on by default.
+on by default. A third feature, `zlib-payload`, carries the inflater used by `--compress zlib`
+compiled apps.
 
 ```sh
 cargo build                                                       # both modules
@@ -62,11 +63,13 @@ cargo build -p ln-cli --no-default-features --features node-sqlite # one of them
 cargo test --all
 ```
 
-`node-sqlite` also links the bundled SQLite. `node-zlib` only removes the `node:zlib` module:
-zlib itself stays linked in every build because `ln-zlib` (flate2/miniz_oxide) is a transitive
-dependency of the payload decoder, whether or not the module feature is on. The flag saves the
-module's embedded JS and host binding (~40 KB), not the library. A module the build left out fails
-with its feature named, on `require` and `import`, instead of a generic unknown-module error:
+`node-sqlite` also links the bundled SQLite. In `lite`, `node-zlib` is the only zlib consumer, so
+leaving it out drops zlib from that binary. The SDK is different: `ln-embed` enables
+`zlib-payload` by default so compiled apps can inflate `--compress zlib` payloads, and
+`node-zlib` there only adds the module (~40 KB; zlib is already present). An SDK archive built
+without `zlib-payload` refuses a zlib-compressed app with a message instead of misreading it. A
+module the build left out fails with its feature named, on `require` and `import`, instead of a
+generic unknown-module error:
 
 > node:sqlite is not available: the `node-sqlite` feature is not enabled in this build. Rebuild
 > without `--no-default-features` (or with `--features node-sqlite`) to include it.
@@ -104,7 +107,7 @@ machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resol
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
 | install size | 7.6 MB | 77 MB | 58 MB |
-| install size, both module features off (SQLite dropped; zlib stays linked) | 5.5 MB | — | — |
+| install size, both module features off (SQLite and zlib dropped from `lite`) | 5.4 MB | — | — |
 | cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
 | cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
@@ -115,9 +118,10 @@ At 9.3 MB resident, a hundred onde processes cost less than the tool around them
 Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's 11.6, and
 QuickJS has an engine to initialize either way.
 
-Feature cost, measured on the same release build: `node-sqlite` adds **2.0 MB** (the bundled
-SQLite), while `node-zlib` adds **~40 KB** — the library is linked either way, so only the module
-surface is optional. `cargo tree -i ln-zlib` shows the dependency under both feature sets.
+Feature cost, measured on the same release build: in `lite`, `node-sqlite` adds **2.1 MB** (the
+bundled SQLite) and `node-zlib` adds **~90 KB** (zlib plus the module). In a compiled-app archive,
+`zlib-payload` is already on, so `node-zlib` adds only the module, about 40 KB. `cargo tree -i
+ln-zlib` shows which build carries the library.
 
 ## Performance
 

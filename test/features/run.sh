@@ -60,6 +60,12 @@ esm_fails_with_feature() { # specifier, feature
   grep -Fq "\`$feature\` feature is not enabled in this build" <<<"$out"
 }
 
+has_dependency() { # crate-name, cargo tree args...
+  local dependency="$1"
+  shift
+  cargo tree -p ln-runtime --edges normal "$@" 2>/dev/null | grep -q " ${dependency} v"
+}
+
 builtin_table() {
   "$lite" -e '
     const module = require("module");
@@ -83,6 +89,8 @@ loads node:zlib
   echo "FAIL: default builtin table is $(builtin_table)" >&2
   exit 1
 }
+has_dependency ln-zlib
+has_dependency libsqlite3-sys
 echo "ok        default build has both modules"
 
 # ------------------------------------------------------------------------------------------------
@@ -98,7 +106,11 @@ esm_fails_with_feature node:zlib node-zlib
   echo "FAIL: no-feature builtin table is $(builtin_table)" >&2
   exit 1
 }
-echo "ok        no features: readable errors for both modules"
+if has_dependency ln-zlib --no-default-features || has_dependency libsqlite3-sys --no-default-features; then
+  echo "FAIL: a no-feature lite still links zlib or SQLite" >&2
+  exit 1
+fi
+echo "ok        no features: readable errors for both modules, no zlib/SQLite linked"
 
 # ------------------------------------------------------------------------------------------------
 # One feature at a time.
@@ -110,6 +122,11 @@ fails_with_feature node:zlib node-zlib
   echo "FAIL: node-sqlite-only builtin table is $(builtin_table)" >&2
   exit 1
 }
+has_dependency libsqlite3-sys --no-default-features --features node-sqlite
+if has_dependency ln-zlib --no-default-features --features node-sqlite; then
+  echo "FAIL: a lite with only node-sqlite still links zlib" >&2
+  exit 1
+fi
 echo "ok        node-sqlite only"
 
 build --no-default-features --features node-zlib
@@ -119,6 +136,11 @@ fails_with_feature node:sqlite node-sqlite
   echo "FAIL: node-zlib-only builtin table is $(builtin_table)" >&2
   exit 1
 }
+has_dependency ln-zlib --no-default-features --features node-zlib
+if has_dependency libsqlite3-sys --no-default-features --features node-zlib; then
+  echo "FAIL: a lite with only node-zlib still links SQLite" >&2
+  exit 1
+fi
 echo "ok        node-zlib only"
 
 # Restore the default build before the script exits (the trap covers failures too).

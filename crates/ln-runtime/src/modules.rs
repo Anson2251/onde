@@ -173,15 +173,7 @@ impl ModuleRuntime {
                 image.extend_from_slice(&bytes[..ln_payload::HEADER_LEN]);
                 match codec {
                     ln_payload::Codec::Zlib => {
-                        ln_zlib::decompress_into(
-                            ln_zlib::Format::Zlib,
-                            stream,
-                            &mut image,
-                            body_len,
-                        )
-                        .map_err(|error| {
-                            PayloadFailure::Corrupt(format!("cannot inflate zlib payload: {error}"))
-                        })?;
+                        decompress_zlib_into(stream, &mut image, body_len)?;
                     }
                     ln_payload::Codec::Zstd => decompress_zstd_into(stream, &mut image, body_len)?,
                 }
@@ -440,6 +432,32 @@ fn meta_payload<'js>(
     meta.set("main", false)?;
     meta.set("resolve", ln_engine::meta_resolve_function(ctx, url)?)?;
     Ok(())
+}
+
+/// Decode a zlib payload body.
+///
+/// Feature-gated separately from `node:zlib`: `lite` does not execute payloads, so it can leave
+/// the inflater out; a compiled app keeps it through `ln-embed`'s `zlib-payload` default.
+#[cfg(feature = "zlib-payload")]
+fn decompress_zlib_into(
+    stream: &[u8],
+    out: &mut Vec<u8>,
+    body_len: usize,
+) -> Result<(), PayloadFailure> {
+    ln_zlib::decompress_into(ln_zlib::Format::Zlib, stream, out, body_len)
+        .map_err(|error| PayloadFailure::Corrupt(format!("cannot inflate zlib payload: {error}")))
+}
+
+#[cfg(not(feature = "zlib-payload"))]
+fn decompress_zlib_into(
+    _stream: &[u8],
+    _out: &mut Vec<u8>,
+    _body_len: usize,
+) -> Result<(), PayloadFailure> {
+    Err(PayloadFailure::Corrupt(
+        "this payload is zlib-compressed, but this runtime was built without the zlib payload          decoder; rebuild the app with `--compress none` or `--compress zstd`, or link a runtime          that enables the `zlib-payload` feature"
+            .to_owned(),
+    ))
 }
 
 /// Decode a zstd payload body.
