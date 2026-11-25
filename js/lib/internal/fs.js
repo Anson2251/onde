@@ -24,7 +24,7 @@ const host = globalThis.__ln_host;
 
 // --- module dependencies ---------------------------------------------------------------------
 
-// Embedded builds resolve these as builtins; a checkout run (`lite test/js/lib/fs.test.js`)
+// Embedded builds resolve these as builtins; a checkout run (`onde test/js/lib/fs.test.js`)
 // loads the sibling files. Both paths are exercised by the WP5 tests.
 let BufferCtor = null;
 try {
@@ -665,7 +665,7 @@ class StatsFs {
   }
 }
 
-const kDirentType = Symbol("lite.fs.direntType");
+const kDirentType = Symbol("onde.fs.direntType");
 
 class Dirent {
   constructor(name, type, parentPath) {
@@ -712,10 +712,10 @@ function makeDirent(entry, parentPath) {
   return new Dirent(entry.name, entry.kind, parentPath);
 }
 
-const kDirPath = Symbol("lite.fs.dirPath");
-const kDirEntries = Symbol("lite.fs.dirEntries");
-const kDirIndex = Symbol("lite.fs.dirIndex");
-const kDirClosed = Symbol("lite.fs.dirClosed");
+const kDirPath = Symbol("onde.fs.dirPath");
+const kDirEntries = Symbol("onde.fs.dirEntries");
+const kDirIndex = Symbol("onde.fs.dirIndex");
+const kDirClosed = Symbol("onde.fs.dirClosed");
 
 function dirIterator(dir) {
   return {
@@ -931,9 +931,9 @@ function promise(name, args, signal) {
 
 // --- FileHandle ------------------------------------------------------------------------------
 
-const kFd = Symbol("lite.fs.fd");
-const kFhClosed = Symbol("lite.fs.closed");
-const kFhPath = Symbol("lite.fs.path");
+const kFd = Symbol("onde.fs.fd");
+const kFhClosed = Symbol("onde.fs.closed");
+const kFhPath = Symbol("onde.fs.path");
 
 class FileHandle extends EventEmitter {
   constructor(fd, path) {

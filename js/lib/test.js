@@ -1,10 +1,10 @@
 "use strict";
 
-// onde's `node:test` lite module: the test API *and* the runner, in one file.
+// onde's `node:test` onde module: the test API *and* the runner, in one file.
 //
 // Scope is fixed by m7-plan.md §3.5 and D71. This module ships `test`/`describe`/`it`, the four
 // hooks, `t.test` subtests, `t.diagnostic`, `t.plan`, `t.assert`, promise and callback tests,
-// timeouts, and the spec reporter `lite --test` prints. Mocks, snapshots, coverage, watch mode,
+// timeouts, and the spec reporter `onde --test` prints. Mocks, snapshots, coverage, watch mode,
 // `--test-only`, `--test-name-pattern`, other reporters and TAP are deliberately absent: each one
 // is a compatibility promise with no test behind it here.
 //
@@ -126,8 +126,8 @@ function createSuite(name, parent, options) {
   };
 }
 
-// Definitions made outside `lite --test` land here and are never run. Node runs a test file
-// required by a normal script at exit; the lite subset needs the explicit entry (§3.5), and
+// Definitions made outside `onde --test` land here and are never run. Node runs a test file
+// required by a normal script at exit; the onde subset needs the explicit entry (§3.5), and
 // silently accepting the calls keeps `import "node:test"` from breaking an otherwise normal
 // script. This is part of D71, not an oversight.
 const detachedSuite = createSuite("<detached>", null, { visible: false });
@@ -342,7 +342,7 @@ function timeoutFor(options) {
   if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
     throw invalidArgType("options.timeout", "a non-negative number", value);
   }
-  // 0 and Infinity mean "no timeout": 0 is the documented opt-out of the lite default (Node's
+  // 0 and Infinity mean "no timeout": 0 is the documented opt-out of the onde default (Node's
   // default is Infinity, so this is also how a Node-tuned test behaves as written).
   if (value === 0 || !Number.isFinite(value)) return Infinity;
   return value;
@@ -645,7 +645,7 @@ async function runFiles(files) {
 // promise, so a rejection would surface as an unhandled rejection with no test name attached.
 async function run(files) {
   if (running) {
-    writeLine("lite: the test runner is already running");
+    writeLine("onde: the test runner is already running");
     process.exitCode = 1;
     return;
   }
@@ -653,7 +653,7 @@ async function run(files) {
   try {
     await runFiles(files);
   } catch (error) {
-    writeLine("lite: the test runner failed");
+    writeLine("onde: the test runner failed");
     for (const text of formatError(error).split("\n")) writeLine("  " + text);
     process.exitCode = 1;
   } finally {

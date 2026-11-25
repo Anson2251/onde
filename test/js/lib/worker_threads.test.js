@@ -2,13 +2,13 @@
 
 // Self-check for `js/lib/worker_threads.js` and `js/lib/internal/worker.js` (M5).
 //
-//   ./target/debug/lite test/js/lib/worker_threads.test.js
+//   ./target/debug/onde test/js/lib/worker_threads.test.js
 //
-// Plain Node skips it: a worker is a nested isolate with the lite host. `test/proc/run.sh` and
+// Plain Node skips it: a worker is a nested isolate with the onde host. `test/proc/run.sh` and
 // the conformance corpus cover the behaviour; this pins the main-thread surface and validation.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

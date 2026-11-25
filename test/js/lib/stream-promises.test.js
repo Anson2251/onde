@@ -1,6 +1,6 @@
 "use strict";
 
-// Runtime-agnostic self-check for js/lib/stream-promises.js. Runs under `node` and under lite.
+// Runtime-agnostic self-check for js/lib/stream-promises.js. Runs under `node` and under onde.
 // The module under test is required by path so Node also exercises our implementation rather
 // than the `stream/promises` builtin.
 

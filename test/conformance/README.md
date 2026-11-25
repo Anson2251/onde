@@ -25,10 +25,10 @@ so the differential harness compares 239.
 ## Running
 
 ```sh
-./test/conformance/run.sh                    # lite against the recorded expectations
+./test/conformance/run.sh                    # onde against the recorded expectations
 RUN=node ./test/conformance/run.sh           # prove the expectations still describe Node
 REGEN=1 RUN=node ./test/conformance/run.sh   # re-record from Node (never from onde)
-./test/differential.sh                       # node vs lite, same stdout + exit code
+./test/differential.sh                       # node vs onde, same stdout + exit code
 SUITES="modules stdlib" ./test/conformance/run.sh
 ```
 

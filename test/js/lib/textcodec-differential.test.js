@@ -2,7 +2,7 @@
 
 // Randomized differential for UTF-8 encode and decode.
 //
-// The Rust path (host.text) is only reached under lite; the node arm compares Node's own Buffer
+// The Rust path (host.text) is only reached under onde; the node arm compares Node's own Buffer
 // against the reference, which is what makes the reference trustworthy. Both arms generate the same
 // cases from a fixed seed.
 //

@@ -2,7 +2,7 @@
 
 // Self-checking, runtime-agnostic tests for js/lib/path.js.
 //
-// Must pass unchanged under `node` and under `lite`:
+// Must pass unchanged under `node` and under `onde`:
 //   node test/js/lib/path.test.js
 //
 // Only the module under test is required; no `node:` builtins are used.

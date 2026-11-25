@@ -2,7 +2,7 @@
 
 // Runtime-agnostic self-test for js/lib/buffer.js.
 //
-// Run under `node` (and `lite`): node test/js/lib/buffer.test.js
+// Run under `node` (and `onde`): node test/js/lib/buffer.test.js
 // Prints one `ok <label>` line per passing check and exits 1 on any failure.
 
 const Buffer = require("../../../js/lib/buffer.js");
@@ -234,7 +234,7 @@ throwsWith(
 
 is(Buffer.allocUnsafe(4).length, 4, "allocUnsafe length");
 is(Buffer.allocUnsafeSlow(4).length, 4, "allocUnsafeSlow length");
-isBytes(Buffer.allocUnsafe(4), [0, 0, 0, 0], "allocUnsafe is zero-filled in lite (no pool allocator)");
+isBytes(Buffer.allocUnsafe(4), [0, 0, 0, 0], "allocUnsafe is zero-filled in onde (no pool allocator)");
 
 is(Buffer.concat([Buffer.from("ab"), Buffer.from("cd")]).toString(), "abcd", "concat");
 is(Buffer.concat([]).length, 0, "concat empty list");

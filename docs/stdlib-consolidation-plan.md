@@ -1,7 +1,7 @@
 # Stdlib consolidation and native migration plan
 
 Status: **accepted as an M7 task, 2026-11-23.** Baseline: `./test/js/run.sh` reports
-`77 passed, 0 failed` under `node v26.12.1` and `target/debug/lite`. Phases A0–A5 and B1–B2 are
+`77 passed, 0 failed` under `node v26.12.1` and `target/debug/onde`. Phases A0–A5 and B1–B2 are
 M7 work; C1–C2 are 1.2.
 
 This plan merges two pieces of work that were being planned separately:
@@ -95,7 +95,7 @@ fallbacks in place. Doing the dedup first creates the single module the host bra
 2. **Rust owns per-byte work.** Move an operation when its ratio is in the hundreds *and* its work
    is per byte or per element. A host call has to save more than ~100 ns to pay.
 3. **One seam per codec family, one fallback.** Every native codec has exactly one JS entry point
-   and one JS fallback. Node tests exercise the fallback; `lite` exercises the native path.
+   and one JS fallback. Node tests exercise the fallback; `onde` exercises the native path.
 4. **Don't restructure the hold zone.** Modules scheduled for a native parser replacement
    (`url`, `path`, `querystring`, `punycode`) get no structural refactor; only the exact-clone
    decoder swap and shared helpers they will consume.
@@ -233,16 +233,16 @@ C1/C2 start only after 8 and carry their own ADRs.
 
 ### A0 — Virtual-tree relative resolution, then delete the shims
 
-**Problem.** `loader.js:199` resolves a relative require from an embedded module (`<lite:...>`) by
-basename. From `<lite:fs>`, `require("./internal/fs.js")` would map to the **public** `fs`; from
-`<lite:internal/http>`, `require("./net.js")` would map to the public `net` instead of
+**Problem.** `loader.js:199` resolves a relative require from an embedded module (`<onde:...>`) by
+basename. From `<onde:fs>`, `require("./internal/fs.js")` would map to the **public** `fs`; from
+`<onde:internal/http>`, `require("./net.js")` would map to the public `net` instead of
 `internal/net`. The 12 `requireInternal` shims and the 13 modules carrying `EMBEDDED` exist to
 avoid that.
 
 **Change**
 
 * Pass the requiring file into `resolveInternalSpecifier`; compute the virtual directory
-  (`internal` for `<lite:internal/*>`, empty otherwise), join and normalise the specifier, then
+  (`internal` for `<onde:internal/*>`, empty otherwise), join and normalise the specifier, then
   try that candidate and fall back to the basename candidate.
 * Replace `requireInternal("x", "./x.js")` with `require("./x.js")` in `fs`, `fs-promises`,
   `http`, `https`, `net`, `tls`, `child_process`, `worker_threads`, `internal/fs`,
@@ -251,7 +251,7 @@ avoid that.
 * `url.js:16`: delete `loadModule`; require `./querystring.js` and `./punycode.js` directly.
 * Remove the unused `loader.evalInternal` export (`loader.js:364`).
 
-**Verification.** All 68 node/lite test runs plus the 9 Node oracles; `./test/conformance/run.sh`;
+**Verification.** All 68 node/onde test runs plus the 9 Node oracles; `./test/conformance/run.sh`;
 grep gates for `requireInternal` and `EMBEDDED`.
 
 **Exit.** No mode branches in `js/lib`; the same relative specifier works in both runtimes.
@@ -426,13 +426,13 @@ allocation, so the absolute floor is nearer 0.5 µs; tighten the gate after the 
 measurement. Regressions in `buffer:from`, `buffer:toString` or `textdecoder:decode` block the
 phase.
 
-**Testing.** Node (no `host.buffer` in the shim) exercises the JS fallback; `lite` exercises the
+**Testing.** Node (no `host.buffer` in the shim) exercises the JS fallback; `onde` exercises the
 native path. Add `test/js/lib/codec-differential.test.js` with generated inputs (lengths 0–4096,
 every alphabet edge, invalid characters, URL-safe, unicode) and the randomized reference method
 native-candidates describes. Mutation-test the Rust (break the table or the padding and watch the
 differential fail). Add a `buffer` suite under `test/conformance/buffer/` (record the
 `.expected` files with `REGEN=1 RUN=node`, add `buffer` to `default_suites` in
-`test/conformance/run.sh`) and run `./test/differential.sh`, which compares node and lite output.
+`test/conformance/run.sh`) and run `./test/differential.sh`, which compares node and onde output.
 
 ### B2 — `string_decoder` boundary in one host call
 
@@ -504,8 +504,8 @@ start now.
 Baseline commands:
 
 ```sh
-./test/js/run.sh                     # 77 cases: 34 test files x node/lite + 9 oracles
-./test/differential.sh               # node vs lite on the conformance corpus
+./test/js/run.sh                     # 77 cases: 34 test files x node/onde + 9 oracles
+./test/differential.sh               # node vs onde on the conformance corpus
 cargo test --all                     # host units, modules.rs arms, ln-error
 ./test/conformance/run.sh            # embedded loader and module behavior
 BENCH_REPS=5 node test/bench/run.js  # startup + codec + lib, release build
@@ -513,8 +513,8 @@ BENCH_REPS=5 node test/bench/run.js  # startup + codec + lib, release build
 
 The two runtimes test different code paths by construction. `test/js/lib` loads a module through
 `test/js/host-shim.js`, which has no `text` or `buffer` members, so under Node the JS fallback
-runs; under `lite` the same test exercises the native branch. The conformance corpus runs a
-script under Node and under `lite`, and `test/differential.sh` compares stdout and exit code, so
+runs; under `onde` the same test exercises the native branch. The conformance corpus runs a
+script under Node and under `onde`, and `test/differential.sh` compares stdout and exit code, so
 it pins the native result against Node. Every new codec needs a case in that corpus.
 
 Keep `test/js/host-shim.js` free of `text` and `buffer` members: adding them would silently stop
@@ -526,7 +526,7 @@ New tests:
 |---|---|---|
 | embedded relative-resolution case | A0 | `fs/promises` and `tls` reach the right internal modules |
 | `errors.test.js` / `errors.oracle.js` | A1 | literal and Node-compared messages |
-| `codec-differential.test.js` | A2/B1 | same inputs under Node (fallback) and lite (native), both against pinned literals |
+| `codec-differential.test.js` | A2/B1 | same inputs under Node (fallback) and onde (native), both against pinned literals |
 | `string-decoder-boundary.test.js` | B2 | every split point, fatal and replacement |
 | existing `fs*.test.js` | A3 | option precedence, `flush`/`flagGiven` |
 | `scripts/check-duplication.mjs` | A5 | no new cluster above the allowlist |
@@ -550,9 +550,9 @@ same script runs under both runtimes.
 | Loader resolution breaks embedded boot | A0 | basename fallback; conformance modules; land alone |
 | Error messages drift or tests pin old text | A1 | A1a preserves, A1b changes in a separate diff; oracle |
 | Seam refactor regresses codec throughput | A2 | host fast path untouched; bench codec before/after |
-| Missing `modules.rs` arm passes Node, fails `lite` | A1/A2 | arm + Rust assertion in the same commit; run both |
+| Missing `modules.rs` arm passes Node, fails `onde` | A1/A2 | arm + Rust assertion in the same commit; run both |
 | Circular dependency through `util`/`buffer` | A1/A2 | errors requires nothing; bytes requires errors only |
-| Native and JS fallback disagree | B1/B2 | Node tests run the fallback, `lite` the host; differential corpus; mutation test |
+| Native and JS fallback disagree | B1/B2 | Node tests run the fallback, `onde` the host; differential corpus; mutation test |
 | Host call overhead eats the win | B1/B2 | only per-byte ops above ~1 µs; bench per phase |
 | `string_decoder` boundary bug at a split | B2 | exhaustive split corpus, fatal and replacement |
 | New host contract freezes too early | B1/B2 | keep codec.rs private; ADR before C's public-adjacent surface |
@@ -570,7 +570,7 @@ and `internal/bytes.js` are the two leaf seams, with base64/hex served by `host/
 Rebench at `5450b0d` (release, `BENCH_REPS=5 node test/bench/run.js`, medians of five runs; 1 KB
 payload; per-call = total / iterations, 20k for the Buffer operations and 50k for `write`):
 
-| Workload | Node 26 | lite before | lite now | vs Node | vs before |
+| Workload | Node 26 | onde before | onde now | vs Node | vs before |
 |---|---|---|---|---|---|
 | `Buffer.from(base64)` | 0.17 µs | 196 µs | 3.1 µs | 18.8x | 63x |
 | `Buffer.toString("base64")` | 0.16 µs | 80 µs | 1.2 µs | 7.2x | 69x |
@@ -578,7 +578,7 @@ payload; per-call = total / iterations, 20k for the Buffer operations and 50k fo
 | `Buffer.from(hex)` | 0.63 µs | — | 2.1 µs | 3.4x | — |
 | `StringDecoder.write` | 0.23 µs | 133 µs | 2.0 µs | 8.8x | 67x |
 
-"lite before" is the pre-move JavaScript loop recorded in
+"onde before" is the pre-move JavaScript loop recorded in
 [native-candidates.md](native-candidates.md); `from(hex)` was not measured separately before the
 move. The duplication guard reports five allowlisted clusters (25 redundant lines, within the
 40-line budget) and zero unallowlisted clusters, and CI runs it after the stdlib tests. Tested

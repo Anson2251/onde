@@ -1,4 +1,4 @@
-// M5 acceptance: child_process against the runtime named by RUNTIME (node or lite).
+// M5 acceptance: child_process against the runtime named by RUNTIME (node or onde).
 "use strict";
 const path = require("path");
 const { spawn, exec, execFile, fork } = require("child_process");

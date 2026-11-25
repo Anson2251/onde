@@ -1,4 +1,4 @@
-// lite rejects require() of an ES module; Node 22+ can require synchronous ESM graphs.
+// onde rejects require() of an ES module; Node 22+ can require synchronous ESM graphs.
 try {
   require("./fixtures/esm.mjs");
 } catch (error) {

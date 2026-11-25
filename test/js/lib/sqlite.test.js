@@ -1,13 +1,13 @@
 "use strict";
 
 // Self-check for js/lib/sqlite.js. Like zlib.test.js it is runtime-agnostic: under plain Node the
-// lite host (`__ln_host.sqlite`) is absent, so it prints one skip line; the lite run asserts.
+// onde host (`__ln_host.sqlite`) is absent, so it prints one skip line; the onde run asserts.
 //
 // The input-output fidelity is pinned by test/conformance/sqlite (recorded from Node). This file
 // covers the surface we own: validation, error codes, class shape, and the documented divergences.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

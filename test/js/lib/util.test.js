@@ -1,7 +1,7 @@
 "use strict";
 
 // Runtime-agnostic self-check for js/lib/util.js.
-// Runs unchanged under both `node` and `lite`: it only uses the language and
+// Runs unchanged under both `node` and `onde`: it only uses the language and
 // the module under test (no `node:` builtins).
 
 const util = require("../../../js/lib/util.js");

@@ -4,13 +4,13 @@
 // error codes the Rust side reports for bad PEM. The `https` round trip lives in
 // `https.test.js`; this file is about the surface `tls` adds on top of `net`.
 //
-// Skipped under plain Node (the host primitives only exist under lite).
+// Skipped under plain Node (the host primitives only exist under onde).
 //
-//   ./target/debug/lite test/js/lib/tls.test.js
+//   ./target/debug/onde test/js/lib/tls.test.js
 //   ./test/js/run.sh
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

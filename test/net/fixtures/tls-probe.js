@@ -1,6 +1,6 @@
 "use strict";
 
-// Probe whether the runtime under test can actually serve TLS. `interop.sh` runs this under lite
+// Probe whether the runtime under test can actually serve TLS. `interop.sh` runs this under onde
 // and prints a skip line when it fails, so the TLS legs appear automatically once WP6 lands.
 //
 //   <runtime> tls-probe.js <key.pem> <cert.pem>

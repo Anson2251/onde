@@ -476,7 +476,7 @@ mod tests {
     use crate::{Config, Isolate};
 
     fn run(source: &str) -> (i32, usize, usize) {
-        let mut config = Config::new(vec!["lite".to_owned()]);
+        let mut config = Config::new(vec!["onde".to_owned()]);
         config.expose_require = true;
         let mut isolate = Isolate::new(config).expect("isolate");
         let outcome = isolate.run(source, "[eval]").expect("run");
@@ -493,7 +493,7 @@ mod tests {
         let source = source.to_owned();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut config = Config::new(vec!["lite".to_owned()]);
+            let mut config = Config::new(vec!["onde".to_owned()]);
             config.expose_require = true;
             let mut isolate = Isolate::new(config).expect("isolate");
             let outcome = isolate.run(&source, "[eval]").expect("run");

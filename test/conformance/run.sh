@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Conformance runner for the onde corpus.
 #
-#   ./run.sh                       # compare target/debug/lite against recorded .expected files
+#   ./run.sh                       # compare target/debug/onde against recorded .expected files
 #   RUN=node ./run.sh              # prove the expectations still describe Node
 #   REGEN=1 RUN=node ./run.sh      # re-record expectations from Node (never from onde)
-#   DIFF=1 ./run.sh                # differential: node vs lite, same stdout + exit code
+#   DIFF=1 ./run.sh                # differential: node vs onde, same stdout + exit code
 #   SUITES="timers loop" ./run.sh  # only some suites
 #
 # A suite is a directory under test/conformance containing `<case>.js` and
@@ -17,12 +17,18 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 
-runner="${RUN:-$root/target/debug/lite}"
+runner="${RUN:-$root/target/debug/onde}"
 if ! command -v "$runner" >/dev/null 2>&1 && [ ! -x "$runner" ]; then
-  echo "no runtime found at '$runner'; set RUN=/path/to/lite" >&2
+  echo "no runtime found at '$runner'; set RUN=/path/to/onde" >&2
   exit 2
 fi
 runner_path="$(command -v "$runner" 2>/dev/null || printf '%s' "$runner")"
+# The runtime reads this path from argv[0] as `process.execPath`. A case that re-execs itself with
+# another working directory (`child_process/04-env-cwd` spawns itself with cwd=/tmp) cannot resolve
+# a relative path, so make it absolute once here: `RUN=target/debug/onde` then works from the root.
+case "$runner_path" in
+  */*) runner_path="$(cd "$(dirname "$runner_path")" && pwd)/$(basename "$runner_path")" ;;
+esac
 runner_name="$(basename "$runner_path")"
 
 default_suites=(microtasks timers loop nexttick uncaught rejections modules stdlib buffer fs stream zlib sqlite http https net child_process workers readline async_hooks divergences)
@@ -91,11 +97,11 @@ for suite in "${suites[@]}"; do
   # `divergences/` expectations are recorded from onde and asserted to *differ* from Node,
   # so they are excluded from Node self-tests and only recorded on explicit request.
   if [ "$suite" = "divergences" ] && { [ "${DIFF:-0}" = "1" ] || { [ "$runner_name" = "node" ] && [ "${REGEN:-0}" != "1" ]; }; }; then
-    echo "skip      $suite (divergence suite is lite-only)" >&2
+    echo "skip      $suite (divergence suite is onde-only)" >&2
     continue
   fi
   if [ "$suite" = "divergences" ] && [ "${REGEN:-0}" = "1" ] && [ "${RECORD_DIVERGENCES:-0}" != "1" ]; then
-    echo "skip      $suite (set RECORD_DIVERGENCES=1 to record lite-only expectations)" >&2
+    echo "skip      $suite (set RECORD_DIVERGENCES=1 to record onde-only expectations)" >&2
     continue
   fi
 

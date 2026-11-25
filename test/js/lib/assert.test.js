@@ -1,7 +1,7 @@
 "use strict";
 
 // Runtime-agnostic self-check for js/lib/assert.js.
-// Runs unchanged under `node` and `lite`: the only require is our module.
+// Runs unchanged under `node` and `onde`: the only require is our module.
 
 const a = require("../../../js/lib/assert.js");
 const util = require("../../../js/lib/util.js");

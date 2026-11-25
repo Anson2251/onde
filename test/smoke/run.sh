@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# M2 smoke set: 30 generated CJS packages + 10 ESM packages, run under node and lite, outputs
+# M2 smoke set: 30 generated CJS packages + 10 ESM packages, run under node and onde, outputs
 # compared. This is the "curated package set" exit criterion for M2, kept offline and
 # dependency-free so it runs on every CI job.
 #
 #   ./test/smoke/run.sh
-#   LITE=/path/to/lite ./test/smoke/run.sh
+#   ONDE=/path/to/onde ./test/smoke/run.sh
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 tree="$root/target/smoke"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "node not found: the smoke tree needs it to generate fixtures and as the oracle" >&2
   exit 2
 fi
-if [ ! -x "$lite" ]; then
-  echo "no lite binary at '$lite'; run 'cargo build' or set LITE=" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde binary at '$onde'; run 'cargo build' or set ONDE=" >&2
   exit 2
 fi
 
@@ -35,11 +35,11 @@ run() {
 
   ( cd "$tree" && node "$entry" ) >"$node_out" 2>/dev/null
   local node_code=$?
-  ( cd "$tree" && "$lite" "$entry" ) >"$lite_out" 2>/dev/null
+  ( cd "$tree" && "$onde" "$entry" ) >"$lite_out" 2>/dev/null
   local lite_code=$?
 
   if [ "$node_code" -ne 0 ] || [ "$lite_code" -ne 0 ]; then
-    echo "FAIL      $entry (node exit $node_code, lite exit $lite_code)"
+    echo "FAIL      $entry (node exit $node_code, onde exit $lite_code)"
     diff -u "$node_out" "$lite_out" | head -20 | sed 's/^/          /'
     failed+=("$entry exit")
     fail=$((fail + 1))

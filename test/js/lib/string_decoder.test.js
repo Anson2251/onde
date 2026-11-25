@@ -2,7 +2,7 @@
 
 // Runtime-agnostic self-test for js/lib/string_decoder.js.
 //
-// Run under `node` (and `lite`): node test/js/lib/string_decoder.test.js
+// Run under `node` (and `onde`): node test/js/lib/string_decoder.test.js
 // Prints one `ok <label>` line per passing check and exits 1 on any failure.
 
 const { StringDecoder } = require("../../../js/lib/string_decoder.js");

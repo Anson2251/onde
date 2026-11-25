@@ -4,7 +4,7 @@
 #
 #   ./test/net/run.sh                     # dev machine: strict perf thresholds
 #   NET_BENCH_SOFT=1 ./test/net/run.sh    # CI: perf numbers are informational
-#   LITE=/path/to/lite ./test/net/run.sh
+#   ONDE=/path/to/onde ./test/net/run.sh
 #
 # Checks:
 #   interop    test/net/interop.sh       (4 plaintext legs + TLS legs when available)
@@ -19,17 +19,17 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-LITE="${LITE:-$root/target/debug/lite}"
-release="${LITE_RELEASE:-${NET_LITE_RELEASE:-$root/target/release/lite}}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
+release="${ONDE_RELEASE:-${LITE_RELEASE:-${NET_ONDE_RELEASE:-${NET_LITE_RELEASE:-$root/target/release/onde}}}}"
 soft="${NET_BENCH_SOFT:-0}"
 
-if [ ! -x "$LITE" ]; then
-  echo "no lite runtime at '$LITE'; build it (cargo build) or set LITE=/path/to/lite" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde runtime at '$onde'; build it (cargo build) or set ONDE=/path/to/onde" >&2
   exit 2
 fi
 
-export LITE NET_BENCH_SOFT="$soft"
-echo "net acceptance: lite=$LITE release=$release soft=$soft"
+export ONDE="$onde" NET_BENCH_SOFT="$soft"
+echo "net acceptance: onde=$onde release=$release soft=$soft"
 
 # Cold start is a release measurement, so the release binary must correspond to the current tree.
 if [ "${NET_BENCH_NO_BUILD:-0}" != "1" ] && command -v cargo >/dev/null 2>&1; then

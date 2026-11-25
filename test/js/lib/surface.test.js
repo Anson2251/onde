@@ -3,10 +3,10 @@
 // The build-time minifier (crates/ln-runtime/build.rs) compresses the stdlib and strips whitespace
 // but does not rename bindings. The Node-facing names must survive compression, so this test pins
 // the surface a user can observe. It skips under plain node (the host and the minified bundle are
-// lite-only).
+// onde-only).
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

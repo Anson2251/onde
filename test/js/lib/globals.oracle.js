@@ -439,7 +439,7 @@ compareSync("EventTarget invalid signal option", "signal: {}", function (g) {
 // do not model, so a differential comparison would be meaningless or unfixable.
 skip(
   "capture/bubble over a parentNode tree",
-  "Node's EventTarget has no tree; propagation is a documented lite extension"
+  "Node's EventTarget has no tree; propagation is a documented onde extension"
 );
 skip(
   "listener exception reporting",

@@ -29,7 +29,7 @@ started:
 | Startup | `bootstrap.js` compiled to bytecode at build time, embedded, stamp-checked, loaded with `JS_EvalFunction`; source kept in debug builds for parity tests | A whole-context snapshot (QuickJS cannot serialize host functions or prototypes, §3.1); per-module bytecode for the JS stdlib (§3.2) |
 | Memory | `--max-old-space-size` wired to `JS_SetMemoryLimit`; a per-worker limit from `resourceLimits.maxOldGenerationSizeMb`; `process.memoryUsage()` with a real `rss`; `--trace-gc` | A new/old-generation split, semi-space tuning, `--max-semi-space-size` (§7, D67); heap snapshots and `v8.getHeapSnapshot` |
 | Diagnostics | `--trace-events` (Chrome trace JSON), `--trace-gc` (sampled), `--timing` (per-phase and per-op nanoseconds at exit), heap statistics | A sampling profiler (`--cpu-prof`), `--heap-prof`, `--prof`, the inspector protocol |
-| Tests | `node:test` lite: `test`/`describe`/`it`, hooks, promise and callback tests, `lite --test`, one reporter; the API runs a pilot suite in CI | Mocking, snapshots, coverage, watch mode, `--test-only`, reporters beyond the one (§3.5, D71); migrating the 238-case conformance corpus (§3.5) |
+| Tests | `node:test` onde: `test`/`describe`/`it`, hooks, promise and callback tests, `onde --test`, one reporter; the API runs a pilot suite in CI | Mocking, snapshots, coverage, watch mode, `--test-only`, reporters beyond the one (§3.5, D71); migrating the 238-case conformance corpus (§3.5) |
 | Fast paths | Lazy per-connection session state in `http`/`net`; an async-hooks crossing fast path if it measures; one allocation removed from `fs.readFile` if the ratio needs it | A JIT, a generational GC, multi-queue networking, `uv`-style handle pooling |
 | Harnesses | `test/perf/run.sh` (ratios against Node), a cold-start protocol that records the machine state, `test/soak/run.sh` (1 h RSS slope), a `perf` CI job | Hard performance gates on shared CI runners (soft there, hard on the reference machine, §5) |
 
@@ -94,7 +94,7 @@ option is what a reader will reach for first.
 ### 3.1 The snapshot is a compiled *script*, not a context
 
 `js/bootstrap.js` is evaluated as a global script at boot: `Isolate::install` calls
-`Engine::eval_global(BOOTSTRAP, "<lite:bootstrap>")` (`crates/ln-runtime/src/lib.rs:593`). QuickJS
+`Engine::eval_global(BOOTSTRAP, "<onde:bootstrap>")` (`crates/ln-runtime/src/lib.rs:593`). QuickJS
 offers no way to serialize a context: bytecode can describe a function or a module, and the
 bootstrap's globals are created by *running* it, while the host functions it captures live in Rust
 and cannot be serialized at all. "Snapshot" therefore means: compile the script once at build time,
@@ -103,7 +103,7 @@ ship the resulting bytecode, and skip the parse-and-compile at boot.
 The mechanism is qjsc's, in four engine calls:
 
 ```c
-obj = JS_Eval(ctx, src, len, "<lite:bootstrap>",
+obj = JS_Eval(ctx, src, len, "<onde:bootstrap>",
               JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);   /* compile, do not run */
 JS_WriteObject(ctx, &len, obj, JS_WRITE_OBJ_BYTECODE);            /* build time  */
 ...
@@ -243,10 +243,10 @@ Scope, deliberately small:
 | `test`, `describe`, `it`, `before`, `after`, `beforeEach`, `afterEach` | `mock`, `snapshot`, `--experimental-test-coverage` |
 | `t.test()` subtests, `t.diagnostic()`, `t.plan(n)`, `t.assert` (thin alias over `node:assert`) | watch mode, `--test-only`, `--test-name-pattern` |
 | async tests (returned promise), callback tests (`(t, done)`), timeouts (`{timeout}` and per-test override) | reporters beyond the default; TAP output |
-| `lite --test [FILES…]`, discovery of `*.test.js` and `test/**/*.js`, exit code 1 on failure | running the existing conformance corpus |
+| `onde --test [FILES…]`, discovery of `*.test.js` and `test/**/*.js`, exit code 1 on failure | running the existing conformance corpus |
 
 The pilot (`test/node-test/`) runs five real conformance cases through the same file under
-`node --test` and `lite --test`, and CI asserts the two transcripts match. That is the whole point
+`node --test` and `onde --test`, and CI asserts the two transcripts match. That is the whole point
 of the API: if the same file cannot run on both, the module is a lookalike and not worth having.
 
 `node:test` becomes a builtin (`crates/ln-modules/src/builtin.rs`) and a `compat.md` row moves from
@@ -313,7 +313,7 @@ are what actually orders them.
 | WP2 | Build-time bootstrap snapshot | 3.0 | WP1 | a release binary boots from bytecode; both paths produce identical corpus output |
 | WP3 | Memory limits, worker limits, honest `memoryUsage` | 2.5 | WP1 | `--max-old-space-size=8` fails deterministically; a worker's limit is its own |
 | WP4 | `--trace-events`, `--timing`, `--trace-gc` | 3.5 | WP0 | one trace file validates, `--timing` aggregates, off costs nothing measurable |
-| WP5 | `node:test` lite | 3.0 | — | the pilot runs identically under `node --test` and `lite --test` |
+| WP5 | `node:test` onde | 3.0 | — | the pilot runs identically under `node --test` and `onde --test` |
 | WP6 | Lazy session state, `fs.readFile`, async-hooks check | 2.5 | WP0 | the half-open bound is met; every other ratio is recorded |
 | WP7 | Docs, divergences, outcome | 1.0 | all | roadmap, compat and this file updated; §12 written |
 
@@ -330,13 +330,13 @@ is optimized, so every later claim is an A/B and not a memory of a number.
 | cold start | `test/net/coldstart.js` | p50 ≤ 14 ms / ≤ 25 ms, plus the bound `http − eval ≤ 8 ms` |
 | `fs.readFile` 10 MB | new `test/perf/fs-read.js`, both runtimes | ≤ 1.2x Node |
 | TCP echo | new `test/perf/echo.sh` + `test/net/fixtures/echo-server.js`, both runtimes | ≤ 1.5x Node |
-| HTTP keep-alive | the same, `LITE_RELEASE=$(command -v node)` as denominator | ≤ 1.5x Node |
+| HTTP keep-alive | the same, `ONDE_RELEASE=$(command -v node)` as denominator | ≤ 1.5x Node |
 
-`bench.sh` already takes `LITE_RELEASE` and prints a parseable `SUMMARY: rps=… p50=… p99=…`, and
+`bench.sh` already takes `ONDE_RELEASE` and prints a parseable `SUMMARY: rps=… p50=… p99=…`, and
 [test/bench/run.js](../test/bench/run.js) already documents running the *same* server script under
 Node as the denominator. So the HTTP/TCP ratios need a comparator, not new measurement machinery:
 `test/perf/run.sh` runs each bench twice (both runtimes), parses the summaries, prints one
-`RESULT workload=… node=… lite=… ratio=… verdict=…` line per row.
+`RESULT workload=… node=… onde=… ratio=… verdict=…` line per row.
 
 **The cold-start protocol.** `coldstart.js` gains a preamble it prints and records:
 `lowpowermode` from `pmset -g` (macOS) or absent, load average, and the binary's stamp. It refuses
@@ -436,7 +436,7 @@ Tests are the interesting part, because a memory limit is only real if the failu
 
 - `crates/ln-engine/tests/memory.rs`: allocating in a loop under a 4 MB limit fails with the
   documented error rather than aborting the process; a limit set after boot still applies.
-- `ln-runtime` integration: `lite --max-old-space-size=8 big.js` exits 1 with one line naming the
+- `ln-runtime` integration: `onde --max-old-space-size=8 big.js` exits 1 with one line naming the
   limit; `--max-old-space-size=2000` boots.
 - workers: a worker with `resourceLimits.maxOldGenerationSizeMb: 4` dies with its limit while the
   parent's 64 MB budget is untouched, and the parent gets `error` then `exit`.
@@ -466,13 +466,13 @@ event and none on a script that allocates nothing.
 ### 4.6 WP5 — `node:test`
 
 `js/lib/test.js` is the module; the runner lives in the same file and is entered from
-`lite --test` through a host call that hands it the discovered paths (`Isolate` already passes
+`onde --test` through a host call that hands it the discovered paths (`Isolate` already passes
 `process.argv`; discovery is `ln-cli`'s job because it is argument parsing). Reporter output is the
 spec-ish nesting Node prints (`▶`, `✔`, `✖`, one line per test, a summary), because a divergent
 format is a cost with no benefit.
 
 The pilot: five conformance cases rewritten as `node:test` files under `test/node-test/`, run by CI
-twice — `node --test` and `lite --test` — and compared. That comparison is the compatibility
+twice — `node --test` and `onde --test` — and compared. That comparison is the compatibility
 criterion for the module, and it is also the seed for the M8 corpus migration if that is ever taken.
 
 ### 4.7 WP6 — the fast paths
@@ -531,7 +531,7 @@ it.
 | 5 | 2,000 half-open connections: RSS within 2 MB of the raw-TCP floor (§6.1) | `test/net/slowloris.sh` | hard on the reference machine, soft elsewhere |
 | 6 | RSS, hello server < 25 MB, no growth over 1 h | `test/soak/run.sh` | hard nightly |
 | 7 | `--trace-events` output loads in `chrome://tracing` | `test/diag/run.sh` | hard structural, one manual check at close |
-| 8 | The `node:test` pilot produces the same transcript under `node --test` and `lite --test` | `test/node-test/run.sh` | hard |
+| 8 | The `node:test` pilot produces the same transcript under `node --test` and `onde --test` | `test/node-test/run.sh` | hard |
 | 9 | The bytecode bootstrap produces the same output as the source bootstrap across the corpus | `./test/conformance/run.sh` against a release binary | hard |
 | 10 | Binary size ≤ 6.0 MB (was 5.4 MB) | `test/perf/run.sh` | hard; the snapshot is allowed +600 KB, and §12 records the actual |
 | 11 | Stdlib consolidation checklist | `test/js/run.sh`, `scripts/check-duplication.mjs` | already green at plan time; kept as a regression gate |
@@ -664,7 +664,7 @@ another. They are listed so the milestone owner can overrule them before WP0 sta
    defers a release criterion to the hardening milestone. The alternative is a M7.5 with the rebase
    and no performance work, which is cleaner but adds a milestone.
 
-Two smaller ones: the flag is spelled `--timing` rather than the roadmap's `--cpu-prof-lite`
+Two smaller ones: the flag is spelled `--timing` rather than the roadmap's `--cpu-prof-onde`
 (it is not a profiler, and a name that lies is worse than a new name), and worker OOM kills the
 worker rather than the process (D68) — the opposite choice is defensible and cheaper to implement.
 
@@ -685,7 +685,7 @@ the absolutes are slightly pessimistic).
 | 5 | 2,000 half-open: within 2 MB of the raw floor | HTTP 47.7 MB against a 44.6 MB floor: **3.0–3.2 MB** over three paired runs (6 MB before lazy sessions) | **missed**; the residual 1.5 KB/connection is bookkeeping correctness needs (§12.3) |
 | 6 | Hello-server RSS < 25 MB, no growth over 1 h | peak 7.98 MB, slope **0.27 MB/h** over a 10-minute run (61 samples) | met on the shorter run; the 1 h run is the nightly job |
 | 7 | Trace loads in `chrome://tracing` | 43 events, 1 lane, ops + gc, validated structurally | met (§12.2) |
-| 8 | Pilot identical under `node --test` and `lite --test` | 5 files / 24 tests, transcripts match | met |
+| 8 | Pilot identical under `node --test` and `onde --test` | 5 files / 24 tests, transcripts match | met |
 | 9 | Bytecode bootstrap matches source across the corpus | 235/235 both paths, identical output | met |
 | 10 | Binary ≤ 6.0 MB | 5.53 MB, of which the snapshot is 42 KB replacing 15 KB of source (+27 KB) | met |
 

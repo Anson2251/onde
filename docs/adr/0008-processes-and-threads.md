@@ -171,7 +171,7 @@ when `wait` returns; `close` after every piped stream reached EOF and `exit` has
 `exit`, the task also drains whatever remains in an unread output pipe, so an unread stderr cannot
 hold `close` open (Node behaves this way too).
 
-`fork` adds one inherited IPC descriptor on fd 3 with length-prefixed JSON frames (lite-only; D50).
+`fork` adds one inherited IPC descriptor on fd 3 with length-prefixed JSON frames (onde-only; D50).
 It is a **process-level singleton**, not a fourth handle family: `fork` gives the child exactly one
 descriptor, so a reserved completion id (`u64::MAX - 1`) and `host.ipc(name, args)` are enough. The
 channel holds one loop ref while it is open. `disconnect` stops the reader immediately but lets the

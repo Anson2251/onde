@@ -11,7 +11,7 @@
 //   - Promise state: QuickJS exposes no JS-visible promise state, so our
 //     inspect always renders "<pending>".  Resolved/rejected promises are
 //     therefore not in the inspect table.
-//   - Legacy `.inspect()` methods: Node 26 removed support; lite keeps it
+//   - Legacy `.inspect()` methods: Node 26 removed support; onde keeps it
 //     because the M2 surface asks for it.  Not compared.
 //   - `showHidden: true` internals (function `prototype`, typed-array
 //     byteLength/buffer/…): Node exposes engine-level non-enumerable props

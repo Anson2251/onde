@@ -2,13 +2,13 @@
 
 // Self-check for `js/lib/child_process.js` (M5).
 //
-//   ./target/debug/lite test/js/lib/child_process.test.js
+//   ./target/debug/onde test/js/lib/child_process.test.js
 //
-// Plain Node skips it: the process bridge only exists under lite. The M5 acceptance harness
+// Plain Node skips it: the process bridge only exists under onde. The M5 acceptance harness
 // (`test/proc/run.sh`) covers the behaviour; this file pins the surface and argument validation.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

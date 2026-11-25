@@ -8,7 +8,7 @@
 //!
 //! - the app is **parsed at every start** (no bytecode), so startup is the bundler's source
 //!   parse, not a bytecode load;
-//! - it **extracts to disk** (temp, local or cwd) and spawns `lite`, so there is a directory to
+//! - it **extracts to disk** (temp, local or cwd) and spawns `onde`, so there is a directory to
 //!   clean up and a child process to reason about;
 //! - the appended payload is **outside the signed code**. On macOS, re-signing an appended binary
 //!   does not seal the appended bytes (verified: `codesign --verify` passes and `spctl` rejects
@@ -32,7 +32,7 @@ use crate::toolchain::Toolchain;
 pub struct Options {
     /// `--wrappe`: the packer command.
     pub program: String,
-    /// `--runtime`: the `lite` binary to embed.
+    /// `--runtime`: the `onde` binary to embed.
     pub runtime: Option<PathBuf>,
     /// `--asset`: files or directories to copy into the payload.
     pub assets: Vec<PathBuf>,
@@ -112,9 +112,9 @@ pub fn pack(
 
     let runtime = runtime_path(request, target)?;
     let runtime_name = if target.libc == crate::target::Libc::Msvc {
-        "lite.exe"
+        "onde.exe"
     } else {
-        "lite"
+        "onde"
     };
     fs::copy(&runtime, stage.path().join(runtime_name))
         .map_err(|error| format!("copy {}: {error}", runtime.display()))?;
@@ -184,7 +184,7 @@ pub fn pack(
     Ok(())
 }
 
-/// The runtime binary to embed: `--runtime`, else a `lite-<tuple>` next to this tool.
+/// The runtime binary to embed: `--runtime`, else a `onde-<tuple>` next to this tool.
 fn runtime_path(request: &Request, target: &Target) -> Result<PathBuf, String> {
     if let Some(runtime) = &request.wrappe.runtime {
         if !runtime.is_file() {
@@ -193,9 +193,9 @@ fn runtime_path(request: &Request, target: &Target) -> Result<PathBuf, String> {
         return Ok(runtime.clone());
     }
     let name = if target.libc == crate::target::Libc::Msvc {
-        format!("lite-{}.exe", target.tuple)
+        format!("onde-{}.exe", target.tuple)
     } else {
-        format!("lite-{}", target.tuple)
+        format!("onde-{}", target.tuple)
     };
     let beside = std::env::current_exe()
         .ok()

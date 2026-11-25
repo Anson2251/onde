@@ -521,7 +521,7 @@ impl Engine {
         })
     }
 
-    /// Compile an ES module without evaluating it (`lite --check`).
+    /// Compile an ES module without evaluating it (`onde --check`).
     pub fn compile_module(&self, source: &str, name: &str) -> Result<(), CaughtError> {
         self.with_ctx(|ctx| {
             let source = strip_source_prefix(source);
@@ -532,7 +532,7 @@ impl Engine {
         })
     }
 
-    /// Compile a CommonJS wrapper without evaluating the function body (`lite --check`).
+    /// Compile a CommonJS wrapper without evaluating the function body (`onde --check`).
     pub fn compile_cjs(&self, source: &str, filename: &str) -> Result<(), CaughtError> {
         let wrapped = cjs_wrapper(source);
         self.with_ctx(|ctx| {
@@ -852,7 +852,7 @@ unsafe extern "C" fn async_stack_trampoline(
 /// The global (rather than the abstract `ToString` operation) is what the CLI contract says to
 /// print, and it is the only form that handles `Symbol()` without throwing.
 fn stringify<'js>(ctx: &Ctx<'js>, value: js::Value<'js>) -> String {
-    // The runtime installs a formatter (`util.inspect` for objects) so `lite -e '({a:1})'`
+    // The runtime installs a formatter (`util.inspect` for objects) so `onde -e '({a:1})'`
     // prints a value, not `[object Object]`. The engine only provides the hook.
     if let Ok(Some(formatter)) = ctx
         .globals()

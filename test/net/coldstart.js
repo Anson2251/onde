@@ -1,12 +1,12 @@
 "use strict";
 
-// Cold-start measurement for the M7 exit criteria: 25 release runs of `lite -e <expr>`, median wall
+// Cold-start measurement for the M7 exit criteria: 25 release runs of `onde -e <expr>`, median wall
 // time. Spawning the process is part of the measurement (that is what "cold start" means), and each
 // run is independent: no warm process is reused.
 //
-//   node test/net/coldstart.js <lite> [runs]
-//   NET_BENCH_SOFT=1 node test/net/coldstart.js <lite>   # thresholds informational
-//   NET_BENCH_FORCE=1 node test/net/coldstart.js <lite>  # measure even in low-power mode
+//   node test/net/coldstart.js <onde> [runs]
+//   NET_BENCH_SOFT=1 node test/net/coldstart.js <onde>   # thresholds informational
+//   NET_BENCH_FORCE=1 node test/net/coldstart.js <onde>  # measure even in low-power mode
 //
 // Thresholds: `1+1` median <= 14 ms, `require("http")` median <= 25 ms, and the difference between
 // them (what importing the http stack costs) <= 8 ms.
@@ -21,7 +21,7 @@ const { spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 
-const lite = process.argv[2];
+const onde = process.argv[2];
 const runs = Number(process.argv[3] || 25);
 const soft = process.env.NET_BENCH_SOFT === "1";
 const force = process.env.NET_BENCH_FORCE === "1";
@@ -62,12 +62,12 @@ function measure(expr) {
   // Two discarded warm-up spawns page the binary in, so the median measures runtime startup rather
   // than first-touch disk I/O (the roadmap's ~13 ms number is the runtime, not the filesystem).
   for (let i = 0; i < 2; i += 1) {
-    spawnSync(lite, ["-e", expr], { stdio: "ignore" });
+    spawnSync(onde, ["-e", expr], { stdio: "ignore" });
   }
   const samples = [];
   for (let i = 0; i < runs; i += 1) {
     const started = process.hrtime.bigint();
-    const result = spawnSync(lite, ["-e", expr], { stdio: "ignore" });
+    const result = spawnSync(onde, ["-e", expr], { stdio: "ignore" });
     const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
     if (result.error) {
       console.error(`coldstart: ${result.error.message}`);

@@ -2,7 +2,7 @@
 
 // `wc` clone for the M3 acceptance suite: counts lines, words and bytes from streams.
 //   wc.js [-l] [-w] [-c] file...
-// Default is `lines words bytes`, one line per file. Output is compared between Node and lite
+// Default is `lines words bytes`, one line per file. Output is compared between Node and onde
 // running the same program, so the format is ours, not system `wc`'s.
 
 const fs = require("fs");

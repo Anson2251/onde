@@ -4,21 +4,21 @@
 #   ./test/proc/run.sh                 # 20k echo round-trips
 #   FULL=1 ./test/proc/run.sh          # the roadmap's 1M round-trip benchmark
 #
-# Every case runs under node first and then under lite. The assertions are on exit status, not on
+# Every case runs under node first and then under onde. The assertions are on exit status, not on
 # timing output (rates differ by design); the scripts print one line per check.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 node_bin="${NODE:-node}"
 
 if ! command -v "$node_bin" >/dev/null 2>&1; then
-  echo "node not found: the M5 harness compares node and lite" >&2
+  echo "node not found: the M5 harness compares node and onde" >&2
   exit 2
 fi
-if [ ! -x "$lite" ]; then
-  echo "no lite binary at '$lite'; run 'cargo build' or set LITE=" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde binary at '$onde'; run 'cargo build' or set ONDE=" >&2
   exit 2
 fi
 
@@ -54,7 +54,7 @@ run_case() {
 
 for script in child-process.js ordering.js worker-echo.js atomics.js terminate.js signals.js; do
   run_case "${script%.js}" "$here/$script" "$node_bin"
-  run_case "${script%.js}" "$here/$script" "$lite"
+  run_case "${script%.js}" "$here/$script" "$onde"
 done
 
 echo

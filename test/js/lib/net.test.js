@@ -2,13 +2,13 @@
 
 // Self-check for `js/lib/net.js`: the `net` surface over the M4 handle bridge.
 //
-//   ./target/debug/lite test/js/lib/net.test.js
+//   ./target/debug/onde test/js/lib/net.test.js
 //
-// Plain Node skips it: the TCP tasks only exist under lite. Nothing here prints a port or a
+// Plain Node skips it: the TCP tasks only exist under onde. Nothing here prints a port or a
 // timing, so the output is stable run to run.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

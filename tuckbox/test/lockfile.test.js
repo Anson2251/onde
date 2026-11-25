@@ -1,7 +1,7 @@
 "use strict";
 
 // Unit tests for `dist/lib/lockfile.js`. Plain CommonJS, no framework: the same file runs under
-// `node` and under `lite`, and prints a single `ok lockfile <N> assertions` line on success.
+// `node` and under `onde`, and prints a single `ok lockfile <N> assertions` line on success.
 
 const fs = require("node:fs");
 const os = require("node:os");

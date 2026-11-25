@@ -5,7 +5,7 @@ writes a `node_modules` tree, using only `fs`, `https`, `zlib`, `path` and `proc
 
 ```sh
 pnpm build
-../target/debug/lite bin/tuckbox.js install      # run it on onde
+../target/debug/onde bin/tuckbox.js install      # run it on onde
 node bin/tuckbox.js install                      # or on node, same output
 ```
 

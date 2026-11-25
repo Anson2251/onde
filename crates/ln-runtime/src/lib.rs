@@ -103,7 +103,7 @@ pub struct Config {
     /// fatal engine OOM (m7-plan §3.3, D67/D68). Workers inherit it unless `resourceLimits` says
     /// otherwise.
     pub max_old_space_size: Option<u64>,
-    /// Test files discovered by `lite --test`.
+    /// Test files discovered by `onde --test`.
     ///
     /// `None` runs a script; `Some` makes [`Isolate::run_tests`] the entry point. Discovery lives
     /// in `ln-cli` (it is argument parsing, m7-plan §4.6), and the runtime only hands this list to
@@ -442,7 +442,7 @@ pub struct Isolate {
     memory: Rc<Cell<usize>>,
     /// Set by the `memoryUsage` host call, cleared when the sample is taken.
     memory_requested: Rc<Cell<bool>>,
-    /// Files `lite --test` discovered; `Some` means this isolate is a test runner, not a script
+    /// Files `onde --test` discovered; `Some` means this isolate is a test runner, not a script
     /// host (see [`Config::test_files`]).
     test_files: Option<Vec<String>>,
     /// `--trace-events`, `--timing` and `--trace-gc`; `None` unless one was asked for.
@@ -850,7 +850,7 @@ impl Isolate {
         self.settle(None)
     }
 
-    /// Run the `node:test` files discovered by the CLI (`lite --test`).
+    /// Run the `node:test` files discovered by the CLI (`onde --test`).
     ///
     /// The runner is JavaScript (`js/lib/test.js`): hooks, the promise/`done` duality, plan
     /// accounting and timeouts are test semantics, not flag plumbing. Rust hands it the paths and
@@ -891,7 +891,7 @@ impl Isolate {
         self.settle(None)
     }
 
-    /// `lite --check`: compile the entry without running it.
+    /// `onde --check`: compile the entry without running it.
     ///
     /// CJS is checked by compiling the wrapper function expression (the body is never called);
     /// ESM is checked with the engine's compile-only module path. The diagnostics use the same
@@ -1049,13 +1049,13 @@ impl Isolate {
     /// Print a resolution failure (`Cannot find module ...`) and return a failing outcome.
     fn report_resolution(&self, failure: &ln_modules::ResolveFailure) {
         let mut err = io::stderr().lock();
-        let _ = writeln!(err, "lite: {}", failure.message);
+        let _ = writeln!(err, "onde: {}", failure.message);
         let _ = err.flush();
     }
 
     fn report_entry_error(&self, code: &str, message: &str) {
         let mut err = io::stderr().lock();
-        let _ = writeln!(err, "lite: {code}: {message}");
+        let _ = writeln!(err, "onde: {code}: {message}");
         let _ = err.flush();
     }
 
@@ -1483,14 +1483,14 @@ impl Isolate {
             BudgetHit::Jobs(jobs) => {
                 let _ = writeln!(
                     err,
-                    "lite: microtask budget exhausted after {jobs} jobs; \
+                    "onde: microtask budget exhausted after {jobs} jobs; \
                      the script is probably in an infinite microtask loop"
                 );
             }
             BudgetHit::Wall => {
                 let _ = writeln!(
                     err,
-                    "lite: microtask timeout exceeded; \
+                    "onde: microtask timeout exceeded; \
                      the script is probably in an infinite loop"
                 );
             }
@@ -1582,7 +1582,7 @@ impl Isolate {
             Ok(outcome) => outcome.exit_code,
             Err(failure) => {
                 let mut err = io::stderr().lock();
-                let _ = writeln!(err, "lite: worker failure: {failure}");
+                let _ = writeln!(err, "onde: worker failure: {failure}");
                 let _ = err.flush();
                 1
             }
@@ -2028,7 +2028,7 @@ mod tests {
     #[test]
     fn default_budget_is_unbounded_like_node() {
         assert_eq!(
-            Config::new(vec!["lite".to_owned()]).budget,
+            Config::new(vec!["onde".to_owned()]).budget,
             Budget::UNBOUNDED
         );
     }
@@ -2066,7 +2066,7 @@ mod tests {
     }
 
     fn run_eval(source: &str) -> RunOutcome {
-        let mut isolate = Isolate::new(Config::new(vec!["lite".to_owned()])).expect("isolate");
+        let mut isolate = Isolate::new(Config::new(vec!["onde".to_owned()])).expect("isolate");
         isolate.run(source, "[eval]").expect("run")
     }
 
@@ -2096,7 +2096,7 @@ try {
   () => process.exit(33),
 );"#
         .replace("__PATH__", &manifest_literal());
-        let mut isolate = Isolate::new(Config::new(vec!["lite".to_owned()])).expect("isolate");
+        let mut isolate = Isolate::new(Config::new(vec!["onde".to_owned()])).expect("isolate");
         let outcome = isolate.run(&source, "[eval]").expect("run");
         assert_eq!(outcome.exit_code, 31);
         // O3: the ref was released when the completion slot was taken.

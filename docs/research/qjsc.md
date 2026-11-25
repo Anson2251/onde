@@ -1,6 +1,6 @@
 # qjsc / QuickJS bytecode mechanics — research notes
 
-> **Design status (2026-11-20):** this is evidence for the bytecode step of `lite build`; the
+> **Design status (2026-11-20):** this is evidence for the bytecode step of `onde build`; the
 > shipping design links a static library rather than using qjsc's C-driver shape verbatim. See
 > [`../standalone-build.md`](../standalone-build.md).
 
@@ -316,7 +316,7 @@ globalThis.bjson = bjson; globalThis.std = std; globalThis.os = os;
 `js_std_promise_rejection_tracker`, worker hooks. Bellard's `std` module also has
 `std.evalScript`, `std.loadFile`, `std.open`, `std.parseExtJSON`, etc.
 
-> **Practical consequence for lite-node:** `rquickjs-sys` compiles only
+> **Practical consequence for onde:** `rquickjs-sys` compiles only
 > `quickjs.c, dtoa.c, libregexp.c, libunicode.c` (`build.rs:143`) — **not**
 > `quickjs-libc.c` and **not** `qjsc.c`. So (a) the repo's `libquickjs.a` has no
 > `js_std_eval_binary`, no `std`/`os`/`bjson` modules; (b) there is no `qjsc` binary
@@ -588,7 +588,7 @@ container header, and even that header does not record `BC_VERSION`.
 
 ---
 
-## 8. Implications for lite-node (opinion, not verified fact)
+## 8. Implications for onde (opinion, not verified fact)
 
 1. There is no `qjsc` in the dependency graph; a build step would have to compile
    `qjsc.c` against the vendored `quickjs/` tree (same flags, same snapshot, including

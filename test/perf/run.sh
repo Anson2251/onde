@@ -3,13 +3,13 @@
 #
 #   ./test/perf/run.sh                     # hard on this machine
 #   NET_BENCH_SOFT=1 ./test/perf/run.sh    # report only (shared CI runners)
-#   PERF_BUILD=0 ./test/perf/run.sh        # reuse target/release/lite
+#   PERF_BUILD=0 ./test/perf/run.sh        # reuse target/release/onde
 #
 # Measures, against Node on the same machine and the same fixture:
 #
-#   fs.readFile 10 MB   lite/node time ratio   <= 1.20    (criterion 2)
-#   TCP echo            lite/node req/s ratio  >= 0.667   (criterion 3)
-#   HTTP keep-alive     lite/node req/s ratio  >= 0.667   (criterion 4, at risk — reported, not gated)
+#   fs.readFile 10 MB   onde/node time ratio   <= 1.20    (criterion 2)
+#   TCP echo            onde/node req/s ratio  >= 0.667   (criterion 3)
+#   HTTP keep-alive     onde/node req/s ratio  >= 0.667   (criterion 4, at risk — reported, not gated)
 #   cold start          delegated to test/net/coldstart.js (criterion 1)
 #   binary size         <= 6.0 MB                          (criterion 10)
 #
@@ -21,7 +21,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${PERF_LITE:-$root/target/release/lite}"
+onde="${PERF_LITE:-$root/target/release/onde}"
 soft="${NET_BENCH_SOFT:-0}"
 size_limit_mb=6.0
 
@@ -35,8 +35,8 @@ if [ "${PERF_BUILD:-1}" != "0" ]; then
     exit 2
   fi
 fi
-if [ ! -x "$lite" ]; then
-  echo "perf: no release runtime at $lite (set PERF_LITE or PERF_BUILD=1)" >&2
+if [ ! -x "$onde" ]; then
+  echo "perf: no release runtime at $onde (set PERF_LITE or PERF_BUILD=1)" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -64,7 +64,7 @@ ratio_line() {
   else
     verdict="missed"
   fi
-  printf 'RESULT workload=%s node=%s lite=%s ratio=%s limit=%s (%s) %s%s\n' \
+  printf 'RESULT workload=%s node=%s onde=%s ratio=%s limit=%s (%s) %s%s\n' \
     "$name" "$denominator" "$numerator" "$ratio" "$limit" "$how" "$verdict" \
     "$([ "$soft" = "1" ] && printf ' (soft)')"
   [ "$verdict" = "missed" ] && return 1
@@ -73,7 +73,7 @@ ratio_line() {
 
 # ---------------------------------------------------------------- cold start (criterion 1)
 echo "perf: cold start"
-if ! node "$here/../net/coldstart.js" "$lite" 25 | tee "$tmp/coldstart.log"; then
+if ! node "$here/../net/coldstart.js" "$onde" 25 | tee "$tmp/coldstart.log"; then
   note_failure
 fi
 
@@ -91,12 +91,12 @@ if ! node "$here/fs-read.js" "$big" 30 | tee "$tmp/fs-node.log" >/dev/null; then
   echo "perf: the node baseline of fs-read failed" >&2
   note_failure
 fi
-if ! "$lite" "$here/fs-read.js" "$big" 30 | tee "$tmp/fs-lite.log" >/dev/null; then
-  echo "perf: the lite fs-read failed" >&2
+if ! "$onde" "$here/fs-read.js" "$big" 30 | tee "$tmp/fs-onde.log" >/dev/null; then
+  echo "perf: the onde fs-read failed" >&2
   note_failure
 fi
 fs_node="$(sed -n 's/.*median_ms=\([0-9.]*\).*/\1/p' "$tmp/fs-node.log" | head -n 1)"
-fs_lite="$(sed -n 's/.*median_ms=\([0-9.]*\).*/\1/p' "$tmp/fs-lite.log" | head -n 1)"
+fs_lite="$(sed -n 's/.*median_ms=\([0-9.]*\).*/\1/p' "$tmp/fs-onde.log" | head -n 1)"
 if [ -n "$fs_node" ] && [ -n "$fs_lite" ]; then
   ratio_line "fs.readFile-10mb" "$fs_lite" "$fs_node" 1.20 max || note_failure
 else
@@ -109,12 +109,12 @@ if ! "$here/echo.sh" "$node_bin" | tee "$tmp/echo-node.log" >/dev/null; then
   echo "perf: the node baseline of the echo bench failed" >&2
   note_failure
 fi
-if ! "$here/echo.sh" "$lite" | tee "$tmp/echo-lite.log" >/dev/null; then
-  echo "perf: the lite echo bench failed" >&2
+if ! "$here/echo.sh" "$onde" | tee "$tmp/echo-onde.log" >/dev/null; then
+  echo "perf: the onde echo bench failed" >&2
   note_failure
 fi
 echo_node="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/echo-node.log" | head -n 1)"
-echo_lite="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/echo-lite.log" | head -n 1)"
+echo_lite="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/echo-onde.log" | head -n 1)"
 if [ -n "$echo_node" ] && [ -n "$echo_lite" ]; then
   ratio_line "tcp-echo" "$echo_lite" "$echo_node" 0.667 min || note_failure
 else
@@ -125,18 +125,18 @@ fi
 # At risk by design (m7-plan §9, R9): the tail is one isolate queueing every connection, which
 # allocation work cannot fix. The number is published; the gate only fires when PERF_HTTP_HARD=1.
 echo "perf: HTTP keep-alive"
-if ! NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 LITE_RELEASE="$node_bin" \
+if ! NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 ONDE_RELEASE="$node_bin" \
   "$here/../net/bench.sh" | tee "$tmp/http-node.log" >/dev/null; then
   echo "perf: the node baseline of the HTTP bench failed" >&2
   note_failure
 fi
-if ! NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 LITE_RELEASE="$lite" \
-  "$here/../net/bench.sh" | tee "$tmp/http-lite.log" >/dev/null; then
-  echo "perf: the lite HTTP bench failed" >&2
+if ! NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 ONDE_RELEASE="$onde" \
+  "$here/../net/bench.sh" | tee "$tmp/http-onde.log" >/dev/null; then
+  echo "perf: the onde HTTP bench failed" >&2
   note_failure
 fi
 http_node="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/http-node.log" | head -n 1)"
-http_lite="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/http-lite.log" | head -n 1)"
+http_lite="$(sed -n 's/.*rps=\([0-9.]*\).*/\1/p' "$tmp/http-onde.log" | head -n 1)"
 if [ -n "$http_node" ] && [ -n "$http_lite" ]; then
   if ! ratio_line "http-keepalive" "$http_lite" "$http_node" 0.667 min; then
     if [ "${PERF_HTTP_HARD:-0}" = "1" ]; then note_failure; else note_warning; fi
@@ -156,12 +156,12 @@ if [ "${PERF_SKIP_HALFOPEN:-0}" != "1" ]; then
 fi
 
 # ---------------------------------------------------------------- binary size (criterion 10)
-bytes="$(wc -c <"$lite" | tr -d ' ')"
+bytes="$(wc -c <"$onde" | tr -d ' ')"
 size_mb="$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b / 1048576 }')"
 if awk -v mb="$size_mb" -v limit="$size_limit_mb" 'BEGIN { exit !(mb <= limit) }'; then
-  printf 'RESULT workload=binary-size lite=%sMB limit=%sMB (max) met\n' "$size_mb" "$size_limit_mb"
+  printf 'RESULT workload=binary-size onde=%sMB limit=%sMB (max) met\n' "$size_mb" "$size_limit_mb"
 else
-  printf 'RESULT workload=binary-size lite=%sMB limit=%sMB (max) missed\n' "$size_mb" "$size_limit_mb"
+  printf 'RESULT workload=binary-size onde=%sMB limit=%sMB (max) missed\n' "$size_mb" "$size_limit_mb"
   note_failure
 fi
 

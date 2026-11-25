@@ -4,7 +4,7 @@
 > payload to a copy of the runtime; the shipping design links a static library instead. See
 > [`../standalone-build.md`](../standalone-build.md), Appendix B for why appending was rejected.
 
-Research notes for `onde`/`lite` (Rust + QuickJS, 5.3 MB single binary today).
+Research notes for `onde`/`onde` (Rust + QuickJS, 5.3 MB single binary today).
 Compiled 2026-11-20. Sources are primary where possible: Node's `src/node_sea*.cc` and API
 docs (v26.13.1), Bun's `StandaloneModuleGraph` at tag `bun-v1.3.3` (Zig) and current `main`
 (Rust rewrite), Deno's `cli/tools/compile.rs` + `cli/standalone/binary.rs` + `cli/lib/standalone/binary.rs`,

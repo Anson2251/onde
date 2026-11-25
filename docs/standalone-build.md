@@ -35,7 +35,7 @@ packages it one of two ways:
   the requested target tuple, write a temporary C file, compile and link it against
   `libonde-<tuple>.a`, optionally sign. The SDK is two shipped files: `onde.h` and one static
   library per system/libc/arch cell.
-- **`--packager wrappe` (opt-in).** Stage `lite-<tuple>` + the bundled assets and let `wrappe` build
+- **`--packager wrappe` (opt-in).** Stage `onde-<tuple>` + the bundled assets and let `wrappe` build
   a self-extracting binary. No C toolchain, no SDK; it unpacks at run time (Appendix D).
 
 The rest of this document specifies the link backend, because it is the default and the one with
@@ -44,7 +44,7 @@ Both share the same frontend, so the choice is a flag, not a fork.
 
 **Why linking is the default.** It is the direct path: the payload is a normal object in the image,
 so code signing, `strip`, `-dead_strip`, ASLR, and every packaging tool behave normally; the binary
-can be smaller than `lite` because unreferenced code is dropped; and the same library is what a
+can be smaller than `onde` because unreferenced code is dropped; and the same library is what a
 C/C++ host links when it wants to embed onde. Appending to a copy of the runtime (Bun/LLRT/qjs
 style) cannot produce a valid macOS signature — verified, see Appendix B — and needs its own loader
 format. The `wrappe` backend is the deliberate exception: it is compiler-less and keeps real files
@@ -76,7 +76,7 @@ ondec: app  4,402,112 bytes
 ```
 
 Six steps, each independently testable. Steps 1–2 are shared by both packagers; steps 3–6 are the
-**link** backend. The **wrappe** backend replaces 3–6 with "stage `lite-<tuple>` and the assets,
+**link** backend. The **wrappe** backend replaces 3–6 with "stage `onde-<tuple>` and the assets,
 invoke wrappe" (Appendix D).
 
 1. **Bundle** the entry in-process with rolldown (section 8), including any extra entry points the
@@ -103,7 +103,7 @@ to set.
 
 The driver is a **separate Rust binary, `ondec`** (section 3): it links the bundler (rolldown) and
 the bytecode compiler (`ln-engine`) directly, so there is no child process, no Node, and no external
-bundler to install. `lite` gains nothing — it stays a 5.3 MB runtime.
+bundler to install. `onde` gains nothing — it stays a 5.3 MB runtime.
 
 ---
 
@@ -118,7 +118,7 @@ triple); it consumes the SDK, is not part of it, and is not needed to run a buil
 | `onde.h` | the C ABI: version macros, entry points, stamp accessor. One file for every target; it contains no architecture-specific material and no generated content. |
 | `libonde-<tuple>.a` | the runtime as a static archive: `ln-runtime`, `ln-engine`, quickjs-ng C objects, tokio/rustls/ring, the embedded minified stdlib, and the C-ABI shim. MSVC cells ship `onde-<tuple>.lib` (a COFF archive) because that is what `cl`/`link` consume. |
 | `SHA256SUMS` | release metadata, not part of the SDK: the driver fetches it to verify the two files. |
-| `lite-<tuple>` | the runtime binary for one target, published for the `wrappe` backend (§D); not needed by a linked app, which contains the runtime already. |
+| `onde-<tuple>` | the runtime binary for one target, published for the `wrappe` backend (§D); not needed by a linked app, which contains the runtime already. |
 
 No manifest file is needed: the ABI stamp is **embedded as a byte string inside the archive**, so
 the JS driver finds it with a `Buffer.indexOf` and validates the fields — no linker, no executable,
@@ -229,15 +229,15 @@ The set is cell-specific and is printed by rustc at SDK build time
 
 ## 3. The toolchain is a separate CLI
 
-**Decision: `ondec` is its own Rust binary in this workspace.** It is not a subcommand of `lite`,
-and `lite` gains no build code and no build dependencies.
+**Decision: `ondec` is its own Rust binary in this workspace.** It is not a subcommand of `onde`,
+and `onde` gains no build code and no build dependencies.
 
 Why a separate binary:
 
 - The bundler is a large Rust dependency tree. `rolldown` 1.3.2 pulls `oxc` 0.158 and `tokio`
-  across ~200 crates; linking that into `lite` would blow up build time and add megabytes to a
+  across ~200 crates; linking that into `onde` would blow up build time and add megabytes to a
   5.3 MB runtime that ships embedded in other programs.
-- `lite` stays a runtime: no HTTP client, no temp files, no C compiler awareness, no bundler.
+- `onde` stays a runtime: no HTTP client, no temp files, no C compiler awareness, no bundler.
 - `ondec` is a **host** tool, built per developer machine; `libonde.a` is **per target**. Keeping
   them separate keeps the release matrix about the runtime, not about the tool.
 - Version lockstep is explicit and checkable: `ondec <version>` ⇔ SDK `<version>`. A dev build of
@@ -271,8 +271,8 @@ ondec build <entry> [--target <tuple>] [-o <file>] [--help]
 
   Packager (section 3.2, Appendix D)
     --packager link|wrappe   default link; wrappe needs no C toolchain and unpacks at run time
-    --runtime <path>         `lite` binary for the wrappe payload (default: next to ondec, else
-                             download lite-<tuple>)
+    --runtime <path>         `onde` binary for the wrappe payload (default: next to ondec, else
+                             download onde-<tuple>)
     --wrappe <path>          wrappe CLI (default: `wrappe` on PATH)
     --asset <path>           copy a file or directory into the wrappe payload, repeatable
     --unpack-target temp|local|cwd   wrappe unpack location (default temp)
@@ -333,10 +333,10 @@ environment variable and flag to set.
 2. **Map assets to keys**: each asset's filename relative to the project root is its key; the asset
    produced for the main entry is the entry.
 
-   *Link backend:* steps 3–8 below. *Wrappe backend:* stage `lite-<tuple>` + the bundled entry as
+   *Link backend:* steps 3–8 below. *Wrappe backend:* stage `onde-<tuple>` + the bundled entry as
    `app.mjs` + every other asset at its key + `--asset` copies, then run
-   `wrappe --input <stage> --runner <tuple> lite app.mjs -o <out>`. No SDK, no `cc`, no payload
-   format; the entry is parsed by `lite` at each start, and signing is the user's problem
+   `wrappe --input <stage> --runner <tuple> onde app.mjs -o <out>`. No SDK, no `cc`, no payload
+   format; the entry is parsed by `onde` at each start, and signing is the user's problem
    (Appendix D).
 3. **Compile every asset** to QuickJS module bytecode with `ln-engine` (§3.3). A parse error stops
    the build with the runtime's file/line/caret renderer; nothing is written.
@@ -356,7 +356,7 @@ mismatch" exit is 78.
 
 ### 3.3 The compiler lives in `ln-engine`
 
-`ondec` does not shell out to `lite` to get bytecode. `ln-engine` has a compile module:
+`ondec` does not shell out to `onde` to get bytecode. `ln-engine` has a compile module:
 
 ```rust
 pub struct Options { pub name: String, pub strip_source: bool, pub endian: ln_abi::Endian }
@@ -396,7 +396,7 @@ $XDG_CACHE_HOME/onde/sdk/<version>/<tuple>/onde.h
 
 The tool follows `$XDG_CACHE_HOME`, then `$HOME/.cache` (the same rule everywhere, including
 macOS, so one environment variable moves it), and `$ONDE_SDK_CACHE` overrides the root. `--sdk
-<dir>` bypasses the cache entirely; that is the route for an air-gapped machine and for a `lite`
+<dir>` bypasses the cache entirely; that is the route for an air-gapped machine and for a `onde`
 built from a checkout, which has no matching release.
 
 A local SDK for the host cell is one script away:
@@ -439,7 +439,7 @@ executable's own signature is the only boundary that matters — which is why th
 carries no hash (§7).
 
 Version selection is the one place where "the compiler must be the runtime" is enforced:
-`lite`'s own version picks the SDK. A release build (`0.1.0`) maps to tag `v0.1.0`; a development
+`onde`'s own version picks the SDK. A release build (`0.1.0`) maps to tag `v0.1.0`; a development
 build (version contains `-dev`/`-dirty`, or `git describe` finds no tag) refuses to download and
 requires `--sdk`, because there is no guarantee that a published archive has the same engine.
 
@@ -992,7 +992,7 @@ The first real package built this way — `vibe-cpc`, a TypeScript interpreter d
 
 There is deliberately **no disk fallback for modules** in compiled mode: a "standalone" build that
 silently reads a file from the build machine is not standalone, and the error names the missing
-key. `lite app.js` keeps resolving from disk exactly as today; this is a separate mode. `fs` still
+key. `onde app.js` keeps resolving from disk exactly as today; this is a separate mode. `fs` still
 reads the real filesystem — that is the app's decision, not the module loader's.
 
 ### 8.8 Determinism, source maps, tsconfig
@@ -1034,7 +1034,7 @@ toolchain choice described in section 5. The rules:
 - each cell is built in CI on its target (or with `zigbuild`/`cross`) from the same commit, and the
   engine stamp is asserted identical across all cells;
 - glibc floors and the musl/static story are recorded per cell (§2.1, §5.4);
-- the bytecode is generated by the **host** `lite` and consumed by the **target** archive. That is
+- the bytecode is generated by the **host** `onde` and consumed by the **target** archive. That is
   safe because both are built from the same quickjs-ng source, the format is little-endian,
   pointer-size-neutral for module bytecode (no SharedArrayBuffers in an app blob), and stamped;
 - a cross build is always explicit: `--target <tuple> --cc <compiler> [--cc-family …] [--sysroot …]`.
@@ -1059,7 +1059,7 @@ Nothing about the target is auto-detected, exactly like cargo: the tuple is the 
 | SDK | `crates/ondec/src/sdk.rs` | done: `--sdk`, cache, `curl` download, `SHA256SUMS`, archive scan, `sdk list/install/path/verify` |
 | Wrappe backend | `crates/ondec/src/wrappe.rs` | staged: copies the runtime, modules at their keys and `--asset` inputs, then spawns wrappe. The invocation follows wrappe 1.0.6's documented CLI and has **not** been run against a wrappe install |
 | Compiled-mode semantics | `crates/ln-runtime` | done for ESM/CJS entries, builtins, keys, `import.meta`; workers still start from a file (§7.2's worker note) |
-| Release matrix | CI | one cell (`aarch64-apple-darwin`) proven by `test/standalone/run.sh`; the other seven cells, `lite-<tuple>` and `ondec-<host>` artifacts, and the per-backend smoke jobs are not wired yet |
+| Release matrix | CI | one cell (`aarch64-apple-darwin`) proven by `test/standalone/run.sh`; the other seven cells, `onde-<tuple>` and `ondec-<host>` artifacts, and the per-backend smoke jobs are not wired yet |
 
 Tests that pin the feature:
 
@@ -1114,7 +1114,7 @@ same table but it is not gated, because the trade is the point.
 | 1.88 MB, 30k functions | 786 ms | 5.2 ms | 9.1 ms |
 
 The ratio holds and improves with size: bytecode load is roughly 20–150× cheaper than parsing, so
-a compiled app always starts faster than the same sources under `lite`. A small app (tens of KB)
+a compiled app always starts faster than the same sources under `onde`. A small app (tens of KB)
 gains a millisecond or two; a bundled app (hundreds of KB to megabytes) gains tens to hundreds of
 milliseconds. That is the only performance claim the feature makes, and it is in the gate (§12.3).
 
@@ -1147,7 +1147,7 @@ milliseconds. That is the only performance claim the feature makes, and it is in
 ### 12.3 The gate
 
 CI builds a fixture set (hello, a CJS app using `__dirname`/`require`, a 1–2 MB synthetic bundle,
-the `test/bench` corpus) twice: once as `lite <source>` and once via `ondec build` + run. It fails
+the `test/bench` corpus) twice: once as `onde <source>` and once via `ondec build` + run. It fails
 on:
 
 - cold start slower than the source run by more than 2%;
@@ -1155,7 +1155,7 @@ on:
 - payload larger than 3.5× the bundled source (a bundler pacing check, not a runtime one);
 - `ondec` over 25 MB (warn) or 100 MB (fail).
 
-The first two are the promises: the compiled app must start no slower than `lite` on the same
+The first two are the promises: the compiled app must start no slower than `onde` on the same
 sources — in practice it starts much faster — and it must not be slower once running.
 
 ## 13. Risks
@@ -1206,7 +1206,7 @@ sources — in practice it starts much faster — and it must not be slower once
   be implemented twice.
 - **`ondec` build weight.** Linking rolldown (oxc + tokio) and quickjs makes `ondec` a large binary
   with a slow first build. That is the point of a separate tool; keep its dependency set closed and
-  do not let it leak into `lite`.
+  do not let it leak into `onde`.
 - **Signing.** Account-bound for macOS notarization and Windows certificates; keep credentials out
   of the tool, print commands, document the order (sign last).
 - **Windows CRT.** `/MD` vs `/MT` is a real footgun; the cell must declare its CRT and the driver
@@ -1304,7 +1304,7 @@ Static library, full runtime, thin LTO, macOS arm64:
 | executable linked with a C `main` | 5,222,664 |
 | …stripped | 4,441,216 |
 | engine-only archive / executable stripped | 7,971,496 / 1,395,744 |
-| reference `lite` / stripped | 5,317,472 / 4,621,248 |
+| reference `onde` / stripped | 5,317,472 / 4,621,248 |
 
 C array cost: 1 MB payload → ~6.1 MB C source, ~0.2–0.7 s to compile. Section embedding (Mach-O):
 192-byte payload read back via `getsectiondata`, 3.0 ms end-to-end for the tiny app.
@@ -1314,7 +1314,7 @@ C array cost: 1 MB payload → ~6.1 MB C source, ~0.2–0.7 s to compile. Sectio
 Tested, because it is what Bun/LLRT/`qjs -c` do:
 
 ```console
-$ cp target/release/lite app && printf 'PAYLOAD' >> app
+$ cp target/release/onde app && printf 'PAYLOAD' >> app
 $ ./app -e '1+1'                      # 2  (a local ad-hoc build still runs)
 $ codesign --force --sign - app       # "replacing existing signature"
 $ codesign --verify app               # "main executable failed strict validation"
@@ -1376,26 +1376,26 @@ So for onde the package would be:
 
 ```
 runner                                   (wrappe, prebuilt per platform)
-  └─ zstd payload: lite, app.js, assets…  (unpacked to temp/<name>-<version>/)
-       └─ command: lite app.js
+  └─ zstd payload: onde, app.js, assets…  (unpacked to temp/<name>-<version>/)
+       └─ command: onde app.js
 ```
 
-The startup script does not need boxing: `lite` already embeds `bootstrap.js` and the minified
+The startup script does not need boxing: `onde` already embeds `bootstrap.js` and the minified
 stdlib. What the payload adds is the engine binary, the app, and whatever assets the app reads at
 run time.
 
-`lite` needs **no change at all**: it runs the script from the unpack directory exactly as it runs
+`onde` needs **no change at all**: it runs the script from the unpack directory exactly as it runs
 any file today. That is the seductive part.
 
 ### D.2 Requirements
 
 - `wrappe` on `PATH`, or `--wrappe <path>`. `ondec` shells out to the CLI (the crate is binary-only)
   and records `wrappe --version` under `-v`, the same way it records the compiler.
-- A **`lite` binary for the target**: `--runtime <path>`, else a `lite-<tuple>` next to `ondec`,
-  else a download from the same release/SDK cache. `lite-<tuple>` is therefore a release artifact
+- A **`onde` binary for the target**: `--runtime <path>`, else a `onde-<tuple>` next to `ondec`,
+  else a download from the same release/SDK cache. `onde-<tuple>` is therefore a release artifact
   (§2). Host-target packaging needs nothing extra.
-- The staged payload: `lite` as the command, the bundled entry as `app.mjs`, every other bundled
-  asset at its key, and any `--asset` copies. `wrappe --input <stage> --runner <tuple> lite app.mjs
+- The staged payload: `onde` as the command, the bundled entry as `app.mjs`, every other bundled
+  asset at its key, and any `--asset` copies. `wrappe --input <stage> --runner <tuple> onde app.mjs
   -o <out>`.
 - The app's files are real files in the unpack directory, so `new Worker("./worker.js")`,
   `fs.readFile(__dirname + "/data.json")` and `child_process` work without a VFS — the reason this
@@ -1417,14 +1417,14 @@ any file today. That is the seductive part.
 - **Run-time performance, in exactly the way §12 forbids.** First run decompresses and writes the
   whole engine (~5–6 MB) to disk; every later run spawns a second process from the unpack directory
   after a file-existence/checksum pass. A linked app is one process; `wrappe` is at best runner +
-  `lite`, and at worst a cold extraction of several megabytes.
+  `onde`, and at worst a cold extraction of several megabytes.
 - **Path semantics change.** `process.execPath`, `argv[1]`, `__dirname`, `import.meta.url` point
   into `temp/<name>-<version>/`, not at the packaged file. Re-exec via `process.execPath`,
   self-spawn, logs and error messages all see a temporary path that may be cleaned up.
 - **Environment fragility.** The default target is the system temp directory; `noexec` there
   (containers, hardened CI, many kiosks) breaks the package. `local`/`cwd` move the problem to
   permissions and cleanup instead.
-- **Signing: not by signing twice.** Signing the inner `lite` works and its signature survives
+- **Signing: not by signing twice.** Signing the inner `onde` works and its signature survives
   extraction (the bytes are unchanged), so the unpacked binary is fine. But the file the user
   launches is the *outer* one, and its signature has to cover the payload. `wrappe` appends the
   payload after the Mach-O image (the `PE3DATA` footer), so the signature's code limit stops
@@ -1434,9 +1434,9 @@ any file today. That is the seductive part.
   the image — a Mach-O segment, as Node SEA's `NODE_SEA` and Bun's `__BUN` do — or inside a signed
   `.app` bundle's resources. Both need a packer that knows the format; neither is a wrappe flag.
   Windows is different: Authenticode hashes the file up to the certificate table, so `signtool`
-  after packing does work, and only the extracted `lite` needs its own signature.
-- **Size.** Always the whole `lite` (5.3 MB) plus runner (~1 MB) plus the app; no dead-code
-  elimination, no bytecode (the script is parsed at run time by `lite`).
+  after packing does work, and only the extracted `onde` needs its own signature.
+- **Size.** Always the whole `onde` (5.3 MB) plus runner (~1 MB) plus the app; no dead-code
+  elimination, no bytecode (the script is parsed at run time by `onde`).
 - **Third-party trust.** The runner is a prebuilt binary from another project (or one you build
   from a pinned wrappe), in the trust chain of every shipped app.
 
@@ -1444,8 +1444,8 @@ any file today. That is the seductive part.
 
 | | `--packager link` (default) | `--packager wrappe` |
 | --- | --- | --- |
-| toolchain | C compiler + per-target `libonde.a` | `wrappe` + a `lite-<tuple>` binary |
-| startup | one process, bytecode in the image | runner + `lite`, bytecode parsed at start, first run extracts |
+| toolchain | C compiler + per-target `libonde.a` | `wrappe` + a `onde-<tuple>` binary |
+| startup | one process, bytecode in the image | runner + `onde`, bytecode parsed at start, first run extracts |
 | output files | one binary, no runtime files | one binary that unpacks to disk |
 | app's view of the filesystem | only builtins; modules from the table | real files; workers/assets/`fs` just work |
 | macOS signing | valid (payload inside the image) | needs a payload-in-image packer or a `.app` bundle; `wrappe`'s append cannot be sealed |

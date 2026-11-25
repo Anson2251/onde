@@ -2,15 +2,15 @@
 
 // Self-check for js/lib/tty.js and the real `process` stdio streams.
 //
-// Under Node there is no lite host, and `process.stdout` there is Node's own stream, so the
-// checks that matter (host fds, lazy getters, `__ln_op` reads) are lite-only. The runner
+// Under Node there is no onde host, and `process.stdout` there is Node's own stream, so the
+// checks that matter (host fds, lazy getters, `__ln_op` reads) are onde-only. The runner
 // (`test/js/run.sh`) executes this file under both runtimes, so the skip must be exit 0.
 //
 // stdin is deliberately *not* read here: a test must not block on a terminal. The pipe check
-// lives in the WP6 verification command (`printf 'x\n' | lite -e '...'`) and in `test/programs`.
+// lives in the WP6 verification command (`printf 'x\n' | onde -e '...'`) and in `test/programs`.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

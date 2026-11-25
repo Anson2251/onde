@@ -3,12 +3,12 @@
 // Self-check for `js/lib/fs-promises.js` (D35: the promise surface is a different API shape,
 // not `promisify(fs)`).
 //
-//   ./target/debug/lite test/js/lib/fs-promises.test.js
+//   ./target/debug/onde test/js/lib/fs-promises.test.js
 //
 // Plain Node skips: there is no host to call. Nothing absolute is printed.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 
@@ -64,7 +64,7 @@ async function rejectsCode(promise, code, message) {
   return caught;
 }
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "lite-fsp-"));
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "onde-fsp-"));
 const file = path.join(scratch, "a.txt");
 
 // ---------------------------------------------------------------------------------------------
@@ -184,8 +184,8 @@ async function directoryChecks() {
   eq(await fsp.mkdir(path.join(scratch, "plain")), undefined, "mkdir non-recursive resolves undefined");
   await rejectsCode(fsp.mkdir(file, { recursive: true }), "EEXIST", "mkdir recursive on a file rejects EEXIST");
 
-  const created = await fsp.mkdtemp(path.join(os.tmpdir(), "lite-fsp-tmp-"));
-  ok(path.basename(created).startsWith("lite-fsp-tmp-"), "mkdtemp resolves under the prefix");
+  const created = await fsp.mkdtemp(path.join(os.tmpdir(), "onde-fsp-tmp-"));
+  ok(path.basename(created).startsWith("onde-fsp-tmp-"), "mkdtemp resolves under the prefix");
   await fsp.rm(created, { recursive: true });
 
   await fsp.writeFile(path.join(scratch, "readme.md"), "");
@@ -385,7 +385,7 @@ async function parityChecks() {
   await fsp.lchown(link, process.getuid(), process.getgid());
   eq((await fsp.lstat(link)).isSymbolicLink(), true, "lchown keeps the link a link");
 
-  const disposable = await fsp.mkdtempDisposable(path.join(os.tmpdir(), "lite-fsp-disp-"));
+  const disposable = await fsp.mkdtempDisposable(path.join(os.tmpdir(), "onde-fsp-disp-"));
   ok(fs.existsSync(disposable.path), "mkdtempDisposable creates its directory");
   await disposable.remove();
   eq(fs.existsSync(disposable.path), false, "mkdtempDisposable remove deletes it");

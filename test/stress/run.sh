@@ -4,9 +4,9 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/release/lite}"
-[ -x "$lite" ] || lite="$root/target/debug/lite"
-[ -x "$lite" ] || { echo "build lite first (cargo build --release)" >&2; exit 2; }
+onde="${ONDE:-${LITE:-$root/target/release/onde}}"
+[ -x "$onde" ] || onde="$root/target/debug/onde"
+[ -x "$onde" ] || { echo "build onde first (cargo build --release)" >&2; exit 2; }
 
 measure() {
   if /usr/bin/time -l true >/dev/null 2>&1; then
@@ -21,6 +21,6 @@ measure() {
 }
 
 echo "== baseline"
-measure "$lite" -e '1+1'
+measure "$onde" -e '1+1'
 echo "== 200k timer create/clear"
-measure "$lite" "$here/timers-10k.js"
+measure "$onde" "$here/timers-10k.js"

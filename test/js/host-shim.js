@@ -118,10 +118,10 @@ function createHost(overrides = {}) {
     // The loader primitives are installed by ln-runtime. Tests that reach them are integration
     // tests and must not run under the shim.
     resolve() {
-      throw new Error("host.resolve is provided by lite");
+      throw new Error("host.resolve is provided by onde");
     },
     evalCjs() {
-      throw new Error("host.evalCjs is provided by lite");
+      throw new Error("host.evalCjs is provided by onde");
     },
   };
 

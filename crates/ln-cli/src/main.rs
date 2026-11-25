@@ -1,4 +1,4 @@
-//! `lite` binary — the onde CLI.
+//! `onde` binary — the onde CLI.
 //!
 //! Entry modes: `-e/--eval EXPR`, `FILE`, `--check`, and the informational flags. There is no
 //! REPL and no stdin script. The CLI is a delivery mechanism: argument parsing and flag plumbing
@@ -17,7 +17,7 @@ use ln_runtime::{Budget, Config, DiagnosticsConfig, Failure, Isolate};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "lite",
+    name = "onde",
     version = concat!("v", env!("CARGO_PKG_VERSION")),
     about = "A small Node-compatible JavaScript runtime",
     disable_help_subcommand = true
@@ -126,10 +126,10 @@ fn main() {
 }
 
 /// Node's rule for script arguments: everything after the script path belongs to the script, even
-/// when it is spelled like one of lite's own options.
+/// when it is spelled like one of onde's own options.
 ///
 /// clap cannot express this alone. A flag defined on the command keeps priority over a trailing
-/// positional, so `lite app.js --check` would enable the checker instead of handing `--check` to
+/// positional, so `onde app.js --check` would enable the checker instead of handing `--check` to
 /// the script. Inserting the `--` terminator before the script path turns every later token into a
 /// positional, which is exactly Node's behaviour.
 fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
@@ -161,7 +161,7 @@ fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
             continue;
         }
         if token.starts_with('-') {
-            index += 1; // a lite flag (or `--eval=...`), never the script path
+            index += 1; // a onde flag (or `--eval=...`), never the script path
             continue;
         }
 
@@ -176,7 +176,7 @@ fn real_main() -> i32 {
         Ok(cli) => cli,
         Err(error) => return cli_error(error),
     };
-    let exe = env::args().next().unwrap_or_else(|| "lite".to_owned());
+    let exe = env::args().next().unwrap_or_else(|| "onde".to_owned());
     let budget = cli.budget();
     let io_threads = cli.io_threads();
     let async_stack_traces = cli.async_stack_traces;
@@ -215,8 +215,8 @@ fn real_main() -> i32 {
     }
 
     let Some(file) = cli.file else {
-        eprintln!("lite: expected a script (or -e EXPR)");
-        eprintln!("Try 'lite --help' for more information.");
+        eprintln!("onde: expected a script (or -e EXPR)");
+        eprintln!("Try 'onde --help' for more information.");
         return 1;
     };
 
@@ -259,7 +259,7 @@ fn real_main() -> i32 {
     }
 }
 
-/// `lite --test [FILES…]`: discover, then hand the list to the runtime's JavaScript runner.
+/// `onde --test [FILES…]`: discover, then hand the list to the runtime's JavaScript runner.
 ///
 /// The CLI owns discovery because it is argument parsing (m7-plan §4.6); the runner, the reporter
 /// and the exit-code decision live in `js/lib/test.js`. The positional `FILE` and `ARGS` fields
@@ -276,7 +276,7 @@ fn run_tests(
     diagnostics: DiagnosticsConfig,
 ) -> i32 {
     if cli.eval.is_some() {
-        eprintln!("lite: --test cannot be combined with -e EXPR");
+        eprintln!("onde: --test cannot be combined with -e EXPR");
         return 1;
     }
 
@@ -289,14 +289,14 @@ fn run_tests(
     let files = match discover_tests(&requested) {
         Ok(files) => files,
         Err(message) => {
-            eprintln!("lite: {message}");
+            eprintln!("onde: {message}");
             return 1;
         }
     };
     if files.is_empty() {
         // Node prints "Could not find any test files matching pattern" and exits 1; the wording
         // is ours, the status is the same contract.
-        eprintln!("lite: no test files found");
+        eprintln!("onde: no test files found");
         return 1;
     }
 
@@ -327,7 +327,7 @@ fn run_tests(
     }
 }
 
-/// Resolve the paths `lite --test` should run, sorted and deduplicated.
+/// Resolve the paths `onde --test` should run, sorted and deduplicated.
 ///
 /// Two discovery rules, both from the plan's table: a named file is run as named and a named
 /// directory is searched for `*.test.js`; with no path at all every `.js` under `test/` is a test
@@ -460,13 +460,13 @@ fn cli_error(error: clap::Error) -> i32 {
             let mut err = io::stderr().lock();
             match argument {
                 Some(argument) => {
-                    let _ = writeln!(err, "lite: unknown option '{argument}'");
+                    let _ = writeln!(err, "onde: unknown option '{argument}'");
                 }
                 None => {
-                    let _ = writeln!(err, "lite: unknown option");
+                    let _ = writeln!(err, "onde: unknown option");
                 }
             }
-            let _ = writeln!(err, "Try 'lite --help' for more information.");
+            let _ = writeln!(err, "Try 'onde --help' for more information.");
             1
         }
         _ => {
@@ -480,9 +480,9 @@ fn cli_error(error: clap::Error) -> i32 {
 /// rendered by the runtime at the point they happen.
 fn report_failure(failure: Failure) -> i32 {
     let mut err = io::stderr().lock();
-    let _ = writeln!(err, "lite: {failure}");
+    let _ = writeln!(err, "onde: {failure}");
     // A compiled-app payload from another engine exits 78 rather than 1, so a build system can
-    // tell "rebuild the app" apart from "the program is broken". `lite` itself never carries a
+    // tell "rebuild the app" apart from "the program is broken". `onde` itself never carries a
     // payload, but the same `Failure` reaches this function through the shared runtime.
     failure.exit_code()
 }

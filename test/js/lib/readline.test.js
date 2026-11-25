@@ -1,7 +1,7 @@
 "use strict";
 
 // Runtime-agnostic self-check for js/lib/readline.js and js/lib/readline-promises.js.
-// Runs under `node` and under lite: the module under test is required by relative path, the
+// Runs under `node` and under onde: the module under test is required by relative path, the
 // input/output streams are small in-memory fakes (no timers except the crlfDelay cases), and
 // every assertion compares literals.
 //
@@ -229,7 +229,7 @@ test("positional createInterface and option defaults", () => {
 // Lines
 
 // The runtime installs `__ln_host` as a native, sealed object: its properties cannot be replaced,
-// so the echo state cannot be stubbed under `lite`. Node has no such global, and the interface
+// so the echo state cannot be stubbed under `onde`. Node has no such global, and the interface
 // asks `host.echoes(fd)` exactly the way production does, so these cases run there — same module,
 // same code path, with a stand-in host.
 if (globalThis.__ln_host === undefined || globalThis.__ln_host === null) {

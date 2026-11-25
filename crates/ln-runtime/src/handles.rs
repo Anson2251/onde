@@ -444,7 +444,7 @@ mod tests {
     /// Run `source` to completion and report the exit code plus the handle bookkeeping that must
     /// be empty after teardown.
     fn run(source: &str) -> (i32, usize, usize) {
-        let mut isolate = Isolate::new(Config::new(vec!["lite".to_owned()])).expect("isolate");
+        let mut isolate = Isolate::new(Config::new(vec!["onde".to_owned()])).expect("isolate");
         let outcome = isolate.run(source, "[eval]").expect("run");
         (
             outcome.exit_code,

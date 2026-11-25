@@ -5,7 +5,7 @@
 // The conformance cases print `path` results for a byte comparison; this version asserts the same
 // values. Only the explicit `path.posix` and `path.win32` flavours are used so the file does not
 // depend on which platform runs it, and nothing touches the working directory, which keeps the
-// assertions stable under both Node and `lite --test`.
+// assertions stable under both Node and `onde --test`.
 
 const test = require("node:test");
 const assert = require("node:assert");

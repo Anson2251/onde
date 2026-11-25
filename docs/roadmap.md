@@ -15,7 +15,7 @@ v1.0 ships when all of the following hold:
 
 | # | Criterion |
 |---|---|
-| 1 | `lite script.js`, `lite -e`, `lite --eval`, ESM + CJS, TLA, dynamic `import()` |
+| 1 | `onde script.js`, `onde -e`, `onde --eval`, ESM + CJS, TLA, dynamic `import()` |
 | 2 | `process`, timers, `fs` (sync/cb/promises), `path`, `url`, `events`, `util`, `assert`, `buffer`, `os`, `string_decoder` |
 | 3 | `net` + `http`/`https` (server and client), TLS via rustls, `dns.lookup` |
 | 4 | `child_process` and `worker_threads` (incl. `SharedArrayBuffer` + `Atomics`) |
@@ -34,7 +34,7 @@ Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 
 | ID | Theme | Outcome | Effort (eng-weeks) | Depends on |
 |---|---|---|---|---|
-| M0 | Bootstrap | workspace, engine binding, `lite -e '1+1'` | 1.5 | — |
+| M0 | Bootstrap | workspace, engine binding, `onde -e '1+1'` | 1.5 | — |
 | M1 | **Scheduler & tick model** ★ | Node-compatible microtask/tick semantics, timers, loop | 3 | M0 |
 | M2 | Modules + core stdlib | CJS/ESM, `process`, JS stdlib tier 0 | 4 | M1 |
 | M3 | I/O core | op bridge, `fs`, Node errors, onde streams, `crypto` base | 5 | M2 |
@@ -57,10 +57,10 @@ with the parallelization in §4. The 1.1 milestones, M9–M10, add ~5.5 eng-week
 
 Shipped: `ln-engine` (rquickjs 0.14 + one-step job pump, no async runtime), `ln-runtime`
 (JS bootstrap for `console`/`process`, scheduler-driven drain, uncaught-error renderer),
-`ln-cli` (`lite`), plus 18 CLI end-to-end tests and 5 renderer unit tests. `cargo fmt`,
+`ln-cli` (`onde`), plus 18 CLI end-to-end tests and 5 renderer unit tests. `cargo fmt`,
 `cargo clippy -D warnings` and `cargo test --all` are green.
 
-First numbers on this machine (release): 1.8 MB binary, ~13 ms per `lite` invocation
+First numbers on this machine (release): 1.8 MB binary, ~13 ms per `onde` invocation
 (20 runs, `-e '1+1'`). M7's target is < 15 ms with the HTTP stack imported, so the engine budget
 is intact and the remaining startup cost is process + bootstrap, not parsing.
 
@@ -69,7 +69,7 @@ Deviations from the plan below, all deliberate:
 - `console` and `process` are implemented in the JS bootstrap (moved to `js/bootstrap.js` in M2)
   on top of two host primitives (`__ln_write`, `__ln_exit`) rather than in Rust. This is the
   shape the architecture wants (Node surface in JS, syscalls in Rust) and it kept M0 small.
-- `lite -e` printed the completion value with JavaScript `ToString`, so objects printed as
+- `onde -e` printed the completion value with JavaScript `ToString`, so objects printed as
   `[object Object]` until `util.inspect` landed in M2 (now `util.inspect` is used for
   objects).
 - `process.nextTick`, timers and unhandled-rejection reporting are explicitly M1. A microtask
@@ -90,13 +90,13 @@ Deviations from the plan below, all deliberate:
 - Cargo workspace with the crate graph from [architecture.md](architecture.md).
 - `ln-engine` on `rquickjs` 0.14 (which tracks quickjs-ng) with a **hand-rolled loop**:
   no `AsyncRuntime`, no `Context::async_with` futures, no `spawner`.
-- `lite file.js` executes a classic script; `lite -e` evaluates an expression; prints the result.
+- `onde file.js` executes a classic script; `onde -e` evaluates an expression; prints the result.
 - CI: `fmt`, `clippy -D warnings`, tests on macOS + Linux, a `cargo deny` license check.
 - Land ADRs 0001–0003 (already drafted here) and the risk register in §5.
 
 **Exit criteria**
 
-- `lite -e '1+1'` prints `2`; `lite hello.js` prints; exit code propagates.
+- `onde -e '1+1'` prints `2`; `onde hello.js` prints; exit code propagates.
 - A script that throws prints a Node-shaped stack and exits 1.
 - `cargo test` green on both OSes.
 
@@ -149,7 +149,7 @@ Deviations from the plan, all deliberate:
   Node; the flag bounds microtask work, not arbitrary callbacks.
 - Cases that mix a clamped 0 ms timer with `setImmediate` carry a `.nodiff` marker: the order
   depends on whether the timer is already due when the loop starts, which is wall-clock timing
-  in Node and in lite. `divergences/d04` asserts the byte set rather than the order and the
+  in Node and in onde. `divergences/d04` asserts the byte set rather than the order and the
   Node self-test and differential harness skip it; onde's due-time ordering rule is asserted by
   the non-racing cases instead (ADR-0003 §5).
 - Timer ids start at 1 instead of Node's 2 (compat D13). Ids are an implementation detail;
@@ -171,7 +171,7 @@ Deviations from the plan, all deliberate:
 - Loop shell: `timers → completions → immediates → block`, completion channel + waker,
   refcounted exit, `beforeExit`, `exit`, `process.exit` semantics (no drain).
 - `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, `clearTimeout` globals.
-- Differential harness: run a script under `node` and under `lite`, compare ordered stdout/stderr.
+- Differential harness: run a script under `node` and under `onde`, compare ordered stdout/stderr.
 
 **Exit criteria**
 
@@ -197,13 +197,13 @@ Shipped: `ln-modules` (engine-free CJS/ESM resolution, `package.json` `main`/`ex
 canonical names, TLA, live bindings, `import.meta.url`/`filename`/`dirname`/`resolve`), a
 JavaScript CJS loader (`require` cache, wrapper, `require.resolve`/`main`, JSON, extensions,
 `node_modules` walk, builtin registry), ESM↔CJS facades, stdlib tier 0 in `js/lib/`, and
-`lite --check`. ADR-0004 records the design.
+`onde --check`. ADR-0004 records the design.
 
 What the exit criteria ask for and where it is proven:
 
 | Criterion | Evidence |
 |---|---|
-| 30-package CJS smoke set + 10 ESM packages | `test/smoke/` generates 30 CJS + 10 ESM packages per run and diffs node vs lite (2/2 entries, 34 printed lines) |
+| 30-package CJS smoke set + 10 ESM packages | `test/smoke/` generates 30 CJS + 10 ESM packages per run and diffs node vs onde (2/2 entries, 34 printed lines) |
 | `--check`-equivalent diagnostics: file, line, column, source excerpt | CJS and ESM CLI tests (`check_reports_a_syntax_error_with_caret_and_does_not_execute`, `check_accepts_valid_cjs_and_esm_without_running_them`); CJS line-1 columns are corrected for the wrapper prefix |
 | 120 ported module-resolution tests | 32 integration + 23 unit tests in `crates/ln-modules`, plus 19 module corpus cases. Criterion revised: 55 engine-free cases cover the resolution matrix; see deviations |
 | `import()` of a missing module rejects with `ERR_MODULE_NOT_FOUND` | `test/conformance/modules/esm03-dynamic.mjs`, `dynamic_import_of_a_missing_module_rejects_with_a_code` |
@@ -255,8 +255,8 @@ Deviations from the plan, all deliberate:
   `process` (env, argv, cwd, platform, arch, versions, exitCode, nextTick, hrtime, memoryUsage,
   on('exit'|'beforeExit'|'uncaughtException'|'unhandledRejection'), signals later),
   `path`, `url` (WHATWG + legacy `parse/format`), `util` (`inherits`, `promisify`, `types`,
-  `inspect` lite), `events` (EventEmitter incl. `once`, `captureRejections`), `assert`,
-  `string_decoder`, `buffer` (Buffer over Uint8Array, encoding subset), `os` (lite).
+  `inspect` onde), `events` (EventEmitter incl. `once`, `captureRejections`), `assert`,
+  `string_decoder`, `buffer` (Buffer over Uint8Array, encoding subset), `os` (onde).
 - Globals we must supply (engine has none of them): `setTimeout`, `TextEncoder`/`TextDecoder`,
   `URL`/`URLSearchParams`, `AbortController`/`AbortSignal`, `EventTarget`, `structuredClone`
   (subset), `global`, `globalThis` wiring.
@@ -277,11 +277,11 @@ What the exit criteria ask for and where it is proven:
 
 | Criterion | Evidence |
 |---|---|
-| `cat`, `wc -l`, `cp -r` in JS over `fs`+`stream` | `test/programs/run.sh` 11/11: stdout, stderr, exit code and a tree/content/symlink manifest, node vs lite |
+| `cat`, `wc -l`, `cp -r` in JS over `fs`+`stream` | `test/programs/run.sh` 11/11: stdout, stderr, exit code and a tree/content/symlink manifest, node vs onde |
 | 150 ported fs/stream tests; cancellation leaves no leaked fds | 210 Rust tests (44 CLI, 26 runtime, 24 io, 20 crypto, 7 error, 55 modules, 34 sched), 49 JS suites, 138 corpus cases including `fs/` (13) and `stream/` (10); `AbortSignal` cases in `test/js/lib/fs.test.js` |
 | Microtask checkpoint after every callback form | sync/callback/promise fs cases, stream `data`/`end` cases, and the M1 ordering corpus still byte-identical |
 | No `JSValue` crosses a thread boundary | `Op`/`OpValue`/`OpDone: Send` assertions in `crates/ln-runtime/src/ops.rs`; `Pool: Send + Sync` in `ln-io` |
-| Cold start stays within the engine budget | release `lite -e '1+1'`: **12.7 ms min / 13.5 ms median** over 25 runs, with `perf_hooks` installed at startup |
+| Cold start stays within the engine budget | release `onde -e '1+1'`: **12.7 ms min / 13.5 ms median** over 25 runs, with `perf_hooks` installed at startup |
 | Exact `fs/promises` surface | matches Node v26.10.0 minus `glob`/`lchmod`/`lchown`/`lutimes`/`statfs`/`mkdtempDisposable` (D37), verified by key-set diff |
 
 Deviations recorded: D35 (`fs/promises` is not a mirror), D36 (`readFile` copies; zero-copy is
@@ -316,7 +316,7 @@ never removable).
   `syscall`/`path` and Node-shaped messages by `ln-runtime`; `ERR_INVALID_ARG_TYPE`,
   `ERR_INVALID_ARG_VALUE`, `ERR_OUT_OF_RANGE` helpers. Every rejection carries a stable code.
   The sync/callback forms throw synchronously on bad arguments; only the promise forms reject.
-- `stream` lite: `Readable`/`Writable`/`Duplex`/`Transform`/`PassThrough` in JS with pull-based
+- `stream` onde: `Readable`/`Writable`/`Duplex`/`Transform`/`PassThrough` in JS with pull-based
   `_read`/`_write` over ops; `pipeline`, `finished`, `addAbortSignal`, `objectMode`,
   backpressure; `stream/promises`. No `readable-stream` internal parity.
 - `crypto`: `randomBytes`, `randomUUID`, `randomInt`, `createHash` (md5/sha1/sha256/sha384/
@@ -337,7 +337,7 @@ never removable).
   resolution, stream `data` event.
 - No `JSValue` crosses a thread boundary (enforced by a `Send`-only payload type, checked by a
   compile-fail test).
-- Cold start does not regress: `lite -e '1+1'` stays within the M0 envelope (the pool starts on
+- Cold start does not regress: `onde -e '1+1'` stays within the M0 envelope (the pool starts on
   first use).
 
 
@@ -350,7 +350,7 @@ never removable).
 [ADR-0006](adr/0006-handles-and-events.md) (handles/events) and
 [ADR-0007](adr/0007-http-codec.md) (the sans-io codec). WP0–WP6 have landed: `ln-io` runs live
 TCP/Unix/TLS connections, the HTTP/1.1 codec is complete, and `net`, `http`, `https`, `tls` and
-`dns` are reachable from JS, with node↔lite interop verified for both plaintext and TLS.
+`dns` are reachable from JS, with node↔onde interop verified for both plaintext and TLS.
 WP7 has landed the bench, interop, fd-leak and slow-loris harnesses and a 57-case net/http corpus
 that already found seven real defects. The functional criteria are met; two §8 numbers —
 hello-world throughput (14.4k of 20k req/s) and the slow-loris footprint (67 MB at 2k connections)
@@ -403,7 +403,7 @@ plan depends on (shared-memory allocation, cross-isolate serialization, cross-th
   `transferList` for `ArrayBuffer`, `SharedArrayBuffer` via
   `JS_SetSharedArrayBufferFunctions`, `Atomics` (requires `JS_SetCanBlock(true)`).
 - Worker lifecycle: `terminate` (cooperative unwind between jobs), `unref`, `workerData`,
-  `parentPort`, `MessageChannel`/`MessagePort` (lite).
+  `parentPort`, `MessageChannel`/`MessagePort` (onde).
 - `readline`: a line-oriented interface over any stream (moved here from M3), plus
   `readline/promises`.
 - `process`: `cpuUsage`, `kill`, and the catchable signals the CLI surface needs (see
@@ -419,9 +419,9 @@ plan depends on (shared-memory allocation, cross-isolate serialization, cross-th
 
 | Criterion | Evidence |
 |---|---|
-| worker echo, 1M round-trips, no reordering | `FULL=1 ./test/proc/run.sh`: 1,000,000 sequential messages, zero failures (~23k/s lite on the dev machine) |
+| worker echo, 1M round-trips, no reordering | `FULL=1 ./test/proc/run.sh`: 1,000,000 sequential messages, zero failures (~23k/s onde on the dev machine) |
 | 8-worker `Atomics.add` is exact; `Atomics.wait` wakes | `test/proc/atomics.js`: exactly 400,000 after 8 × 50,000; a worker's `notify` woke a waiting worker (`"ok"`, not `"timed-out"`) |
-| `child_process` interop, zombie-free | `test/proc/run.sh` 12/12 (every case under node and lite); `signals.js` asserts `kill(pid, 0)` throws `ESRCH` after `SIGKILL` |
+| `child_process` interop, zombie-free | `test/proc/run.sh` 12/12 (every case under node and onde); `signals.js` asserts `kill(pid, 0)` throws `ESRCH` after `SIGKILL` |
 | no regression | 230/230 conformance, 220/220 differential, 75/75 JS suites, 372 Rust tests; cold start 12.16 ms / 21.00 ms (limits 14/25) |
 
 **Recorded deviations** (full list in [m5-plan.md](m5-plan.md) §12 and D48–D53 in
@@ -433,7 +433,7 @@ plan depends on (shared-memory allocation, cross-isolate serialization, cross-th
   worker blocked in `Atomics.wait` stops when the wait returns (D48).
 - `transferList` detaches an `ArrayBuffer` but the destination receives a copy; ports cannot be
   transferred between threads (D49).
-- `child_process` has no `spawnSync` family, and `fork` IPC is JSON and lite-only (D50).
+- `child_process` has no `spawnSync` family, and `fork` IPC is JSON and onde-only (D50).
 - Signals are limited to the six a CLI uses, and workers cannot install process-wide handlers
   (D51). `readline` is line-oriented (D52); worker resource limits and captured stdio are absent
   (D53).
@@ -520,9 +520,9 @@ what the remaining 1.5 KB per connection is. Full account in [m7-plan §12](m7-p
   Node. M7 keeps it as a regression gate rather than a work item.
 - Memory: `JS_SetMemoryLimit` + `--max-old-space-size` equivalent, `process.memoryUsage`,
   GC pressure heuristics, finalizer-based fd/lifetime audits in debug builds.
-- Diagnostics: `--cpu-prof`-lite (sampling profiler is out of scope; do **timing breakdown** by
+- Diagnostics: `--cpu-prof`-onde (sampling profiler is out of scope; do **timing breakdown** by
   phase and op), `--trace-gc`, `--trace-events` (Chrome trace JSON), heap statistics.
-- `node:test` lite runner so the conformance corpus can be written in the API people know.
+- `node:test` onde runner so the conformance corpus can be written in the API people know.
 - **Standalone builds** (`docs/standalone-build.md`): pulled in here because the bytecode snapshot
   is the same emitter, stamp and loader. Status: the link backend builds and runs real apps on the
   host cell (`test/standalone/run.sh`); the release matrix, `sdk` downloads against a real release
@@ -584,7 +584,7 @@ bridge (M3) is stable. M7 needs M4 and M6.
 
 | Week | Work |
 |---|---|
-| 1 | Workspace, rquickjs binding, loop shell, `lite -e`, CI |
+| 1 | Workspace, rquickjs binding, loop shell, `onde -e`, CI |
 | 2 | `ln-sched` ticks/micros/checkpoint + the 12-case corpus; differential harness |
 | 3 | Rejection table, budget, timers, `process.nextTick`/`exit`; 40 Node tests |
 | 4 | Engine patch spike (3 days) + decision review; ESM loader skeleton |
@@ -610,7 +610,7 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | ID | Risk | Impact | Mitigation | Trigger to act |
 |---|---|---|---|---|
 | R1 | No JIT: compute-bound JS is 5–20x slower than V8 | Positioning, some users churn | Target I/O-bound workloads; publish honest benchmarks; `--jit` is a non-goal | Any benchmark where we are > 30x slower on a realistic workload |
-| R2 | `Intl` absent (verified on 0.17.0) | Breaks i18n packages | Ship `Intl`-lite (number/date formatting via `icu` optional feature) or document hard non-goal | Two or more target users need it |
+| R2 | `Intl` absent (verified on 0.17.0) | Breaks i18n packages | Ship `Intl`-onde (number/date formatting via `icu` optional feature) or document hard non-goal | Two or more target users need it |
 | R3 | Engine patch drift per upstream release | M6 slips, security patches delayed | Minimal patch surface, CI rebase job, upstream PR | Rebase takes > 2 days |
 | R4 | CJS/ESM resolution edge cases (exports maps, dual packages) | Ecosystem compat | Node's documented algorithms implemented once in `ln-modules` (ADR-0004) with a fixture corpus, the 40-package smoke set and 19 module cases; escalate to `oxc_resolver` only if the corpus shows gaps | > 10 packages failing for resolution reasons |
 | R5 | HTTP/1.1 + TLS correctness | M4 overruns | `httparse` for the head plus a sans-io FSM in `ln-http` (ADR-0007), with a pinned byte corpus from RFC 9112 and Node's raw-wire tests; conformance tests early. hyper rejected: it owns the connection and cannot serve `'upgrade'`/`CONNECT`/`rawHeaders`/per-socket tuning (ADR-0006 §2.8) | Header/keep-alive bugs > 5 in the first week of M4 |

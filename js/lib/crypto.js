@@ -84,9 +84,9 @@ const MAX_HKDF_INFO_BYTES = 1024;
 const MAX_GET_RANDOM_VALUES_BYTES = 65536; // WebCrypto's getRandomValues quota
 
 // Handle state is private so `Object.keys(hash)` stays as empty as Node's.
-const kAlgorithm = Symbol("lite.crypto.algorithm");
-const kHandle = Symbol("lite.crypto.handle");
-const kFinalized = Symbol("lite.crypto.finalized");
+const kAlgorithm = Symbol("onde.crypto.algorithm");
+const kHandle = Symbol("onde.crypto.handle");
+const kFinalized = Symbol("onde.crypto.finalized");
 
 // ---------------------------------------------------------------------------------------------
 // Errors
@@ -473,7 +473,7 @@ function isIntegerTypedArray(value) {
 
 // A view on a `SharedArrayBuffer` is refused: filling it would race another agent reading the same
 // memory, and WebCrypto forbids it. Node started enforcing this inside v26; older builds filled the
-// view silently, which is why the oracle asserts this on lite alone rather than differentially.
+// view silently, which is why the oracle asserts this on onde alone rather than differentially.
 function isSharedView(value) {
   return (
     typeof SharedArrayBuffer !== "undefined" && value.buffer instanceof SharedArrayBuffer

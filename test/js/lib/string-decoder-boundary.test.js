@@ -2,7 +2,7 @@
 
 // Runtime-agnostic self-test for the streaming UTF-8 boundary path in js/lib/string_decoder.js.
 //
-// The native path (one host call returning { text, pending }) runs under lite; the JavaScript
+// The native path (one host call returning { text, pending }) runs under onde; the JavaScript
 // scan runs under node. Both must produce the same text, and the same held-suffix accounting,
 // for every split of the corpus. The literals below were recorded from `node v26.12.1`.
 //

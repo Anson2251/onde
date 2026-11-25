@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use ln_engine::CaughtError;
 
-/// Render an uncaught error the way `lite` prints it:
+/// Render an uncaught error the way `onde` prints it:
 ///
 /// ```text
 /// /tmp/app.js:2
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn syntax_errors_point_at_the_failing_module() {
-        let dir = std::env::temp_dir().join(format!("lite-report-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("onde-report-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let bad = dir.join("bad.js");
         std::fs::write(&bad, "const x = ;\n").expect("write");

@@ -64,7 +64,7 @@ it, but it is a reason to keep tracking ng tags (R3).
 
 ## 4. What we accept
 
-- **No `Intl`.** Verified absent. Non-goal for 1.0; an `icu`-backed lite shim can be a 1.1
+- **No `Intl`.** Verified absent. Non-goal for 1.0; an `icu`-backed onde shim can be a 1.1
   feature flag (R2 in the roadmap).
 - **No `TextEncoder`, `URL`, `AbortController`, `EventTarget`, `structuredClone`, `atob`/`btoa`
   (partial), `fetch`.** We ship them. They are cheap in JS over small ops and are needed by

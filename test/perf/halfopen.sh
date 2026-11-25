@@ -15,7 +15,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/release/lite}"
+onde="${ONDE:-${LITE:-$root/target/release/onde}}"
 conns="${NET_CONNS:-2000}"
 limit_mb="${HALFOPEN_DELTA_MB:-2.0}"
 soft="${NET_BENCH_SOFT:-0}"
@@ -23,8 +23,8 @@ soft="${NET_BENCH_SOFT:-0}"
 # shellcheck source=../net/lib.sh
 . "$here/../net/lib.sh"
 
-if [ ! -x "$lite" ]; then
-  echo "halfopen: no runtime at $lite (set LITE)" >&2
+if [ ! -x "$onde" ]; then
+  echo "halfopen: no runtime at $onde (set ONDE)" >&2
   exit 2
 fi
 
@@ -35,7 +35,7 @@ http_log="$(mktemp "${TMPDIR:-/tmp}/ln-halfopen-http.XXXXXX")"
 trap 'rm -f "$raw_log" "$http_log"' EXIT INT TERM
 
 echo "halfopen: raw floor ($conns connections)"
-if ! NET_CONNS="$conns" NET_SLOWLORIS_RAW=1 LITE="$lite" "$here/../net/slowloris.sh" >"$raw_log" 2>&1; then
+if ! NET_CONNS="$conns" NET_SLOWLORIS_RAW=1 ONDE="$onde" "$here/../net/slowloris.sh" >"$raw_log" 2>&1; then
   echo "halfopen: the raw floor run failed" >&2
   sed 's/^/  /' "$raw_log" >&2
   exit 1
@@ -47,7 +47,7 @@ cat "$raw_log"
 sleep 2
 
 echo "halfopen: HTTP layer ($conns connections)"
-if ! NET_CONNS="$conns" LITE="$lite" "$here/../net/slowloris.sh" >"$http_log" 2>&1; then
+if ! NET_CONNS="$conns" ONDE="$onde" "$here/../net/slowloris.sh" >"$http_log" 2>&1; then
   # The HTTP run's own gate is the old 25 MB bound, which M4 recorded as a gap; its exit status is
   # not this script's verdict. Print what it said and decide on the delta.
   cat "$http_log"

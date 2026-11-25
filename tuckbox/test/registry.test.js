@@ -1,7 +1,7 @@
 "use strict";
 
 // Integration tests for `dist/lib/registry.js` against the in-process fixture registry. Plain
-// CommonJS, runnable under both `node` and `lite`, with the same `ok registry <N> assertions`
+// CommonJS, runnable under both `node` and `onde`, with the same `ok registry <N> assertions`
 // contract as the other tuckbox suites.
 
 const crypto = require("node:crypto");

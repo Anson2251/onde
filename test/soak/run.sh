@@ -15,7 +15,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/release/lite}"
+onde="${ONDE:-${LITE:-$root/target/release/onde}}"
 seconds="${SOAK_SECONDS:-3600}"
 interval="${SOAK_INTERVAL:-10}"
 rss_limit_mb="${SOAK_RSS_MB:-25}"
@@ -27,8 +27,8 @@ hard=0
 # shellcheck source=../net/lib.sh
 . "$here/../net/lib.sh"
 
-if [ ! -x "$lite" ]; then
-  echo "soak: no runtime at $lite (set LITE)" >&2
+if [ ! -x "$onde" ]; then
+  echo "soak: no runtime at $onde (set ONDE)" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$lite" "$here/../net/fixtures/hello-server.js" "$tmp/port" >"$tmp/server.log" 2>&1 &
+"$onde" "$here/../net/fixtures/hello-server.js" "$tmp/port" >"$tmp/server.log" 2>&1 &
 server_pid=$!
 
 i=0
@@ -83,7 +83,7 @@ loadgen_pid=$!
 samples="$tmp/samples"
 : >"$samples"
 started="$(date +%s)"
-echo "soak: runtime=$lite seconds=$seconds interval=${interval}s rss_limit=${rss_limit_mb}MB slope_limit=${slope_limit}MB/h"
+echo "soak: runtime=$onde seconds=$seconds interval=${interval}s rss_limit=${rss_limit_mb}MB slope_limit=${slope_limit}MB/h"
 
 while :; do
   now="$(( $(date +%s) - started ))"

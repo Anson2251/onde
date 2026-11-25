@@ -424,7 +424,7 @@ closure and has no QuickJS dependency. `crates/ln-runtime` is the adapter:
   unhandled rejection that is never handled does not pin its promise.
 - `cargo test --all` covers the policy (21 unit + 13 corpus-derived + 8 runtime/boundary tests) and 33 CLI
   end-to-end tests. `test/conformance/` has 73 recorded cases; `test/differential.sh` runs them
-  under Node and lite and compares ordered stdout plus exit code. CI does both, so the
+  under Node and onde and compares ordered stdout plus exit code. CI does both, so the
   expectations cannot rot.
 
 ## 11. Alternatives considered

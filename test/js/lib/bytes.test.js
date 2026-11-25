@@ -3,7 +3,7 @@
 // Runtime-agnostic self-check for js/lib/internal/bytes.js, the Buffer-vocabulary codecs.
 //
 //   node test/js/lib/bytes.test.js
-//   ./target/debug/lite test/js/lib/bytes.test.js
+//   ./target/debug/onde test/js/lib/bytes.test.js
 //
 // Only the module under test is required; no `node:` builtins are used. Literals are pinned from
 // Node's own behaviour so the same file checks the JS fallback under both runtimes.

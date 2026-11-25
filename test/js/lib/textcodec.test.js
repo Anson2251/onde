@@ -2,7 +2,7 @@
 
 // Runtime-agnostic self-test for js/lib/textcodec.js.
 //
-// Run under `node` (and `lite`): node test/js/lib/textcodec.test.js
+// Run under `node` (and `onde`): node test/js/lib/textcodec.test.js
 // Prints one `ok <label>` line per passing check and exits 1 on any failure.
 
 const { TextEncoder, TextDecoder, encodeUTF8, decodeUTF8 } = require("../../../js/lib/textcodec.js");

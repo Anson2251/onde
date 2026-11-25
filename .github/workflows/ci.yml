@@ -34,7 +34,7 @@ jobs:
         run: ./test/features/run.sh
       - name: M7 diagnostics (trace structure, timing, trace-gc)
         run: ./test/diag/run.sh
-      - name: M7 node:test pilot (same transcript under node and lite)
+      - name: M7 node:test pilot (same transcript under node and onde)
         run: ./test/node-test/run.sh
       - name: standalone builds (archive + ondec + a linked app that runs)
         # The archive is built for this cell and a real app is linked, run, and checked after its
@@ -46,12 +46,12 @@ jobs:
         # Criterion 9 of m7-plan §6: the release profile boots from build-time bytecode. This runs
         # the same corpus through the bytecode path in a debug build, where both paths are
         # selectable, so a broken snapshot cannot hide until a release is cut.
-        run: ONDE_BOOTSTRAP=bytecode RUN=target/debug/lite ./test/conformance/run.sh
+        run: ONDE_BOOTSTRAP=bytecode RUN=target/debug/onde ./test/conformance/run.sh
       - name: node for the stdlib oracle
         uses: actions/setup-node@v4
         with:
           node-version: "26"
-      - name: stdlib tests (node + lite) and Node oracles
+      - name: stdlib tests (node + onde) and Node oracles
         run: ./test/js/run.sh
       - name: stdlib duplication guard
         run: node scripts/check-duplication.mjs
@@ -60,7 +60,7 @@ jobs:
       - name: M6 acceptance (async_hooks, AsyncLocalStorage, 1M promises)
         # The retention bound is only meaningful on an optimized build, so this leg runs the
         # release binary; the debug suite above already covers the semantics.
-        run: cargo build --release -p ln-cli && LITE=target/release/lite ./test/async/run.sh
+        run: cargo build --release -p ln-cli && ONDE=target/release/onde ./test/async/run.sh
       - name: vendored engine patch is exactly what the docs claim
         # The vendored tree must be pristine quickjs-ng 0.17.0 plus this patch. Reversing it is
         # the cheapest way to prove nobody hand-edited the vendor copy.
@@ -73,8 +73,8 @@ jobs:
         run: |
           test "$(cargo run -q -p ln-cli -- -e '1+1')" = "2"
           cargo run -q -p ln-cli -- --version
-          printf 'const x = 1;\n' > /tmp/lite-check.js
-          cargo run -q -p ln-cli -- --check /tmp/lite-check.js
+          printf 'const x = 1;\n' > /tmp/onde-check.js
+          cargo run -q -p ln-cli -- --check /tmp/onde-check.js
 
   # tuckbox is the demo that keeps the runtime honest: a real tool, in TypeScript, resolving and
   # installing real npm packages with nothing but the modules onde implements. Each suite runs
@@ -103,11 +103,11 @@ jobs:
         working-directory: tuckbox
         run: node test/run.js
         env:
-          TUCKBOX_LITE: ${{ github.workspace }}/target/debug/lite
+          TUCKBOX_ONDE: ${{ github.workspace }}/target/debug/onde
 
   # The corpus is the contract. This job proves the .expected files still describe real Node
   # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
-  # differential harness (node vs lite, same stdout + exit code) from scratch.
+  # differential harness (node vs onde, same stdout + exit code) from scratch.
   corpus-selftest:
     name: corpus is still Node-valid
     runs-on: ubuntu-latest
@@ -119,9 +119,9 @@ jobs:
           node-version: "26"
       - name: node self-test
         run: RUN=node ./test/conformance/run.sh
-      - name: build lite
+      - name: build onde
         run: cargo build
-      - name: differential (node vs lite)
+      - name: differential (node vs onde)
         run: ./test/differential.sh
       - name: module smoke set against Node
         run: ./test/smoke/run.sh
@@ -145,12 +145,12 @@ jobs:
       - name: build release
         run: cargo build --release -p ln-cli
       - name: conformance corpus on the snapshot path
-        run: RUN=target/release/lite ./test/conformance/run.sh
+        run: RUN=target/release/onde ./test/conformance/run.sh
       - name: performance ratios (soft)
         run: |
           NET_BENCH_FORCE=1 NET_BENCH_SOFT=1 PERF_BUILD=0 PERF_SKIP_HALFOPEN=1 ./test/perf/run.sh
       - name: half-open bound (soft, 500 connections to fit the runner)
-        run: NET_BENCH_SOFT=1 LITE=target/release/lite NET_CONNS=500 ./test/perf/halfopen.sh
+        run: NET_BENCH_SOFT=1 ONDE=target/release/onde NET_CONNS=500 ./test/perf/halfopen.sh
 
   # Nightly: the same numbers with the gates on, plus the RSS soak, on the reference machine label.
   # Until that machine is registered, this job runs on a hosted runner with the gates still soft
@@ -171,7 +171,7 @@ jobs:
       - name: performance ratios
         run: PERF_BUILD=0 ./test/perf/run.sh
       - name: RSS soak (30 min on a hosted runner; the reference run is 60)
-        run: LITE=target/release/lite SOAK_SECONDS=1800 ./test/soak/run.sh
+        run: ONDE=target/release/onde SOAK_SECONDS=1800 ./test/soak/run.sh
 
   licenses:
     name: licenses and sources

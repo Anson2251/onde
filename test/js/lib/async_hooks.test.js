@@ -5,10 +5,10 @@
 // validation, and the AsyncLocalStorage/AsyncResource methods that do not need the loop.
 //
 // Runs under `node` too, where it skips: the module reads `__ln_host`, which only exists under
-// lite.
+// onde.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

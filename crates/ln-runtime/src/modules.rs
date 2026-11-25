@@ -436,7 +436,7 @@ fn meta_payload<'js>(
 
 /// Decode a zlib payload body.
 ///
-/// Feature-gated separately from `node:zlib`: `lite` does not execute payloads, so it can leave
+/// Feature-gated separately from `node:zlib`: `onde` does not execute payloads, so it can leave
 /// the inflater out; a compiled app keeps it through `ln-embed`'s `zlib-payload` default.
 #[cfg(feature = "zlib-payload")]
 fn decompress_zlib_into(

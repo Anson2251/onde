@@ -16,8 +16,8 @@
 //     still changes the default, and the `{ captureRejections: true }`
 //     constructor option is Node-compatible.
 
-const kEvents = Symbol("lite.events.eventsFrames");
-const kCapture = Symbol("lite.events.captureRejections");
+const kEvents = Symbol("onde.events.eventsFrames");
+const kCapture = Symbol("onde.events.captureRejections");
 const captureRejectionsSymbol = kCapture;
 const captureRejectionSymbol = Symbol.for("nodejs.rejection");
 const errorMonitor = Symbol("events.errorMonitor");

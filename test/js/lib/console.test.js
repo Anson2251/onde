@@ -242,7 +242,7 @@ eq(typeof consoleModule.log, "function", "the exported console has log()");
 }
 
 // ---------------------------------------------------------------------------
-// table (lite)
+// table (onde)
 
 {
   const context = pair();

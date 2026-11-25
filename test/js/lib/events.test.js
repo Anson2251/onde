@@ -1,7 +1,7 @@
 "use strict";
 
 // Runtime-agnostic self-check for js/lib/events.js. Runs under `node` and under
-// lite: no `node:` imports, no test framework, only the module under test.
+// onde: no `node:` imports, no test framework, only the module under test.
 
 const EventEmitter = require("../../../js/lib/events.js");
 

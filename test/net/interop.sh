@@ -2,16 +2,16 @@
 # Interop matrix for the M4 network surface.
 #
 #   ./test/net/interop.sh
-#   LITE=/path/to/lite ./test/net/interop.sh
+#   ONDE=/path/to/onde ./test/net/interop.sh
 #
-# Four plaintext legs: lite server + curl, lite server + node client, node server + lite client,
-# lite server + lite client. Every leg asserts the status line, a custom header with mixed case,
+# Four plaintext legs: onde server + curl, onde server + node client, node server + onde client,
+# onde server + onde client. Every leg asserts the status line, a custom header with mixed case,
 # the client's rawHeaders case, the body, keep-alive reuse (two requests on one connection,
 # observed through a per-socket counter) and a chunked response. The client's exit code is part of
 # the contract.
 #
-# If the runtime under test can serve TLS (`test/fixtures/tls`), three TLS legs are added: lite
-# TLS server + node https client, node TLS server + lite https client, lite TLS server + curl.
+# If the runtime under test can serve TLS (`test/fixtures/tls`), three TLS legs are added: onde
+# TLS server + node https client, node TLS server + onde https client, onde TLS server + curl.
 # When TLS is not available yet the script prints one skip line and still exits 0.
 #
 # Ports are always :0 and travel through a temp file; nothing port-specific is printed.
@@ -20,14 +20,14 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-LITE="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 server_js="$here/fixtures/interop-server.js"
 client_js="$here/fixtures/http-client.js"
 probe_js="$here/fixtures/tls-probe.js"
 tls_dir="$root/test/fixtures/tls"
 
-if [ ! -x "$LITE" ]; then
-  echo "no lite runtime at '$LITE'; set LITE=/path/to/lite" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde runtime at '$onde'; set ONDE=/path/to/onde" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -215,17 +215,17 @@ run_curl_leg() {
   fi
 }
 
-echo "interop: lite=$LITE node=$(node --version)"
+echo "interop: onde=$onde node=$(node --version)"
 
-run_curl_leg "lite-server/curl" "$LITE"
-run_client_leg "lite-server/node-client" "$LITE" "node"
-run_client_leg "node-server/lite-client" "node" "$LITE"
-run_client_leg "lite-server/lite-client" "$LITE" "$LITE"
+run_curl_leg "onde-server/curl" "$onde"
+run_client_leg "onde-server/node-client" "$onde" "node"
+run_client_leg "node-server/onde-client" "node" "$onde"
+run_client_leg "onde-server/onde-client" "$onde" "$onde"
 
 # --- TLS legs (optional until WP6 lands) ------------------------------------------------------
 tls_ok=0
 if [ -f "$tls_dir/server-key.pem" ] && [ -f "$tls_dir/server-cert.pem" ] && [ -f "$tls_dir/ca-cert.pem" ]; then
-  if "$LITE" "$probe_js" "$tls_dir/server-key.pem" "$tls_dir/server-cert.pem" >"$tmp/tls-probe.log" 2>&1; then
+  if "$onde" "$probe_js" "$tls_dir/server-key.pem" "$tls_dir/server-cert.pem" >"$tmp/tls-probe.log" 2>&1; then
     tls_ok=1
   fi
 else
@@ -233,11 +233,11 @@ else
 fi
 
 if [ "$tls_ok" = "1" ]; then
-  run_client_leg "tls-lite-server/node-client" "$LITE" "node" 1
-  run_client_leg "tls-node-server/lite-client" "node" "$LITE" 1
-  run_curl_leg "tls-lite-server/curl" "$LITE" 1
+  run_client_leg "tls-onde-server/node-client" "$onde" "node" 1
+  run_client_leg "tls-node-server/onde-client" "node" "$onde" 1
+  run_curl_leg "tls-onde-server/curl" "$onde" 1
 elif [ -f "$tls_dir/server-key.pem" ]; then
-  echo "skip  tls (lite https unavailable: $(tr '\n' ' ' <"$tmp/tls-probe.log" 2>/dev/null))"
+  echo "skip  tls (onde https unavailable: $(tr '\n' ' ' <"$tmp/tls-probe.log" 2>/dev/null))"
 fi
 
 passed=0

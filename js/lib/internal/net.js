@@ -37,7 +37,7 @@ const socketsById = new Map();
 function hostObject() {
   const host = globalThis.__ln_host;
   if (host === undefined || host === null) {
-    const error = new Error("onde: host primitives are missing (net is a lite builtin)");
+    const error = new Error("onde: host primitives are missing (net is a onde builtin)");
     error.code = "ERR_IO_BRIDGE";
     throw error;
   }

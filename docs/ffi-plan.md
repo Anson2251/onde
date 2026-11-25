@@ -583,7 +583,7 @@ The host surface is deliberately small: `dlopen`, `dlsym`, `structType`, `call`,
 `errno`, `alloc`, `free`, `toArrayBuffer`, `callback`, `close`. Everything else is JavaScript over
 those.
 
-Build feature: `ffi`, off by default everywhere through 1.0 and enabled in the M10 `lite` build; off
+Build feature: `ffi`, off by default everywhere through 1.0 and enabled in the M10 `onde` build; off
 in `ln-embed` and compiled apps unless the embedder enables it. The dependency floor is libffi ≥ 3.3,
 for `ffi_get_struct_offsets`; the Rust `libffi-sys` crate vendors a newer one. `Config::ffi` defaults
 to `Deny`; `--allow-ffi` flips it for the CLI. A binary built without the feature has no `onde:ffi` module at all — resolution reports
@@ -665,9 +665,9 @@ rather than a standalone switch.
 
 ## 14. Open questions
 
-* `--allow-ffi` default in the `lite` binary. Opt-in (Deno-style) is the least-privilege answer;
+* `--allow-ffi` default in the `onde` binary. Opt-in (Deno-style) is the least-privilege answer;
   Node-compatible ergonomics argue for on. Current proposal: deny everywhere, one flag.
-* Module name: `onde:ffi` (proposal) versus `lite:ffi` given the binary's old name.
+* Module name: `onde:ffi` (proposal) versus `onde:ffi` given the binary's old name.
 * Whether `linkSymbols`-style raw-pointer-to-callable is needed for interop, or `CFunction` covers
   it.
 

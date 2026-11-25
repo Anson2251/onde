@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # M3 acceptance programs: `cat`, `wc -l`, `cp -r` implemented in JS over `fs` + `stream`.
 #
-# Every program is run under `node` and under `lite`; stdout, stderr and the exit code must match.
+# Every program is run under `node` and under `onde`; stdout, stderr and the exit code must match.
 # This is the roadmap's M3 exit criterion, not a unit test: the programs use only public API, so
 # they exercise streams, backpressure, fd handling and error messages at once.
 #
 #   ./test/programs/run.sh
-#   LITE=/path/to/lite NODE=/path/to/node ./test/programs/run.sh
+#   ONDE=/path/to/onde NODE=/path/to/node ./test/programs/run.sh
 
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 node_bin="${NODE:-node}"
 
-if [ ! -x "$lite" ]; then
-  echo "no lite binary at '$lite'; run 'cargo build' or set LITE=" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde binary at '$onde'; run 'cargo build' or set ONDE=" >&2
   exit 2
 fi
 if ! command -v "$node_bin" >/dev/null 2>&1; then
@@ -24,7 +24,7 @@ if ! command -v "$node_bin" >/dev/null 2>&1; then
   exit 2
 fi
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/lite-programs.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/onde-programs.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 # --- fixture ---------------------------------------------------------------------------------
@@ -60,14 +60,14 @@ compare() {
   shift
   (cd "$work" && "$node_bin" "$@") >"$work/n.out" 2>"$work/n.err"
   local ncode=$?
-  (cd "$work" && "$lite" "$@") >"$work/l.out" 2>"$work/l.err"
+  (cd "$work" && "$onde" "$@") >"$work/l.out" 2>"$work/l.err"
   local lcode=$?
 
   if [ "$ncode" -eq "$lcode" ] && cmp -s "$work/n.out" "$work/l.out" && cmp -s "$work/n.err" "$work/l.err"; then
     echo "ok        $label"
     pass=$((pass + 1))
   else
-    show "$label (node exit $ncode, lite exit $lcode)" "$work/n.err" "$work/l.err"
+    show "$label (node exit $ncode, onde exit $lcode)" "$work/n.err" "$work/l.err"
     diff -u "$work/n.out" "$work/l.out" 2>/dev/null | head -20 | sed 's/^/          /'
   fi
 }
@@ -91,13 +91,13 @@ compare "cat: missing file reports Node's message" "$here/cat.js" src/does-not-e
 printf 'from stdin\nsecond line\n' >"$work/stdin.txt"
 (cd "$work" && "$node_bin" "$here/cat.js" <stdin.txt) >"$work/n.out" 2>"$work/n.err"
 ncode=$?
-(cd "$work" && "$lite" "$here/cat.js" <stdin.txt) >"$work/l.out" 2>"$work/l.err"
+(cd "$work" && "$onde" "$here/cat.js" <stdin.txt) >"$work/l.out" 2>"$work/l.err"
 lcode=$?
 if [ "$ncode" -eq "$lcode" ] && cmp -s "$work/n.out" "$work/l.out"; then
   echo "ok        cat: stdin"
   pass=$((pass + 1))
 else
-  show "cat: stdin (node exit $ncode, lite exit $lcode)" "$work/n.err" "$work/l.err"
+  show "cat: stdin (node exit $ncode, onde exit $lcode)" "$work/n.err" "$work/l.err"
 fi
 
 # --- wc --------------------------------------------------------------------------------------
@@ -107,18 +107,18 @@ compare "wc: -c on the large file" "$here/wc.js" -c src/big.txt
 compare "wc: empty file" "$here/wc.js" src/empty.txt
 
 # --- cp --------------------------------------------------------------------------------------
-rm -rf "$work/out-node" "$work/out-lite"
+rm -rf "$work/out-node" "$work/out-onde"
 (cd "$work" && "$node_bin" "$here/cp.js" -r src out-node) >"$work/n.out" 2>"$work/n.err"
 ncode=$?
-(cd "$work" && "$lite" "$here/cp.js" -r src out-lite) >"$work/l.out" 2>"$work/l.err"
+(cd "$work" && "$onde" "$here/cp.js" -r src out-onde) >"$work/l.out" 2>"$work/l.err"
 lcode=$?
 manifest "$work/out-node" >"$work/n.manifest"
-manifest "$work/out-lite" >"$work/l.manifest"
+manifest "$work/out-onde" >"$work/l.manifest"
 if [ "$ncode" -eq "$lcode" ] && cmp -s "$work/n.manifest" "$work/l.manifest"; then
   echo "ok        cp -r: tree, contents and symlinks"
   pass=$((pass + 1))
 else
-  show "cp -r (node exit $ncode, lite exit $lcode)" "$work/n.err" "$work/l.err"
+  show "cp -r (node exit $ncode, onde exit $lcode)" "$work/n.err" "$work/l.err"
   diff -u "$work/n.manifest" "$work/l.manifest" 2>/dev/null | head -20 | sed 's/^/          /'
 fi
 

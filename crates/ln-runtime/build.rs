@@ -1,7 +1,7 @@
 //! Bundles the JavaScript stdlib into the binary, minified.
 //!
 //! `js/` is the source of truth and stays readable and directly runnable (`test/js/run.sh` runs
-//! these files under node and lite). At build time every file is parsed, compressed and re-emitted
+//! these files under node and onde). At build time every file is parsed, compressed and re-emitted
 //! with oxc, then written to `OUT_DIR/js/`; `modules.rs` and `lib.rs` include those artifacts.
 //!
 //! # No renaming
@@ -111,7 +111,7 @@ fn write_bootstrap_snapshot(out_root: &Path) {
     let options = ln_engine::compile::Options {
         // The name is what stack frames inside the bootstrap show; `eval_global` used the same one,
         // so a snapshot and a source boot are indistinguishable in a trace.
-        name: "<lite:bootstrap>".to_owned(),
+        name: "<onde:bootstrap>".to_owned(),
         // Keep the source in the bytecode: an internal error with no line in `bootstrap.js` is not
         // a diagnostic, and the bootstrap is the one script users cannot read in their own tree.
         strip_source: false,

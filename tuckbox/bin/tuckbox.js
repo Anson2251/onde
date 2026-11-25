@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Thin launcher so `node bin/tuckbox.js` and `lite bin/tuckbox.js` both work, with a readable
+// Thin launcher so `node bin/tuckbox.js` and `onde bin/tuckbox.js` both work, with a readable
 // error when the TypeScript has not been compiled yet.
 
 let run;

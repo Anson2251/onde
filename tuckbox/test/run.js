@@ -14,7 +14,8 @@ const { join, relative } = require("node:path");
 
 const here = __dirname;
 const root = join(here, "..");
-const lite = process.env.TUCKBOX_LITE || join(root, "..", "target", "debug", "lite");
+const onde =
+  process.env.TUCKBOX_ONDE || process.env.TUCKBOX_LITE || join(root, "..", "target", "debug", "onde");
 const wantNetwork = process.env.TUCKBOX_NET === "1";
 
 function run(command, file) {
@@ -69,22 +70,22 @@ for (const name of files) {
     continue;
   }
 
-  const onde = run(lite, file);
-  if (onde.error !== undefined) {
-    console.log(`FAIL      ${label}: cannot spawn ${lite}: ${onde.error}`);
+  const ondeRun = run(onde, file);
+  if (ondeRun.error !== undefined) {
+    console.log(`FAIL      ${label}: cannot spawn ${onde}: ${ondeRun.error}`);
     failed += 1;
     continue;
   }
-  if (onde.status !== 0) {
-    console.log(`FAIL      ${label} via onde (exit ${onde.status})`);
-    process.stdout.write(onde.stdout);
-    process.stdout.write(onde.stderr);
+  if (ondeRun.status !== 0) {
+    console.log(`FAIL      ${label} via onde (exit ${ondeRun.status})`);
+    process.stdout.write(ondeRun.stdout);
+    process.stdout.write(ondeRun.stderr);
     failed += 1;
     continue;
   }
-  if (onde.stdout !== node.stdout) {
+  if (ondeRun.stdout !== node.stdout) {
     console.log(`FAIL      ${label}: node and onde disagree`);
-    console.log(firstDifference(node.stdout, onde.stdout));
+    console.log(firstDifference(node.stdout, ondeRun.stdout));
     failed += 1;
     continue;
   }

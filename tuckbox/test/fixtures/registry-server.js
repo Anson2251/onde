@@ -3,7 +3,7 @@
 // A tiny in-process npm registry for `test/registry.test.js`.
 //
 // It uses `node:http` only, plus `crypto` for real `sha512-` integrity values and `zlib` for gzip
-// bodies, and it runs under both `node` and `lite`. `start()` is async because a listening port is
+// bodies, and it runs under both `node` and `onde`. `start()` is async because a listening port is
 // only knowable after the server's `listening` event:
 //
 //   const registry = await start();

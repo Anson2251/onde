@@ -3,9 +3,9 @@
 #
 #   ./test/net/bench.sh                  # strict: > 20k req/s and p99 < 5 ms
 #   NET_BENCH_SOFT=1 ./test/net/bench.sh # thresholds are informational
-#   LITE_RELEASE=/path/to/lite ./test/net/bench.sh
+#   ONDE_RELEASE=/path/to/onde ./test/net/bench.sh
 #
-# The server is `target/release/lite` (built on demand with `cargo build --release -p ln-cli`),
+# The server is `target/release/onde` (built on demand with `cargo build --release -p ln-cli`),
 # bound to 127.0.0.1:0. One node process drives 100 keep-alive connections: a warm-up phase, then
 # a measured phase with per-request latency. The server is single-threaded (one isolate, one
 # runtime), so it effectively runs on one core.
@@ -14,7 +14,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE_RELEASE:-${NET_LITE_RELEASE:-$root/target/release/lite}}"
+onde="${ONDE_RELEASE:-${LITE_RELEASE:-${NET_ONDE_RELEASE:-${NET_LITE_RELEASE:-$root/target/release/onde}}}}"
 soft="${NET_BENCH_SOFT:-0}"
 server_js="$here/fixtures/hello-server.js"
 loadgen="$here/loadgen.js"
@@ -22,7 +22,7 @@ connections="${NET_BENCH_CONNECTIONS:-100}"
 warmup="${NET_BENCH_WARMUP:-20}"
 requests="${NET_BENCH_REQUESTS:-200}"
 
-# Build the release binary on every run (cargo is incremental): a stale target/release/lite must
+# Build the release binary on every run (cargo is incremental): a stale target/release/onde must
 # never be benchmarked, and the criterion is about the current tree. NET_BENCH_NO_BUILD=1 skips
 # the build for repeat runs on an already-fresh binary.
 if [ "${NET_BENCH_NO_BUILD:-0}" != "1" ]; then
@@ -32,8 +32,8 @@ if [ "${NET_BENCH_NO_BUILD:-0}" != "1" ]; then
     exit 2
   fi
 fi
-if [ ! -x "$lite" ]; then
-  echo "bench: no release runtime at $lite (set LITE_RELEASE)" >&2
+if [ ! -x "$onde" ]; then
+  echo "bench: no release runtime at $onde (set ONDE_RELEASE)" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$lite" "$server_js" "$port_file" >"$server_log" 2>&1 &
+"$onde" "$server_js" "$port_file" >"$server_log" 2>&1 &
 server_pid=$!
 
 i=0
@@ -69,7 +69,7 @@ while [ ! -s "$port_file" ]; do
   sleep 0.01
 done
 
-echo "bench: runtime=$lite connections=$connections warmup=$warmup requests/connection=$requests soft=$soft"
+echo "bench: runtime=$onde connections=$connections warmup=$warmup requests/connection=$requests soft=$soft"
 result="$(node "$loadgen" "$port_file" "$connections" "$warmup" "$requests")"
 loadgen_code=$?
 echo "$result"

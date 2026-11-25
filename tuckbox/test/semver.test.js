@@ -1,7 +1,7 @@
 "use strict";
 
 // Unit tests for src/lib/semver.ts. Plain CommonJS on purpose: the same file must run under both
-// `node test/semver.test.js` and `../target/debug/lite test/semver.test.js`.
+// `node test/semver.test.js` and `../target/debug/onde test/semver.test.js`.
 //
 // Expectations were checked against npm's own semver (v7.8.5) while writing this file, but are
 // hardcoded here so the suite has no dependency on npm's install location.

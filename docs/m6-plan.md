@@ -305,7 +305,7 @@ is exactly how the first version of the derived-promise rule appeared not to wor
 
 Measured on this machine (release):
 
-| Workload | Node 26 | lite before M6 | lite with M6, `async_hooks` unused | lite with hooks active |
+| Workload | Node 26 | onde before M6 | onde with M6, `async_hooks` unused | onde with hooks active |
 |---|---|---|---|---|
 | 1M `Promise.resolve` | 0.11 s | 0.22 s | 0.22 s | 1.14 s |
 | 600k callbacks (ticks, microtasks, timers) + 200k-link promise chain, CPU user time | — | 0.76 s | **0.77–0.83 s** | — |
@@ -323,7 +323,7 @@ number.
 With hooks active, a callback costs ~1.2 µs of bookkeeping (the Rust↔JS crossing, the table
 update and the hook call itself); Node, whose hooks are C++, pays less. M7's fast-path work
 (persistent handles, interned type codes, a Rust-side trigger table) targets that gap. The HTTP
-p99 measured during this rebench (100–150 ms for lite) is *not* M6: the pre-M6 binary showed the
+p99 measured during this rebench (100–150 ms for onde) is *not* M6: the pre-M6 binary showed the
 same tail on the same loaded machine, and it is the M4 single-isolate queueing issue listed in
 `m4-plan.md` §8.
 
@@ -338,11 +338,11 @@ when no `destroy` hook is active.
 | Gate | Result |
 |---|---|
 | Rust tests | **378** across the workspace, green |
-| Conformance corpus | **232/232** under lite; **223/223** re-validated under Node |
+| Conformance corpus | **232/232** under onde; **223/223** re-validated under Node |
 | Differential harness | **223/223** byte-identical stdout + exit code |
-| JS stdlib suites | **77/77** under node and lite |
+| JS stdlib suites | **77/77** under node and onde |
 | M6 acceptance (`test/async/run.sh`) | **3/3** — ALS matrix (96 cells), hook semantics, 1M-promise leak |
-| HTTP rebench (100 conns, 100k requests) | 13.9–15.1k req/s lite vs 14.3k pre-M6 vs 29.9–32.3k Node, interleaved; no M6 regression beyond noise (§10.4) |
+| HTTP rebench (100 conns, 100k requests) | 13.9–15.1k req/s onde vs 14.3k pre-M6 vs 29.9–32.3k Node, interleaved; no M6 regression beyond noise (§10.4) |
 | M1 scheduler corpus | byte-identical (§3.2) |
 | Engine queue | 6 tests, including forced GC between enqueue and run |
 | Cold start | 11.72 ms (`-e`), 18.43 ms (`require("http")`), release, median of 20 |

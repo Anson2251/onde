@@ -3,7 +3,7 @@
 // Node-only differential test: js/lib/events.js against `node:events`.
 //
 // Run with: node test/js/lib/events.oracle.js
-// (Only executed when the Node oracle is available; lite runs *.test.js.)
+// (Only executed when the Node oracle is available; onde runs *.test.js.)
 
 const assert = require("node:assert");
 const nodeEvents = require("node:events");
@@ -315,8 +315,8 @@ async function abortScenario(E) {
 }
 
 async function main() {
-  assert.strictEqual(typeof liteEvents, "function", "lite events exports a constructor");
-  assert.strictEqual(liteEvents.EventEmitter, liteEvents, "lite EventEmitter self-reference");
+  assert.strictEqual(typeof liteEvents, "function", "onde events exports a constructor");
+  assert.strictEqual(liteEvents.EventEmitter, liteEvents, "onde EventEmitter self-reference");
   assert.strictEqual(nodeEvents.EventEmitter, nodeEvents, "node EventEmitter self-reference");
   assert.strictEqual(typeof liteEvents.errorMonitor, "symbol");
   assert.strictEqual(typeof nodeEvents.errorMonitor, "symbol");
@@ -376,7 +376,7 @@ async function main() {
   liteEmitter.on("x", liteFirst);
   liteEmitter.on("x", liteSecond);
   liteEmitter.emit("x");
-  assert.deepStrictEqual(liteCalls, ["first", "second"], "lite removal-during-emit matches Node");
+  assert.deepStrictEqual(liteCalls, ["first", "second"], "onde removal-during-emit matches Node");
 
   const nodeEmitter = new nodeEvents();
   const nodeCalls = [];

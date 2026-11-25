@@ -62,7 +62,7 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `argv` | `string[]` | `[execPath, script, ...args]` |
 | `platform` | `"darwin" \| "linux" \| "win32"` | Node names, not Rust names |
 | `pid` / `ppid` | `number` | |
-| `version` | `string` | `v<lite version>` |
+| `version` | `string` | `v<onde version>` |
 | `env` | `() => Record<string, string>` | a copy |
 | `cwd` | `() => string` | absolute |
 | `chdir` | `(path: string) => void` | throws a Node-shaped error with `code` |
@@ -112,7 +112,7 @@ means CommonJS; `"esm"` is what makes `require()` throw `ERR_REQUIRE_ESM`.
 Internal modules (not part of the public builtin list) are addressed as `internal/loader`,
 `internal/process`, `internal/globals`, `internal/textcodec`, `internal/net`, `internal/pipe` and
 `internal/worker`; they are evaluated once by `bootstrap.js`, and stdlib modules can also
-`require("./sibling.js")` because the loader maps relative requires made from `<lite:...>` modules
+`require("./sibling.js")` because the loader maps relative requires made from `<onde:...>` modules
 onto that registry. `internal/worker` is loaded eagerly on a worker isolate so a parent message
 that arrives before user code is queued for `parentPort` rather than dropped.
 
@@ -134,7 +134,7 @@ const path = require("../../../js/lib/path.js");
 Two test conventions live in `test/js/lib/`:
 
 - `<name>.test.js` — self-checking, runtime-agnostic: it requires **our** module by relative path
-  and asserts against literals. It must pass unchanged under `node` and under `lite`.
+  and asserts against literals. It must pass unchanged under `node` and under `onde`.
 - `<name>.oracle.js` — Node-only differential: compares our module against the Node builtin and
   is only run when the oracle exists.
 

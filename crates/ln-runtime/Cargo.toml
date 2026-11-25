@@ -19,7 +19,7 @@ ln-io = { path = "../ln-io" }
 ln-sched = { path = "../ln-sched" }
 ln-modules = { path = "../ln-modules" }
 # Two independent consumers: `node:zlib` (host/zlib.rs) and the inflater for a `--compress zlib`
-# compiled-app payload (modules.rs). Each feature enables the optional dependency, so `lite` can
+# compiled-app payload (modules.rs). Each feature enables the optional dependency, so `onde` can
 # drop zlib with `node-zlib` off while the SDK keeps the payload decoder via `zlib-payload`.
 ln-zlib = { path = "../ln-zlib", optional = true }
 # `node:sqlite` (host/sqlite.rs). Optional so a size-sensitive build can drop the bundled SQLite
@@ -29,7 +29,7 @@ ln-sqlite = { path = "../ln-sqlite", optional = true }
 ln-payload = { path = "../ln-payload" }
 # A compiled app's `--compress zstd` payload. Optional because it is the only payload decoder
 # that costs binary size by default; the zlib inflater has its own `zlib-payload` feature (on in
-# the SDK, off in `lite`). A build without either refuses that payload with a message.
+# the SDK, off in `onde`). A build without either refuses that payload with a message.
 zstd = { version = "0.13", optional = true }
 # `memchr`-class byte search for Buffer.indexOf/lastIndexOf (already in the graph).
 memchr = "2"
@@ -42,7 +42,7 @@ serde_json = "1"
 [features]
 # Default features cover a full interpreter and an SDK: both Node modules plus the zlib payload
 # decoder. `node-sqlite` pulls in the bundled SQLite. `node-zlib` pulls in zlib for the module;
-# `zlib-payload` pulls it in for `--compress zlib` compiled apps. `lite` takes only the module
+# `zlib-payload` pulls it in for `--compress zlib` compiled apps. `onde` takes only the module
 # features (`ln-cli` disables defaults), so it drops zlib when `node-zlib` is off; `ln-embed`
 # keeps `zlib-payload` for the apps it links.
 default = ["node-sqlite", "node-zlib", "zlib-payload"]

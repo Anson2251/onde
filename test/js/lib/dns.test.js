@@ -2,13 +2,13 @@
 
 // Differential self-check for `node:dns` (`lookup` only).
 //
-// Runs unchanged under node and lite: both resolve `require("dns")` to the module surface, so the
+// Runs unchanged under node and onde: both resolve `require("dns")` to the module surface, so the
 // assertions have to hold for Node and for onde. Nothing here prints a resolved address, a port or
 // a timing: only types, the numeric family and the error code are asserted, so the output is
 // deterministic on every machine.
 //
 //   node test/js/lib/dns.test.js
-//   ./target/debug/lite test/js/lib/dns.test.js
+//   ./target/debug/onde test/js/lib/dns.test.js
 //   ./test/js/run.sh
 
 const dns = require("dns");

@@ -5,11 +5,11 @@
 //
 //   node test/bench/run.js
 //   BENCH_REPS=5 node test/bench/run.js
-//   LITE_RELEASE=/path/to/lite node test/bench/run.js
+//   ONDE_RELEASE=/path/to/onde node test/bench/run.js
 //
 // The HTTP side of the comparison is the same idea with a different harness:
 //
-//   NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 LITE_RELEASE="$(command -v node)" ./test/net/bench.sh
+//   NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 ONDE_RELEASE="$(command -v node)" ./test/net/bench.sh
 //   NET_BENCH_NO_BUILD=1 NET_BENCH_SOFT=1 ./test/net/bench.sh
 //
 // Both put the *same* script in front of the load generator, so the difference is the runtime.
@@ -19,7 +19,8 @@ const { existsSync } = require("node:fs");
 const { join } = require("node:path");
 
 const root = join(__dirname, "..", "..");
-const lite = process.env.LITE_RELEASE || join(root, "target", "release", "lite");
+const onde =
+  process.env.ONDE_RELEASE || process.env.LITE_RELEASE || join(root, "target", "release", "onde");
 // compute.js is the engine-level comparison; codec.js is the byte-level one, and it is where the
 // stdlib's own implementation (rather than the engine) used to dominate.
 const scripts = ["compute.js", "codec.js", "lib.js"].map((name) => join(__dirname, name));
@@ -27,14 +28,14 @@ const reps = Number(process.env.BENCH_REPS || 3);
 
 // A benchmark of a stale release binary is worse than no benchmark: it reports the speed of code
 // that is no longer in the tree. When the default release binary is in use, rebuild it first, the
-// same way test/net/bench.sh does. A caller who points LITE_RELEASE elsewhere is asserting that the
+// same way test/net/bench.sh does. A caller who points ONDE_RELEASE elsewhere is asserting that the
 // binary is current, and BENCH_NO_BUILD=1 is the explicit escape hatch for repeat runs.
-const defaultLite = process.env.LITE_RELEASE === undefined;
-if (!existsSync(lite) && !defaultLite) {
-  console.error(`bench: no runtime at ${lite} (from LITE_RELEASE)`);
+const defaultRuntime = process.env.ONDE_RELEASE === undefined && process.env.LITE_RELEASE === undefined;
+if (!existsSync(onde) && !defaultRuntime) {
+  console.error(`bench: no runtime at ${onde} (from ONDE_RELEASE)`);
   process.exit(2);
 }
-if (defaultLite && process.env.BENCH_NO_BUILD !== "1") {
+if (defaultRuntime && process.env.BENCH_NO_BUILD !== "1") {
   const build = spawnSync("cargo", ["build", "--release", "-p", "ln-cli"], {
     cwd: root,
     stdio: ["ignore", "ignore", "inherit"],
@@ -44,8 +45,8 @@ if (defaultLite && process.env.BENCH_NO_BUILD !== "1") {
     process.exit(2);
   }
 }
-if (!existsSync(lite)) {
-  console.error(`bench: no release runtime at ${lite}`);
+if (!existsSync(onde)) {
+  console.error(`bench: no release runtime at ${onde}`);
   process.exit(2);
 }
 
@@ -78,13 +79,13 @@ function measure(label, command, script, args = []) {
 }
 
 const { statSync } = require("node:fs");
-const built = statSync(lite).mtime.toISOString().replace("T", " ").slice(0, 19);
-console.log(`onde: ${lite}`);
-console.log(`built ${built}${defaultLite ? "" : " (LITE_RELEASE, not rebuilt)"}`);
+const built = statSync(onde).mtime.toISOString().replace("T", " ").slice(0, 19);
+console.log(`onde: ${onde}`);
+console.log(`built ${built}${defaultRuntime ? "" : " (ONDE_RELEASE, not rebuilt)"}`);
 
 for (const script of scripts) {
   const node = measure("node", process.execPath, script);
-  const onde = measure("onde", lite, script);
+  const ondeMedians = measure("onde", onde, script);
 
   const names = [...node.keys()];
   const width = Math.max(...names.map((name) => name.length)) + 2;
@@ -96,7 +97,7 @@ for (const script of scripts) {
   const ratios = [];
   for (const name of names) {
     const a = node.get(name);
-    const b = onde.get(name);
+    const b = ondeMedians.get(name);
     const ratio = b / a;
     ratios.push(ratio);
     console.log(

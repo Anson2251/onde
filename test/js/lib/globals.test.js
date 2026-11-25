@@ -5,7 +5,7 @@
 //   node test/js/lib/globals.test.js
 //
 // The module under test is required by relative path and the assertions are
-// literals, so this file must also pass under `lite` (no node: imports, no
+// literals, so this file must also pass under `onde` (no node: imports, no
 // Buffer, no assert). Every line starting with "ok " is one passed assertion;
 // the process exits 1 when any assertion fails.
 

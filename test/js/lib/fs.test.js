@@ -1,16 +1,16 @@
 "use strict";
 
 // Self-check for `js/lib/fs.js` (sync + callback). Runtime-agnostic in the sense that plain
-// Node skips it: the host primitives only exist under lite, and the point of the test is the
+// Node skips it: the host primitives only exist under onde, and the point of the test is the
 // syscall surface, not a Node shim.
 //
-//   ./target/debug/lite test/js/lib/fs.test.js
+//   ./target/debug/onde test/js/lib/fs.test.js
 //
 // Scratch files live in a `mkdtemp` directory under the OS temp dir. Nothing absolute is ever
 // printed: failures name the assertion, not a path.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 
@@ -67,7 +67,7 @@ function basename(value) {
   return value === undefined || value === null ? String(value) : path.basename(String(value));
 }
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lite-fs-"));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onde-fs-"));
 const file = path.join(dir, "a.txt");
 
 // ---------------------------------------------------------------------------------------------
@@ -141,9 +141,9 @@ throwsCode(
   "EEXIST",
   "mkdirSync recursive on a file throws EEXIST",
 );
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "lite-fs-tmp-"));
-ok(path.basename(temp).startsWith("lite-fs-tmp-"), "mkdtempSync returns a path under the prefix");
-ok(temp !== fs.mkdtempSync(path.join(os.tmpdir(), "lite-fs-tmp-")), "mkdtempSync is unique");
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "onde-fs-tmp-"));
+ok(path.basename(temp).startsWith("onde-fs-tmp-"), "mkdtempSync returns a path under the prefix");
+ok(temp !== fs.mkdtempSync(path.join(os.tmpdir(), "onde-fs-tmp-")), "mkdtempSync is unique");
 fs.rmSync(temp, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------------------------
@@ -351,7 +351,7 @@ fs.rmSync(path.join(dir, "never-existed"), { force: true });
   eq(stats.constructor.name, "StatsFs", "statfsSync returns StatsFs");
   eq(typeof fs.statfsSync(dir, { bigint: true }).blocks, "bigint", "statfsSync bigint option");
 
-  const disposable = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lite-fs-disp-"));
+  const disposable = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "onde-fs-disp-"));
   ok(fs.existsSync(disposable.path), "mkdtempDisposableSync creates its directory");
   eq(typeof disposable.remove, "function", "mkdtempDisposableSync has remove()");
   disposable.remove();

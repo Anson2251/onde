@@ -3,7 +3,7 @@
 // Adapted from test/conformance/microtasks/c09-await-ordering.js and c12-shared-fifo.js.
 //
 // The conformance cases print an ordering transcript; here the same order is collected into an
-// array and asserted, so the case is a `node:test` file that Node 26 and `lite --test` run
+// array and asserted, so the case is a `node:test` file that Node 26 and `onde --test` run
 // unchanged. Only `queueMicrotask` and promise reactions are queued: both runtimes give them one
 // FIFO in settle order from any position, and one `setImmediate` flushes that queue before the
 // assertion runs. (`process.nextTick` is deliberately not part of the pilot: its priority against

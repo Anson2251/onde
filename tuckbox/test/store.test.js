@@ -1,7 +1,7 @@
 "use strict";
 
 // Unit tests for `dist/lib/store.js`. Plain CommonJS, no framework: the same file runs under
-// `node` and under `lite`, and prints a single `ok store <N> assertions` line on success.
+// `node` and under `onde`, and prints a single `ok store <N> assertions` line on success.
 //
 // The archives are generated in code and gzipped here, so the test exercises the real
 // gunzip -> tar.list -> disk path without committing a binary fixture.

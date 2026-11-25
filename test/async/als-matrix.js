@@ -1,7 +1,7 @@
 // The AsyncLocalStorage propagation matrix (M6 exit criterion: 60+ cells, 100%).
 //
 // Ten scheduling contexts x eight observations, printed as one sorted line per cell so the
-// runner can diff node against lite byte for byte. A cell that disagrees with Node is a real
+// runner can diff node against onde byte for byte. A cell that disagrees with Node is a real
 // propagation bug: the store either leaked out of its run, was lost across a boundary, or was
 // shadowed by a concurrent run.
 //

@@ -1,13 +1,13 @@
 "use strict";
 
 // Runtime-agnostic self-check for js/lib/crypto.js. Runs under `node` and under
-// lite: no `node:` imports, no test framework, only the module under test.
+// onde: no `node:` imports, no test framework, only the module under test.
 //
-// Under plain Node the lite host (`__ln_host.crypto`) is absent, so the file
-// prints one skip line and exits 0; the lite run does the asserting.
+// Under plain Node the onde host (`__ln_host.crypto`) is absent, so the file
+// prints one skip line and exits 0; the onde run does the asserting.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 
@@ -273,7 +273,7 @@ bytesEq(crypto.hkdf("sha512-256", HKDF_IKM, HKDF_SALT, HKDF_INFO, 42),
   "hkdf-sha512-256");
 
 {
-  // hkdfSync is Node's synchronous form; unlike lite's `hkdf` extension it returns an ArrayBuffer.
+  // hkdfSync is Node's synchronous form; unlike onde's `hkdf` extension it returns an ArrayBuffer.
   const out = crypto.hkdfSync("sha256", HKDF_IKM, HKDF_SALT, HKDF_INFO, 42);
   record(out instanceof ArrayBuffer, "hkdfSync returns an ArrayBuffer");
   bytesEq(new Uint8Array(out), HKDF_EXPECTED, "hkdfSync RFC 5869 #1");

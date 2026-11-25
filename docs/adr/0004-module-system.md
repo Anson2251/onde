@@ -108,7 +108,7 @@ violating I1.
 ## Consequences
 
 - **Deterministic startup.** Builtins are lazy: only the modules the entry actually requires are
-  compiled, so `lite -e '1+1'` still pays for bootstrap, not the stdlib.
+  compiled, so `onde -e '1+1'` still pays for bootstrap, not the stdlib.
 - **Two loaders, one resolver.** Resolution behaviour is identical for `require` and `import`
   except where Node differs (extensions, directories, conditions); that difference lives in
   `Kind`, not in duplicated code.
@@ -118,4 +118,4 @@ violating I1.
   the same file both ways evaluates it once per system; Node has the same split (ESM and CJS
   caches are separate).
 - **Tests are cheap where it matters.** `cargo test -p ln-modules` covers resolution without an
-  engine; the conformance corpus covers the observable behaviour under both `node` and `lite`.
+  engine; the conformance corpus covers the observable behaviour under both `node` and `onde`.

@@ -183,14 +183,14 @@ fd 3 (`Stdio::from(OwnedFd)`) and sets `ONDE_IPC_FD=3`; the child's `bootstrap.j
 var, calls `host.ipc(attach, fd)` and installs `process.send`/`channel`/`connected`.
 
 Frames are `u32` little-endian length + UTF-8 JSON. This is **not** Node's wire format (Node uses
-newline-delimited JSON with a `cmd` envelope), so a lite `fork` child cannot talk to a real `node`
-parent: `fork` always spawns `current_exe`, so in practice both ends are lite, and this is recorded
+newline-delimited JSON with a `cmd` envelope), so a onde `fork` child cannot talk to a real `node`
+parent: `fork` always spawns `current_exe`, so in practice both ends are onde, and this is recorded
 as a divergence. A JSON payload that fails to parse is a `messageerror` on the child and an `error`
 on the parent. `serialization: "advanced"` is accepted and still uses JSON (divergence).
 
 The `ipc` capability is a proc-family handle: `host.ipc(id, "attach", [fd])`, commands
 `read`/`send`/`disconnect`/`ref`/`unref`, events `message`/`disconnect`/`closed` through a
-dedicated `__ln_ipc_event`. It is created only in a forked child, so a normal `lite` process pays
+dedicated `__ln_ipc_event`. It is created only in a forked child, so a normal `onde` process pays
 nothing.
 
 ### 3.6 Engine primitives (`ln-engine`, `EN1`–`EN4`)
@@ -303,7 +303,7 @@ developed in parallel once WP0 lands; WP7 is the acceptance gate.
 | **WP4** ✅ | *`child_process` API.* Host family, proc bridge, `internal/pipe.js`, `spawn`/`exec`/`execFile`/`fork`, all events and `ChildProcess` fields. | `ln-runtime/src/{proc,host/proc}.rs`, `js/lib/child_process.js`, `js/lib/internal/pipe.js` | `spawn` stdout/stderr/stdin match node byte-for-byte; `exit` before `close`; `exec` maxBuffer/timeout; `fork` round-trips JSON both ways; `kill("SIGTERM")` reports `signal` |
 | **WP5** ✅ | *Signals and `process` additions.* `ln-io::signal`, signal bridge, `process.on` wiring, default disposition, `kill`, `cpuUsage`; `process.send`/`message` in a forked child. | `ln-io/src/signal.rs`, `ln-runtime/src/{signals,host/signal}.rs`, `js/lib/process.js`, `js/bootstrap.js` | `SIGTERM` delivered to a JS listener; removing the listener restores default termination; `process.kill(child.pid, "SIGKILL")` works; `cpuUsage` is non-zero and monotonic |
 | **WP6** ✅ | *`readline`.* Line interface, prompts, history, async iterator, ANSI helpers, `readline/promises`. | `js/lib/readline.js`, `js/lib/readline-promises.js` | piped input produces the same lines/order as node; `question` resolves; async iterator ends on close |
-| **WP7** ✅ | *Acceptance.* `test/proc` harness, conformance corpus, worker echo (1M locally, 20k in CI), atomics matrix, zombie check, node↔lite interop, docs (compat, internals, README, roadmap), divergences D48–D53. | `test/proc/*`, `test/conformance/{child_process,workers,readline}/**`, `docs/*` | the three roadmap exit criteria are green on macOS and Linux; M1 corpus unchanged; `fmt`/`clippy -D warnings`/`cargo test --all` green |
+| **WP7** ✅ | *Acceptance.* `test/proc` harness, conformance corpus, worker echo (1M locally, 20k in CI), atomics matrix, zombie check, node↔onde interop, docs (compat, internals, README, roadmap), divergences D48–D53. | `test/proc/*`, `test/conformance/{child_process,workers,readline}/**`, `docs/*` | the three roadmap exit criteria are green on macOS and Linux; M1 corpus unchanged; `fmt`/`clippy -D warnings`/`cargo test --all` green |
 
 Dependency notes:
 
@@ -322,15 +322,15 @@ Dependency notes:
 |---|---|
 | Worker echo: 1M round-trips, no reordering | `test/proc/worker-echo.js` — every message carries a monotonic sequence number, the worker echoes it, the parent asserts `seq === expected`; `WORKER_ECHO_FULL=1` runs 1M, CI runs 20k. Prints `round-trips` and messages/sec |
 | 8-worker `Atomics.add` counter is exact; `Atomics.wait` blocks and wakes | `test/proc/atomics.js` — 8 workers × 50k increments with `Atomics.add` on one SAB, parent asserts exactly 400k; a waiter blocks on 0 and a worker stores 1 + `Atomics.notify`; asserts the waiter returns `"ok"` and not `"timed-out"` |
-| `child_process` interop green on macOS and Linux; zombie-free on `kill -9` | `test/proc/run.sh` — node↔lite spawn matrix, stdio/exit/close ordering, shell quoting, `fork` IPC, then a `kill -9` case that checks `ps -o stat=` shows no `Z` and that `kill(pid, 0)` reports `ESRCH` |
+| `child_process` interop green on macOS and Linux; zombie-free on `kill -9` | `test/proc/run.sh` — node↔onde spawn matrix, stdio/exit/close ordering, shell quoting, `fork` IPC, then a `kill -9` case that checks `ps -o stat=` shows no `Z` and that `kill(pid, 0)` reports `ESRCH` |
 
 ### 7.2 New harnesses and corpus
 
 ```
 test/proc/
   run.sh                 # the M5 acceptance entry point
-  fixtures/              # child/worker scripts, shared by node and lite
-  child-process.js       # spawn/exec/execFile/fork matrix, node vs lite
+  fixtures/              # child/worker scripts, shared by node and onde
+  child-process.js       # spawn/exec/execFile/fork matrix, node vs onde
   ordering.js            # spawn/exit/close/stdin-EOF ordering
   signals.js             # kill, signal names, default disposition, zombie check
   worker-echo.js         # ordering + throughput
@@ -347,7 +347,7 @@ test/proc/
   construction (sequence numbers, not wall-clock).
 - **Rust units**: `ln-engine` SAB/serialize/cancel; `ln-io` proc spawn/pipe/kill/reap and the IPC
   frame codec; `ln-runtime` worker lifecycle, ref accounting, signal dispatch with a fake sink.
-- **Interop**: `lite` spawns `node` and `node` spawns `lite`; `fork` is lite→lite (documented).
+- **Interop**: `onde` spawns `node` and `node` spawns `onde`; `fork` is onde→onde (documented).
   Worker tests do not need node interop (threads are internal), but the same fixture runs under
   node in `test/proc` where the API is shared.
 
@@ -356,7 +356,7 @@ test/proc/
 - `./test/conformance/run.sh` (all existing cases) still byte-identical; `RUN=node` still green.
 - `./test/differential.sh` count grows; no existing case is skipped.
 - `cargo test --all`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all -- --check`.
-- Cold start: `lite -e '1+1'` unchanged (worker/proc/signal pools are lazy, like the M4 service).
+- Cold start: `onde -e '1+1'` unchanged (worker/proc/signal pools are lazy, like the M4 service).
 - `./test/net/run.sh` still green (the completion router changed, so net is the first regression
   suspect).
 
@@ -409,7 +409,7 @@ that matters is message cost, and it is dominated by engine serialization:
 3. **SAB via engine serialization**, not a custom serializer. It is the only way to pass a
    `SharedArrayBuffer` across isolates; the wire format is engine-internal, so worker messaging is
    version-locked to the binary (same process, so this is free).
-4. **`fork` IPC over fd 3 with length-prefixed JSON**, lite-only. It matches Node's API shape,
+4. **`fork` IPC over fd 3 with length-prefixed JSON**, onde-only. It matches Node's API shape,
    not its wire format; documented as D50.
 5. **Signals limited to the six that matter**, with default-disposition re-raise. A smaller surface
    that behaves correctly beats a table of names that silently do nothing.
@@ -421,15 +421,15 @@ Everything in §1 ships. The exit criteria and the gates that prove them:
 | Gate | Result |
 |---|---|
 | Rust tests | **372** across the workspace, green (`cargo test --all`) |
-| Conformance corpus | **230/230** under lite, **220/220** re-validated under node (`RUN=node`), 10 divergence cases lite-only |
-| Differential harness | **220/220** byte-identical stdout + exit code (node vs lite) |
-| JS stdlib suites | **75/75** under node and lite |
-| M5 acceptance (`test/proc/run.sh`) | **12/12** (six scripts, each under node and lite) |
-| Worker echo | **1,000,000** round-trips, zero ordering failures, ~23k/s under lite on this machine (node: ~168k/s) |
+| Conformance corpus | **230/230** under onde, **220/220** re-validated under node (`RUN=node`), 10 divergence cases onde-only |
+| Differential harness | **220/220** byte-identical stdout + exit code (node vs onde) |
+| JS stdlib suites | **75/75** under node and onde |
+| M5 acceptance (`test/proc/run.sh`) | **12/12** (six scripts, each under node and onde) |
+| Worker echo | **1,000,000** round-trips, zero ordering failures, ~23k/s under onde on this machine (node: ~168k/s) |
 | 8-worker counter | **exactly 400,000** with `Atomics.add`; `Atomics.wait` woke from a worker's `notify` |
 | Termination | busy worker → `exit 1`, parent process exits, no leaked thread/ref |
 | Zombie-free | after `SIGKILL`, `process.kill(pid, 0)` throws `ESRCH` (the task reaps) |
-| Cold start | release `lite -e '1+1'`: **12.16 ms** median (limit 14); `require("http")`: **21.00 ms** (limit 25) |
+| Cold start | release `onde -e '1+1'`: **12.16 ms** median (limit 14); `require("http")`: **21.00 ms** (limit 25) |
 | Hygiene | `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny` CI job unchanged |
 
 Things that changed from the plan while implementing, all deliberate:
@@ -461,6 +461,6 @@ Things that changed from the plan while implementing, all deliberate:
 9. **`getEnvironmentData` is per isolate**, not process-wide (recorded in D53). Worker-to-worker
    sharing needs the same serializer as messages and was not worth another capability.
 
-Known limits recorded as divergences: no `spawnSync` family, lite-only `fork` IPC, no
+Known limits recorded as divergences: no `spawnSync` family, onde-only `fork` IPC, no
 `MessagePort` transfer between threads, `resourceLimits` ignored, cooperative `terminate`, and
 line-oriented `readline` (D48–D53 in [compat.md](compat.md)).

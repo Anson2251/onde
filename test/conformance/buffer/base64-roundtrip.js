@@ -1,7 +1,7 @@
 "use strict";
 // Base64 round trips through Buffer's codec seam (`internal/bytes.js`): every tail length, both
 // alphabets, and the `start`/`end` window `toString` takes. Results print as hex so the comparison
-// is byte-exact and node and lite cannot agree on a wrong string.
+// is byte-exact and node and onde cannot agree on a wrong string.
 
 const { Buffer } = require("buffer");
 

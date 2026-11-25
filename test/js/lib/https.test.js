@@ -3,14 +3,14 @@
 // Self-check for `https` over the handle bridge: a real rustls handshake against the committed
 // fixture certificates, the options Node honours, and the socket surface.
 //
-// Skipped under plain Node (the host primitives only exist under lite). Nothing prints a port or
+// Skipped under plain Node (the host primitives only exist under onde). Nothing prints a port or
 // a timing, and the fixtures are test-only (`test/fixtures/tls/generate.sh` regenerates them).
 //
-//   ./target/debug/lite test/js/lib/https.test.js
+//   ./target/debug/onde test/js/lib/https.test.js
 //   ./test/js/run.sh
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

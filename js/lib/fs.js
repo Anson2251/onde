@@ -1488,7 +1488,7 @@ function existsSync(pathValue) {
 
 // --- polling watchers ------------------------------------------------------------------------
 
-const kWatchState = Symbol("lite.fs.watchState");
+const kWatchState = Symbol("onde.fs.watchState");
 
 function statSignature(stat) {
   return [

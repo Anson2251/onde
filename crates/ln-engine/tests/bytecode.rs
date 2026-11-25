@@ -13,7 +13,7 @@
 use ln_engine::{compile, engine_stamp_parsed, Engine};
 
 const NAME: &str = "file:///index.js";
-const SCRIPT_NAME: &str = "<lite:bootstrap>";
+const SCRIPT_NAME: &str = "<onde:bootstrap>";
 
 fn compile_source(source: &str) -> Vec<u8> {
     compile::module(source, &compile::Options::new(NAME)).expect("module compiles")

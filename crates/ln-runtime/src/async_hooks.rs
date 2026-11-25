@@ -324,7 +324,7 @@ impl AsyncTracker {
             if let Some(text) = engine.describe_stack_frame(ctx, 0) {
                 // Native helpers ("resolve", "then") have no location; they are engine plumbing,
                 // not user frames.
-                if text.contains(" (") && !text.contains("<lite:") {
+                if text.contains(" (") && !text.contains("<onde:") {
                     self.frames.borrow_mut().insert(id, Frame { text, trigger });
                 }
             }

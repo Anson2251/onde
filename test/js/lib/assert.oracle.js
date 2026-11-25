@@ -5,13 +5,13 @@
 // For every case it runs both node:assert and our assert, then compares:
 //   - whether an error was thrown / promise rejected,
 //   - AssertionError name/code/operator/actual/expected/generatedMessage,
-//   - the message for cases where lite reproduces Node's text exactly.
+//   - the message for cases where onde reproduces Node's text exactly.
 //
 // TODO (docs/compat.md): structured diff bodies are simpler than Node's Myers
 // diff for object/array/Map/Set/typed-array/Error mismatches.  The header,
 // operator and fields match; only the diff body differs, so those messages are
 // excluded from the comparison below.  `assert.ok()`'s generated message
-// includes the caller's source expression, which we cannot recover in lite.
+// includes the caller's source expression, which we cannot recover in onde.
 
 const nodeAssert = require("node:assert");
 const nodeUtil = require("node:util");

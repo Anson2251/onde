@@ -101,7 +101,7 @@
     }
     const module = {
       exports: {},
-      filename: "<lite:" + name + ">",
+      filename: "<onde:" + name + ">",
       loaded: false,
       children: [],
       parent: null,
@@ -113,7 +113,7 @@
       null,
       module,
       module.filename,
-      "<lite>",
+      "<onde>",
     );
     module.loaded = true;
     return module.exports;

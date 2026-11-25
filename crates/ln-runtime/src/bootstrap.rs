@@ -36,7 +36,7 @@ const SNAPSHOT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/js/bootstrap.b
 
 /// The script name a source boot uses. The snapshot bakes the same name in at compile time, so a
 /// stack frame looks identical on both paths.
-pub(crate) const BOOTSTRAP_NAME: &str = "<lite:bootstrap>";
+pub(crate) const BOOTSTRAP_NAME: &str = "<onde:bootstrap>";
 
 /// Install the bootstrap into `engine`.
 ///

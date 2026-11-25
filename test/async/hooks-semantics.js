@@ -1,5 +1,5 @@
 // async_hooks semantics that must hold in any Node-compatible runtime. Every check is an
-// assertion, and every assertion prints one `ok` line, so the runner can diff node against lite.
+// assertion, and every assertion prints one `ok` line, so the runner can diff node against onde.
 // A value that differs (rather than a boolean) is never printed: ids are runtime-specific.
 
 "use strict";

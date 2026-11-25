@@ -104,12 +104,12 @@ zlib-payload = ["dep:ln-zlib"]
 ```
 
 The two module features are what `ln-cli` takes (`default-features = false` plus
-`node-sqlite`/`node-zlib`); `lite` never executes a compiled payload, so it does not carry
+`node-sqlite`/`node-zlib`); `onde` never executes a compiled payload, so it does not carry
 `zlib-payload`. `ln-embed` adds `zlib-payload` to its defaults, because a compiled app may be
 built with `--compress zlib`. The consequences:
 
 * `node-sqlite` off drops the bundled SQLite; nothing else links it.
-* `node-zlib` off drops the module, and in `lite` that also drops zlib, because the module is the
+* `node-zlib` off drops the module, and in `onde` that also drops zlib, because the module is the
   only consumer there.
 * `zlib-payload` off does not remove the module, but a zlib-compressed app is refused with a
   message instead of misread. `zlib-payload` on with `node-zlib` off keeps zlib only for the
@@ -126,10 +126,10 @@ advertise a module that cannot load (the default-on build advertises `node:zlib`
 `builtinModules`, `node:sqlite` only through `isBuiltin("node:sqlite")`, matching Node's node:-only
 rule).
 
-Size, measured 2026-11-24 (release, macOS arm64, no strip), for `lite`: **5,443,552 bytes with
+Size, measured 2026-11-24 (release, macOS arm64, no strip), for `onde`: **5,443,552 bytes with
 neither module feature**, **5,533,552 with `node-zlib` only**, **7,542,224 with `node-sqlite`
 only**, and **7,647,760 with both**. The `node-zlib` delta (~90 KB) is zlib plus the module,
-because `lite` has no payload decoder; in an SDK archive, where `zlib-payload` is already linked,
+because `onde` has no payload decoder; in an SDK archive, where `zlib-payload` is already linked,
 the module alone is ~40 KB. The sqlite delta (~2.1 MB) is the bundled SQLite. A default-SDK hello
 world links at 6,892,976 bytes; a `--no-default-features` SDK archive drops zlib with the rest and
 links it at 4,526,280 bytes. The sqlite delta (+2.2 MB over the slim build, +40%) is above the
@@ -500,8 +500,8 @@ Sizes are engineering days for one person who knows the codebase.
       exports the host accessor); `loader.js` `isBuiltin`/`builtinNames`; `process.versions.sqlite`.
 - [x] Tests: `lookup("sqlite") == None`, `lookup("node:sqlite") == Some`, `isBuiltin` truth table,
       `builtinModules` excludes it.
-- **Exit:** `cargo build`, `./target/debug/lite -e 'require("node:sqlite")'` works;
-  `./target/debug/lite -e 'require("sqlite")'` is `MODULE_NOT_FOUND`; size delta measured.
+- **Exit:** `cargo build`, `./target/debug/onde -e 'require("node:sqlite")'` works;
+  `./target/debug/onde -e 'require("sqlite")'` is `MODULE_NOT_FOUND`; size delta measured.
 
 ### WP1 — `ln-sqlite`: the synchronous core (3 d)
 
@@ -521,7 +521,7 @@ Sizes are engineering days for one person who knows the codebase.
 - [x] `SqliteState` in `HostState`, `host/sqlite.rs` with the §3.3 table.
 - [x] `error_object_with` helper in `host_error.rs`; value/row conversion.
 - [x] Teardown `Drop` (statements → connections) and the id-reuse rule.
-- **Exit:** a host-level smoke test through `lite -e` for open/exec/prepare/run/all/close; no panic
+- **Exit:** a host-level smoke test through `onde -e` for open/exec/prepare/run/all/close; no panic
   on a stale id.
 
 ### WP3 — `js/lib/sqlite.js` v1 (2.5 d)
@@ -529,7 +529,7 @@ Sizes are engineering days for one person who knows the codebase.
 - [x] Classes, aliases, `constants`, `backup`, `limits`, `[Symbol.dispose]`.
 - [x] Argument validation and statement-option inheritance; row/result shaping (null prototypes).
 - [x] `node:`-only documentation in the module header; no `require("node:sqlite")`.
-- **Exit:** the §5 S1–S22 behaviours pass by hand under `lite`; `test/js/lib/sqlite.test.js` green
+- **Exit:** the §5 S1–S22 behaviours pass by hand under `onde`; `test/js/lib/sqlite.test.js` green
   (skips under Node like `zlib.test.js`).
 
 ### WP4 — Verification and docs for v1 (2 d)
@@ -582,7 +582,7 @@ and error codes. These tests never touch `js/` or the host.
 
 ### 7.2 Conformance corpus
 
-`test/conformance/run.sh` is the differential: a case is run under `lite` and compared with a
+`test/conformance/run.sh` is the differential: a case is run under `onde` and compared with a
 `.expected` recorded from Node. The new suite follows the zlib rules — assert round trips and
 shapes, never encoder/version-specific bytes.
 
@@ -605,7 +605,7 @@ shapes, never encoder/version-specific bytes.
 ### 7.3 Stdlib test
 
 `test/js/lib/sqlite.test.js` is runtime-agnostic like `zlib.test.js`: it prints
-`skip: lite host unavailable` under Node and asserts under `lite`. It covers our own validation
+`skip: onde host unavailable` under Node and asserts under `onde`. It covers our own validation
 (messages and codes), the statement-option inheritance, and the divergences in Appendix B. A
 `sqlite.oracle.js` is deliberately not proposed: the corpus already is the Node differential, and
 a shim-backed oracle would test the shim.
@@ -624,7 +624,7 @@ checklist.
   paths, or the number of pages a file-backed database happens to use.
 - `columns()` `type` strings come from declared types, which the schema controls; expressions print
   `null`.
-- The corpus is recorded from Node, never from `lite`.
+- The corpus is recorded from Node, never from `onde`.
 
 ### 7.6 Oracle version policy
 
@@ -637,7 +637,7 @@ the behaviour is documented. Record the oracle and SQLite versions in the suite 
 
 ## 8. Size and performance
 
-- **Size, measured 2026-11-24** (release, macOS arm64, no strip): `lite` grows from
+- **Size, measured 2026-11-24** (release, macOS arm64, no strip): `onde` grows from
   **5,533,968 to 7,648,208 bytes — +2,114,240 B (+2.11 MB, +38%)**, after WP5/WP6 added the
   session/preupdate extension, functions and virtual-table support. That is above the plan's
   1.5 MB target; the measured number is recorded rather than hidden, and the 2026-11-24 decision
@@ -674,11 +674,11 @@ the behaviour is documented. Record the oracle and SQLite versions in the suite 
 
 ## 10. Exit criteria
 
-1. `require("node:sqlite")` and `import { Database } from "node:sqlite"` work under `lite`;
+1. `require("node:sqlite")` and `import { Database } from "node:sqlite"` work under `onde`;
    `require("sqlite")` and bare `sqlite` imports fail exactly like Node.
 2. The thirteen conformance cases produce byte-identical stdout to the Node 26.12.1 recording, with
    the existing corpus still green.
-3. `test/js/lib/sqlite.test.js` passes under `lite` and skips cleanly under Node.
+3. `test/js/lib/sqlite.test.js` passes under `onde` and skips cleanly under Node.
 4. `cargo test --all`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all -- --check`
    and `cargo deny check` are green.
 5. The release-binary size delta is recorded in `README.md` (7.5 MB against 5.5 MB) and the

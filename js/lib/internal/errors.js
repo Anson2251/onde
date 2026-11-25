@@ -8,7 +8,7 @@
 // should read the same.
 //
 // This module is deliberately a leaf — it requires nothing at all — so every stdlib module can
-// depend on it regardless of load order, including `<lite:...>` modules that are resolved
+// depend on it regardless of load order, including `<onde:...>` modules that are resolved
 // through the virtual registry.
 
 /**

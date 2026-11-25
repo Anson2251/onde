@@ -1,13 +1,13 @@
-//! End-to-end tests. These exercise the real `lite` binary, not the library.
+//! End-to-end tests. These exercise the real `onde` binary, not the library.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-fn lite(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lite"))
+fn onde(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_onde"))
         .args(args)
         .output()
-        .expect("spawn lite")
+        .expect("spawn onde")
 }
 
 /// A temp script that removes itself (and its directory, when empty) on drop.
@@ -19,7 +19,7 @@ impl TempScript {
 
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let unique = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("lite-m0-{}-{unique}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("onde-m0-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join(name);
         std::fs::write(&path, body).expect("write script");
@@ -62,14 +62,14 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn eval_prints_the_completion_value() {
-    let output = lite(&["-e", "1+1"]);
+    let output = onde(&["-e", "1+1"]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "2\n");
 }
 
 #[test]
 fn eval_process_exit_does_not_print_the_value() {
-    let output = lite(&["-e", "process.exit(3); 1+1"]);
+    let output = onde(&["-e", "process.exit(3); 1+1"]);
     assert_eq!(code(&output), 3);
     assert_eq!(stdout(&output), "");
 }
@@ -78,7 +78,7 @@ fn eval_process_exit_does_not_print_the_value() {
 fn eval_process_exit_from_a_microtask_does_not_print_the_value() {
     // C7: exit from a microtask drops the rest of the turn, so the completion value of the
     // script must not be printed after it.
-    let output = lite(&["-e", "queueMicrotask(() => process.exit(3)); 1+1"]);
+    let output = onde(&["-e", "queueMicrotask(() => process.exit(3)); 1+1"]);
     assert_eq!(code(&output), 3);
     assert_eq!(stdout(&output), "");
 }
@@ -86,7 +86,7 @@ fn eval_process_exit_from_a_microtask_does_not_print_the_value() {
 #[test]
 fn file_does_not_print_its_completion_value() {
     let path = script("value.js", "1 + 1;\n");
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "");
 }
@@ -95,7 +95,7 @@ fn file_does_not_print_its_completion_value() {
 fn self_feeding_microtasks_trip_the_budget() {
     // The default budget is off, like Node; `--max-microtasks` is the embedder guard
     // (ADR-0002 I9, compat D9).
-    let output = lite(&[
+    let output = onde(&[
         "--max-microtasks",
         "10000",
         "-e",
@@ -111,7 +111,7 @@ fn self_feeding_microtasks_trip_the_budget() {
 
 #[test]
 fn microtask_timeout_interrupts_a_long_job() {
-    let output = lite(&[
+    let output = onde(&[
         "--microtask-timeout",
         "20",
         "--max-microtasks",
@@ -129,7 +129,7 @@ fn microtask_timeout_interrupts_a_long_job() {
 
 #[test]
 fn eval_prints_nothing_for_undefined() {
-    let output = lite(&["-e", "undefined"]);
+    let output = onde(&["-e", "undefined"]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "");
 }
@@ -137,27 +137,27 @@ fn eval_prints_nothing_for_undefined() {
 #[test]
 fn runs_a_classic_script() {
     let path = script("hello.js", "console.log('hello', 1, true);\n");
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "hello 1 true\n");
 }
 
-/// Node hands the script everything after its path. A flag that lite also defines (`--check`) must
+/// Node hands the script everything after its path. A flag that onde also defines (`--check`) must
 /// still reach the script, or a CLI like `tuckbox` cannot use its own options.
 #[test]
-fn script_arguments_win_over_lite_flags() {
+fn script_arguments_win_over_onde_flags() {
     let path = script(
         "args.js",
         "console.log(JSON.stringify(process.argv.slice(2)));\n",
     );
     let path = path.to_str().expect("utf-8 path");
 
-    let output = lite(&[path, "--check", "--prod", "-x"]);
+    let output = onde(&[path, "--check", "--prod", "-x"]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "[\"--check\",\"--prod\",\"-x\"]\n");
 
-    // The same holds when lite's own options come first.
-    let output = lite(&["--io-threads", "2", path, "--max-microtasks", "1"]);
+    // The same holds when onde's own options come first.
+    let output = onde(&["--io-threads", "2", path, "--max-microtasks", "1"]);
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "[\"--max-microtasks\",\"1\"]\n");
 }
@@ -168,7 +168,7 @@ fn uncaught_error_has_a_node_shaped_header() {
         "boom.js",
         "const a = 1;\nfunction f() {\n  throw new Error('boom');\n}\nf();\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
     let stderr = stderr(&output);
     let path = path.display().to_string();
 
@@ -191,7 +191,7 @@ fn process_exit_sets_the_code_and_drops_remaining_microtasks() {
         "queueMicrotask(() => { console.log('m1'); process.exit(7); });\n\
          queueMicrotask(() => console.log('m2'));\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 7);
     assert_eq!(stdout(&output), "m1\n");
@@ -208,7 +208,7 @@ fn microtask_order_matches_node() {
          queueMicrotask(() => console.log('qm2'));\n\
          console.log('sync');\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(
@@ -223,7 +223,7 @@ fn throwing_microtask_is_fatal() {
         "job-throw.js",
         "queueMicrotask(() => { throw new Error('in-job'); });\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
     let stderr = stderr(&output);
 
     assert_eq!(code(&output), 1);
@@ -240,11 +240,11 @@ fn throwing_microtask_is_fatal() {
 #[test]
 fn missing_file_is_a_clear_error_not_a_panic() {
     let path = std::env::temp_dir().join(format!(
-        "lite-m0-{}-definitely-missing.js",
+        "onde-m0-{}-definitely-missing.js",
         std::process::id()
     ));
     let _ = std::fs::remove_file(&path);
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
     let stderr = stderr(&output);
 
     assert_eq!(code(&output), 1);
@@ -261,7 +261,7 @@ fn missing_file_is_a_clear_error_not_a_panic() {
 #[test]
 fn syntax_error_is_reported_as_such() {
     let path = script("syntax.js", "function (\n");
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 1);
     assert!(
@@ -277,7 +277,7 @@ fn extra_args_reach_process_argv() {
         "argv.js",
         "console.log(process.argv[2], process.argv[3]);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path"), "alpha", "beta"]);
+    let output = onde(&[path.to_str().expect("utf-8 path"), "alpha", "beta"]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "alpha beta\n");
@@ -286,7 +286,7 @@ fn extra_args_reach_process_argv() {
 #[test]
 fn console_error_goes_to_stderr() {
     let path = script("streams.js", "console.log('out');\nconsole.error('err');\n");
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(stdout(&output), "out\n");
     assert_eq!(stderr(&output), "err\n");
@@ -294,15 +294,15 @@ fn console_error_goes_to_stderr() {
 
 #[test]
 fn version_and_help() {
-    let version = lite(&["--version"]);
+    let version = onde(&["--version"]);
     assert_eq!(code(&version), 0);
     assert!(
-        stdout(&version).starts_with("lite v"),
+        stdout(&version).starts_with("onde v"),
         "{}",
         stdout(&version)
     );
 
-    let help = lite(&["--help"]);
+    let help = onde(&["--help"]);
     assert_eq!(code(&help), 0);
     assert!(stdout(&help).contains("Usage:"), "{}", stdout(&help));
     assert!(stdout(&help).contains("--eval"), "{}", stdout(&help));
@@ -310,7 +310,7 @@ fn version_and_help() {
 
 #[test]
 fn unknown_option_is_a_usage_error() {
-    let output = lite(&["--nope"]);
+    let output = onde(&["--nope"]);
     assert_eq!(code(&output), 1);
     assert!(
         stderr(&output).contains("unknown option"),
@@ -321,7 +321,7 @@ fn unknown_option_is_a_usage_error() {
 
 #[test]
 fn no_arguments_is_a_usage_error() {
-    let output = lite(&[]);
+    let output = onde(&[]);
     assert_eq!(code(&output), 1);
     assert!(
         stderr(&output).contains("expected a script"),
@@ -341,7 +341,7 @@ fn timers_and_immediates_are_ordered_like_node() {
          setImmediate(() => console.log('imm'));\n\
          console.log('sync');\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     // A clamped 0 ms timer versus `setImmediate` at top level depends on how long the rest of
@@ -365,7 +365,7 @@ fn clear_timeout_removes_the_timer_but_keeps_the_handle() {
          clearTimeout(t);\n\
          console.log('cleared', t.hasRef());\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "cleared true\n");
@@ -378,7 +378,7 @@ fn set_interval_reschedules_and_can_be_cleared() {
         "let n = 0;\n\
          const iv = setInterval(() => { console.log('iv', ++n); if (n === 3) clearInterval(iv); }, 1);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "iv 1\niv 2\niv 3\n");
@@ -392,7 +392,7 @@ fn unrefed_timer_does_not_keep_the_loop_alive() {
          t.unref();\n\
          console.log('unref', t.hasRef());\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "unref false\n");
@@ -406,7 +406,7 @@ fn before_exit_runs_before_exit_and_can_be_revived() {
          process.on('beforeExit', (c) => { console.log('beforeExit', c); if (n++ < 1) setTimeout(() => console.log('revived'), 0); });\n\
          process.on('exit', (c) => console.log('exit', c));\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(
@@ -422,7 +422,7 @@ fn exit_code_property_becomes_the_process_status() {
         "process.on('exit', (c) => console.log('exit', c));\n\
          process.exitCode = 3;\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 3);
     assert_eq!(stdout(&output), "exit 3\n");
@@ -438,7 +438,7 @@ fn unhandled_rejection_is_reported_after_the_microtasks_before_timers() {
          process.nextTick(() => console.log('t1'));\n\
          setTimeout(() => console.log('timer'), 0);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "t1\nm1\nunhandled r1\ntimer\n");
@@ -453,7 +453,7 @@ fn a_late_handler_emits_rejection_handled_after_the_catch() {
          const p = Promise.reject(new Error('r3'));\n\
          setTimeout(() => p.catch((e) => console.log('caught', e.message)), 0);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(
@@ -470,7 +470,7 @@ fn an_uncaught_exception_handler_keeps_the_loop_alive() {
          setTimeout(() => { throw new Error('boom'); }, 0);\n\
          setTimeout(() => console.log('after'), 1);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "handled boom\nafter\n");
@@ -482,7 +482,7 @@ fn timer_callbacks_receive_args_and_a_timeout_this() {
         "timer-args.js",
         "setTimeout(function (a, b) { console.log('args', a, b, typeof this.hasRef); }, 0, 'x', 'y');\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "args x y function\n");
@@ -496,7 +496,7 @@ fn non_positive_and_nan_delays_clamp_to_one_millisecond() {
          setTimeout(() => console.log('b'), NaN);\n\
          setTimeout(() => console.log('c'), 0);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "a\nb\nc\n");
@@ -509,7 +509,7 @@ fn ten_thousand_timers_can_be_created_and_cleared() {
         "for (let i = 0; i < 10000; i++) clearTimeout(setTimeout(() => {}, 1000));\n\
          setTimeout(() => console.log('done'), 0);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "done\n");
@@ -523,7 +523,7 @@ fn process_exit_from_a_timer_drops_later_timers() {
          setTimeout(() => { console.log('t1'); process.exit(2); }, 0);\n\
          setTimeout(() => console.log('nope'), 5);\n",
     );
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 2);
     assert_eq!(stdout(&output), "t1\nexit 2\n");
@@ -532,7 +532,7 @@ fn process_exit_from_a_timer_drops_later_timers() {
 #[test]
 fn unhandled_rejection_with_no_listener_exits_one() {
     let path = script("unhandled-default.js", "Promise.reject(new Error('r1'));\n");
-    let output = lite(&[path.to_str().expect("utf-8 path")]);
+    let output = onde(&[path.to_str().expect("utf-8 path")]);
 
     assert_eq!(code(&output), 1);
     assert_eq!(stdout(&output), "");
@@ -555,7 +555,7 @@ impl TempTree {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let unique = NEXT.fetch_add(1, Ordering::Relaxed);
         let dir =
-            std::env::temp_dir().join(format!("lite-m2-{}-{unique}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("onde-m2-{}-{unique}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp tree");
         TempTree(dir)
     }
@@ -585,7 +585,7 @@ fn esm_entry_runs_with_top_level_await() {
         "main.mjs",
         "console.log('a');\nawait Promise.resolve();\nconsole.log('b');\n",
     );
-    let output = lite(&[tree.path("main.mjs").to_str().unwrap()]);
+    let output = onde(&[tree.path("main.mjs").to_str().unwrap()]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "a\nb\n");
@@ -599,7 +599,7 @@ fn module_type_follows_package_json() {
         "main.js",
         "export const value = 7;\nconsole.log('esm', value);\n",
     );
-    let output = lite(&[tree.path("main.js").to_str().unwrap()]);
+    let output = onde(&[tree.path("main.js").to_str().unwrap()]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "esm 7\n");
@@ -614,7 +614,7 @@ fn cjs_entry_gets_the_module_wrapper() {
          const path = require('path');\n\
          console.log(path.basename('/a/b.txt'));\n",
     );
-    let output = lite(&[tree.path("main.cjs").to_str().unwrap()]);
+    let output = onde(&[tree.path("main.cjs").to_str().unwrap()]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "true .\nb.txt\n");
@@ -624,7 +624,7 @@ fn cjs_entry_gets_the_module_wrapper() {
 fn check_reports_a_syntax_error_with_caret_and_does_not_execute() {
     let tree = TempTree::new("check-bad");
     let path = tree.file("bad.js", "const x = ;\nconsole.log('ran');\n");
-    let output = lite(&["--check", path.to_str().unwrap()]);
+    let output = onde(&["--check", path.to_str().unwrap()]);
     let text = stderr(&output);
 
     assert_eq!(code(&output), 1);
@@ -642,7 +642,7 @@ fn check_accepts_valid_cjs_and_esm_without_running_them() {
     let cjs = tree.file("good.cjs", "console.log('ran');\n");
     let esm = tree.file("good.mjs", "export const x = 1;\n");
     for path in [cjs, esm] {
-        let output = lite(&["--check", path.to_str().unwrap()]);
+        let output = onde(&["--check", path.to_str().unwrap()]);
         assert_eq!(code(&output), 0, "{}", stderr(&output));
         assert!(stdout(&output).is_empty(), "{}", stdout(&output));
     }
@@ -655,7 +655,7 @@ fn dynamic_import_of_a_missing_module_rejects_with_a_code() {
         "main.mjs",
         "try {\n  await import('./nope.mjs');\n} catch (error) {\n  console.log(error.code);\n}\n",
     );
-    let output = lite(&[tree.path("main.mjs").to_str().unwrap()]);
+    let output = onde(&[tree.path("main.mjs").to_str().unwrap()]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "ERR_MODULE_NOT_FOUND\n");
@@ -663,7 +663,7 @@ fn dynamic_import_of_a_missing_module_rejects_with_a_code() {
 
 #[test]
 fn eval_exposes_the_synthetic_module_globals() {
-    let output = lite(&[
+    let output = onde(&[
         "-e",
         "console.log(__filename, __dirname, module.id, typeof require)",
     ]);
@@ -674,7 +674,7 @@ fn eval_exposes_the_synthetic_module_globals() {
 
 #[test]
 fn eval_exposes_require_bound_to_the_working_directory() {
-    let output = lite(&["-e", "console.log(require('path').basename('/a/b.txt'))"]);
+    let output = onde(&["-e", "console.log(require('path').basename('/a/b.txt'))"]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "b.txt\n");
@@ -694,7 +694,7 @@ fn import_meta_exposes_filename_and_dirname() {
         "console.log(import.meta.filename.endsWith('main.mjs'));\n\
          console.log(import.meta.url.startsWith('file://'));\n",
     );
-    let output = lite(&[tree.path("main.mjs").to_str().unwrap()]);
+    let output = onde(&[tree.path("main.mjs").to_str().unwrap()]);
 
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "true\ntrue\n");
@@ -705,7 +705,7 @@ fn syntax_error_in_a_required_module_points_at_that_module() {
     let tree = TempTree::new("dep-syntax");
     tree.file("bad.cjs", "const x = ;\n");
     let entry = tree.file("entry.cjs", "require('./bad.cjs');\n");
-    let output = lite(&[entry.to_str().unwrap()]);
+    let output = onde(&[entry.to_str().unwrap()]);
     let text = stderr(&output);
 
     assert_eq!(code(&output), 1);
@@ -720,7 +720,7 @@ fn syntax_error_in_a_required_module_points_at_that_module() {
 fn missing_entry_file_reports_cannot_find_module() {
     let tree = TempTree::new("missing-entry");
     let missing = tree.path("nope.js");
-    let output = lite(&[missing.to_str().unwrap()]);
+    let output = onde(&[missing.to_str().unwrap()]);
     let text = stderr(&output);
 
     assert_eq!(code(&output), 1);

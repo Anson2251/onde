@@ -3,7 +3,7 @@
 // Runtime-agnostic self-check for js/lib/internal/errors.js, the shared error vocabulary.
 //
 //   node test/js/lib/errors.test.js
-//   ./target/debug/lite test/js/lib/errors.test.js
+//   ./target/debug/onde test/js/lib/errors.test.js
 //
 // Only the module under test (plus our Buffer, for the `<Buffer ...>` rendering) is required;
 // no `node:` builtins are used.

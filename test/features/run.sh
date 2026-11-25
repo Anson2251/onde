@@ -5,12 +5,12 @@
 #   ./test/features/run.sh
 #
 # The script builds four variants in the normal target directory and restores the default build on
-# exit, so a CI step can run it between the other lite jobs.
+# exit, so a CI step can run it between the other onde jobs.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="$root/target/debug/lite"
+onde="$root/target/debug/onde"
 
 restore() {
   cargo build -q -p ln-cli >/dev/null 2>&1 || true
@@ -23,12 +23,12 @@ build() {
 }
 
 loads() { # specifier
-  "$lite" -e "const m = require('$1'); console.log(typeof (m.Database || m.gzipSync))" | grep -qx function
+  "$onde" -e "const m = require('$1'); console.log(typeof (m.Database || m.gzipSync))" | grep -qx function
 }
 
 fails_with_feature() { # specifier, feature
   local specifier="$1" feature="$2" out
-  out="$("$lite" -e "
+  out="$("$onde" -e "
     try { require('$specifier'); console.log('loaded'); }
     catch (error) { console.log(error.code); console.log(error.message); }
   ")"
@@ -54,7 +54,7 @@ esm_fails_with_feature() { # specifier, feature
   directory="$(mktemp -d)"
   file="$directory/probe.mjs"
   printf 'try { await import("%s"); } catch (error) { console.log(error.code); console.log(error.message); }\n' "$specifier" >"$file"
-  out="$("$lite" "$file")"
+  out="$("$onde" "$file")"
   rm -rf "$directory"
   grep -q "ERR_UNKNOWN_BUILTIN_MODULE" <<<"$out"
   grep -Fq "\`$feature\` feature is not enabled in this build" <<<"$out"
@@ -67,7 +67,7 @@ has_dependency() { # crate-name, cargo tree args...
 }
 
 builtin_table() {
-  "$lite" -e '
+  "$onde" -e '
     const module = require("module");
     console.log(
       module.builtinModules.includes("sqlite"),
@@ -82,7 +82,7 @@ builtin_table() {
 # Both default features: the normal build.
 # ------------------------------------------------------------------------------------------------
 build
-"$lite" -e 'console.log(1 + 1)' | grep -qx 2
+"$onde" -e 'console.log(1 + 1)' | grep -qx 2
 loads node:sqlite
 loads node:zlib
 [ "$(builtin_table)" = "false true true true" ] || {
@@ -97,7 +97,7 @@ echo "ok        default build has both modules"
 # No features: both modules report the missing feature, CJS and ESM.
 # ------------------------------------------------------------------------------------------------
 build --no-default-features
-"$lite" -e 'console.log(1 + 1)' | grep -qx 2
+"$onde" -e 'console.log(1 + 1)' | grep -qx 2
 fails_with_feature node:sqlite node-sqlite
 fails_with_feature node:zlib node-zlib
 esm_fails_with_feature node:sqlite node-sqlite
@@ -107,7 +107,7 @@ esm_fails_with_feature node:zlib node-zlib
   exit 1
 }
 if has_dependency ln-zlib --no-default-features || has_dependency libsqlite3-sys --no-default-features; then
-  echo "FAIL: a no-feature lite still links zlib or SQLite" >&2
+  echo "FAIL: a no-feature onde still links zlib or SQLite" >&2
   exit 1
 fi
 echo "ok        no features: readable errors for both modules, no zlib/SQLite linked"
@@ -124,7 +124,7 @@ fails_with_feature node:zlib node-zlib
 }
 has_dependency libsqlite3-sys --no-default-features --features node-sqlite
 if has_dependency ln-zlib --no-default-features --features node-sqlite; then
-  echo "FAIL: a lite with only node-sqlite still links zlib" >&2
+  echo "FAIL: a onde with only node-sqlite still links zlib" >&2
   exit 1
 fi
 echo "ok        node-sqlite only"
@@ -138,7 +138,7 @@ fails_with_feature node:sqlite node-sqlite
 }
 has_dependency ln-zlib --no-default-features --features node-zlib
 if has_dependency libsqlite3-sys --no-default-features --features node-zlib; then
-  echo "FAIL: a lite with only node-zlib still links SQLite" >&2
+  echo "FAIL: a onde with only node-zlib still links SQLite" >&2
   exit 1
 fi
 echo "ok        node-zlib only"

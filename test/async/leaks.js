@@ -1,6 +1,6 @@
 // 1M promises with async_hooks enabled: ids stay monotonic, the resource table is pruned by GC,
 // and the loop comes back to the root context. Structural checks only — the values are
-// runtime-specific, so node and lite print the same booleans.
+// runtime-specific, so node and onde print the same booleans.
 
 "use strict";
 

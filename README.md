@@ -8,9 +8,6 @@ the plugin layer inside another tool. It speaks Node's module system (`require`,
 `dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and installs as a
 7.6 MB binary (5.4 MB without the optional modules).
 
-> Naming: the project is onde. The `ln-*` crates and the `lite` binary keep their old names, so the
-> commands below still say `target/debug/lite`.
-
 Status: M0–M7 are done; M8, the 1.0 compatibility sweep, packaging and publish, is next.
 
 Contents: [Quick start](#quick-start) · [Building](#building) ·
@@ -23,10 +20,10 @@ Contents: [Quick start](#quick-start) · [Building](#building) ·
 
 ```sh
 cargo build
-./target/debug/lite -e '1+1'                 # 2
-./target/debug/lite hello.js                 # CommonJS entry
-./target/debug/lite main.mjs                 # ES module (TLA, import.meta)
-./target/debug/lite --check main.mjs         # parse without running
+./target/debug/onde -e '1+1'                 # 2
+./target/debug/onde hello.js                 # CommonJS entry
+./target/debug/onde main.mjs                 # ES module (TLA, import.meta)
+./target/debug/onde --check main.mjs         # parse without running
 ```
 
 ```js
@@ -38,7 +35,7 @@ Promise.resolve().then(() => console.log("then"));
 setTimeout(() => console.log("timer"), 0);
 ```
 
-`cargo build` builds the workspace; the examples above use the debug `lite` binary. The core
+`cargo build` builds the workspace; the examples above use the debug `onde` binary. The core
 modules are ordinary `require`/`import` targets:
 
 ```js
@@ -63,7 +60,7 @@ cargo build -p ln-cli --no-default-features --features node-sqlite # one of them
 cargo test --all
 ```
 
-`node-sqlite` also links the bundled SQLite. In `lite`, `node-zlib` is the only zlib consumer, so
+`node-sqlite` also links the bundled SQLite. In `onde`, `node-zlib` is the only zlib consumer, so
 leaving it out drops zlib from that binary. The SDK is different: `ln-embed` enables
 `zlib-payload` by default so compiled apps can inflate `--compress zlib` payloads, and
 `node-zlib` there only adds the module (~40 KB; zlib is already present). An SDK archive built
@@ -107,7 +104,7 @@ machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resol
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
 | install size | 7.6 MB | 77 MB | 58 MB |
-| install size, both module features off (SQLite and zlib dropped from `lite`) | 5.4 MB | — | — |
+| install size, both module features off (SQLite and zlib dropped from `onde`) | 5.4 MB | — | — |
 | cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
 | cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
@@ -118,7 +115,7 @@ At 9.3 MB resident, a hundred onde processes cost less than the tool around them
 Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's 11.6, and
 QuickJS has an engine to initialize either way.
 
-Feature cost, measured on the same release build: in `lite`, `node-sqlite` adds **2.1 MB** (the
+Feature cost, measured on the same release build: in `onde`, `node-sqlite` adds **2.1 MB** (the
 bundled SQLite) and `node-zlib` adds **~90 KB** (zlib plus the module). In a compiled-app archive,
 `zlib-payload` is already on, so `node-zlib` adds only the module, about 40 KB. `cargo tree -i
 ln-zlib` shows which build carries the library.
@@ -154,20 +151,20 @@ Median 4.6x. QuickJS has no JIT and no generational nursery, so allocation-heavy
 most. For a CLI, a build step or a request handler with light logic that is decent; for a bundler,
 a minifier or a 10 MB JSON transform it is the wrong runtime.
 
-## One executable
+## One small executable
 
 `ondec` packages an app as a single program: it bundles the sources with rolldown, compiles every
 module to QuickJS bytecode, and links the payload against a static runtime library. The result needs
-neither `lite` nor Node, `node_modules`, the sources or the SDK at run time.
+neither `onde` nor Node, `node_modules`, the sources or the SDK at run time.
 
 ```sh
 # In the onde checkout: the tool, and the SDK for this machine.
 cargo build --release -p ondec
 ./scripts/build-sdk.sh                        # onde.h + libonde-<tuple>.a, prints the path
-sdk=$(ls -d dist/sdk/*/* | tail -1)           # dist/sdk/0.1.0/<tuple>
+export ONDE_SDK=$(ls -d dist/sdk/*/* | tail -1)           # dist/sdk/0.1.0/<tuple>
 
 # Anywhere: bundle a project into one executable.
-target/release/ondec build ~/app/src/main.js --sdk "$sdk" -o ~/app/app
+target/release/ondec build ~/app/src/main.js --sdk "$ONDE_SDK" -o ~/app/app
 ```
 
 `cargo install --path crates/ondec` puts the tool on `PATH` if you would rather not type the
@@ -189,8 +186,8 @@ arm64, release build):
 | the same, `--compress zstd:19` (543 KiB payload) | 5.4 MB | 29 ms |
 
 A compiled app never parses its sources: a 1.9 MiB module loads from bytecode in about 5 ms where
-`lite` needs about 790 ms to parse it. A hello-world app is also smaller than the interpreter that
-produced it — 6.9 MB against `lite`'s 7.6 MB — because only the runtime code the app reaches is
+`onde` needs about 790 ms to parse it. A hello-world app is also smaller than the interpreter that
+produced it — 6.9 MB against `onde`'s 7.6 MB — because only the runtime code the app reaches is
 linked in.
 
 The size table was measured before `node:sqlite` landed. The default SDK now carries the bundled
@@ -256,7 +253,7 @@ is one onde implements, so it exercises the runtime the way a real tool would.
 
 ```sh
 cd tuckbox && pnpm install && pnpm build
-onde=$PWD/../target/debug/lite
+onde=$PWD/../target/debug/onde
 tuckbox=$PWD/bin/tuckbox.js
 
 mkdir /tmp/app && cd /tmp/app
@@ -282,7 +279,7 @@ two packages (`debug`, `ms`), against `npm install --no-audit --no-fund` (npm 11
 lifecycle scripts, `.bin` links, peer and native dependencies, and the full scope is in
 [docs/tuckbox.md](docs/tuckbox.md).
 
-The real npm gets further than a demo usually does: `lite "$(command -v npm)" --help` prints npm
+The real npm gets further than a demo usually does: `onde "$(command -v npm)" --help` prints npm
 11.20's help with no version warning. A command that walks the tree, `npm ls`, stops at
 `node:diagnostics_channel`, which [docs/compat.md](docs/compat.md) lists as a 1.1 candidate. That
 is the honest line: the CLI loads and runs, the module it needs for real work is not there yet.

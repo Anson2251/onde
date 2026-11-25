@@ -5,7 +5,7 @@
 //   <runtime> test/perf/fs-read.js <file> [iterations]
 //
 // Reads the same file repeatedly and prints one RESULT line. The harness runs this script under
-// node and under lite with the same 10 MB file and compares the medians, so the measurement is the
+// node and under onde with the same 10 MB file and compares the medians, so the measurement is the
 // runtime's read path, not the filesystem: by the second iteration the file is in the page cache
 // for both.
 //

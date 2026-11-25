@@ -4,10 +4,10 @@
 //
 // The host shim supplies Node-backed values, so this test only asserts
 // types/shape and equality with the shim (never a literal host OS value).
-// It is expected to run unchanged under lite once the host shim is available
+// It is expected to run unchanged under onde once the host shim is available
 // there.
 
-// Under lite the real host is already installed; under node the shim supplies one.
+// Under onde the real host is already installed; under node the shim supplies one.
 if (globalThis.__ln_host === undefined) {
   globalThis.__ln_host = require("../host-shim.js")();
 }
@@ -134,8 +134,8 @@ ok(cpus.length >= 1, "cpus() has at least one entry");
 
 for (let i = 0; i < cpus.length; i += 1) {
   eq(typeof cpus[i].model, "string", `cpus()[${i}].model is a string`);
-  eq(cpus[i].model, "", `cpus()[${i}].model is empty for lite`);
-  eq(cpus[i].speed, 0, `cpus()[${i}].speed is zero for lite`);
+  eq(cpus[i].model, "", `cpus()[${i}].model is empty for onde`);
+  eq(cpus[i].speed, 0, `cpus()[${i}].speed is zero for onde`);
   eq(typeof cpus[i].times, "object", `cpus()[${i}].times is an object`);
   deepEq(
     cpus[i].times,
@@ -183,11 +183,11 @@ throwsCode(
 // ---------------------------------------------------------------------------
 // Lite gaps and constants
 
-deepEq(os.networkInterfaces(), {}, "networkInterfaces is an empty object in lite");
+deepEq(os.networkInterfaces(), {}, "networkInterfaces is an empty object in onde");
 const load = os.loadavg();
 ok(Array.isArray(load), "loadavg() returns an array");
 eq(load.length, 3, "loadavg() has three entries");
-for (let i = 0; i < 3; i += 1) eq(load[i], 0, `loadavg()[${i}] is zero in lite`);
+for (let i = 0; i < 3; i += 1) eq(load[i], 0, `loadavg()[${i}] is zero in onde`);
 
 const parallelism = os.availableParallelism();
 ok(Number.isInteger(parallelism), "availableParallelism() is an integer");
@@ -225,7 +225,7 @@ function swapHost(value, action) {
     try {
       globalThis.__ln_host = savedHost;
     } catch (_) {
-      // lite installs the host as a global; if it is not writable, leave it.
+      // onde installs the host as a global; if it is not writable, leave it.
     }
   }
 }

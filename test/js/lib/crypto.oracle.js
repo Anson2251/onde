@@ -2,7 +2,7 @@
 
 // Node-only differential test: js/lib/crypto.js against `node:crypto`.
 //
-// The lite surface talks to `__ln_host.crypto`, so this file installs a host
+// The onde surface talks to `__ln_host.crypto`, so this file installs a host
 // shim backed by `node:crypto` before requiring the module under test. That
 // exercises the JavaScript layer (argument parsing, error shapes, digest
 // encoding, copy() semantics, callback delivery) against the Node oracle; the
@@ -11,16 +11,16 @@
 // Run with: node test/js/lib/crypto.oracle.js
 //
 // Known, documented differences (not compared below):
-//   - `hkdf(...)` without a callback is a lite extension (Node's sync form is
+//   - `hkdf(...)` without a callback is a onde extension (Node's sync form is
 //     `hkdfSync`), so the sync form is compared against `node:crypto.hkdfSync`.
-//   - `getHashes()` is lite's five digests, not Node's OpenSSL catalog.
-//   - A repeated `Hmac.digest()` throws in lite; Node v26 returns an empty
+//   - `getHashes()` is onde's five digests, not Node's OpenSSL catalog.
+//   - A repeated `Hmac.digest()` throws in onde; Node v26 returns an empty
 //     buffer (its own reuse quirk, DEP0206).
-//   - The callback forms run on `queueMicrotask` in lite rather than a libuv
+//   - The callback forms run on `queueMicrotask` in onde rather than a libuv
 //     thread-pool request, so only their asynchronous delivery is checked.
-//   - `hkdf(..., 0)` returns an empty buffer in lite; Node's OpenSSL-backed
+//   - `hkdf(..., 0)` returns an empty buffer in onde; Node's OpenSSL-backed
 //     `hkdfSync(..., 0)` fails with "HKDF derivation failed" (no code). RFC 5869
-//     does not forbid L = 0, so the lite sync extension keeps the identity.
+//     does not forbid L = 0, so the onde sync extension keeps the identity.
 
 const assert = require("node:assert");
 const nodeCrypto = require("node:crypto");
@@ -97,7 +97,7 @@ globalThis.__ln_host = {
   },
 };
 
-const liteCrypto = require("../../../js/lib/crypto.js");
+const ondeCrypto = require("../../../js/lib/crypto.js");
 
 function valueOf(api, digest) {
   return Buffer.isBuffer(digest) ? `buf:${digest.toString("hex")}` : `str:${digest}`;
@@ -124,11 +124,11 @@ const ENCODINGS = [undefined, "hex", "base64", "base64url", "latin1", "utf8", "n
 function checkHashes() {
   for (const algorithm of ALGORITHMS) {
     for (const encoding of ENCODINGS) {
-      const lite = valueOf(
-        liteCrypto,
+      const onde = valueOf(
+        ondeCrypto,
         encoding === undefined
-          ? liteCrypto.createHash(algorithm).update("abc").digest()
-          : liteCrypto.createHash(algorithm).update("abc").digest(encoding),
+          ? ondeCrypto.createHash(algorithm).update("abc").digest()
+          : ondeCrypto.createHash(algorithm).update("abc").digest(encoding),
       );
       const node = valueOf(
         nodeCrypto,
@@ -136,21 +136,21 @@ function checkHashes() {
           ? nodeCrypto.createHash(algorithm).update("abc").digest()
           : nodeCrypto.createHash(algorithm).update("abc").digest(encoding),
       );
-      assert.deepStrictEqual(lite, node, `${algorithm} digest(${String(encoding)})`);
+      assert.deepStrictEqual(onde, node, `${algorithm} digest(${String(encoding)})`);
     }
   }
 
   // Case-insensitive and OpenSSL-style spellings.
   for (const algorithm of ["SHA256", "Sha512", "sha-256", "sha-1", "sha2-384", "sha2-224", "sha-512/224", "sha2-512/256"]) {
     assert.deepStrictEqual(
-      liteCrypto.createHash(algorithm).update("abc").digest("hex"),
+      ondeCrypto.createHash(algorithm).update("abc").digest("hex"),
       nodeCrypto.createHash(algorithm).update("abc").digest("hex"),
       `algorithm alias ${algorithm}`,
     );
   }
 
   // Multiple updates, string encodings, views and odd view offsets.
-  const lite = liteCrypto.createHash("sha256");
+  const onde = ondeCrypto.createHash("sha256");
   const node = nodeCrypto.createHash("sha256");
   for (const chunk of [
     "616263",
@@ -159,13 +159,13 @@ function checkHashes() {
     new Uint8Array([0, 0x6a, 0x6b, 0x6c, 0]).subarray(1, 4),
     new DataView(new Uint8Array([0x6d, 0x6e, 0x6f]).buffer),
   ]) {
-    lite.update(chunk, typeof chunk === "string" ? "hex" : undefined);
+    onde.update(chunk, typeof chunk === "string" ? "hex" : undefined);
     node.update(chunk, typeof chunk === "string" ? "hex" : undefined);
   }
-  assert.deepStrictEqual(lite.digest("hex"), node.digest("hex"), "chunked updates with views");
+  assert.deepStrictEqual(onde.digest("hex"), node.digest("hex"), "chunked updates with views");
 
   // copy() snapshots, and the original continues independently.
-  const liteTail = liteCrypto.createHash("sha256").update("abc");
+  const liteTail = ondeCrypto.createHash("sha256").update("abc");
   const liteSnapshot = liteTail.copy();
   liteTail.update("def");
   const nodeTail = nodeCrypto.createHash("sha256").update("abc");
@@ -179,7 +179,7 @@ function checkHashes() {
 
   // A string digest encoding is honoured case-insensitively.
   assert.deepStrictEqual(
-    liteCrypto.createHash("sha256").update("abc").digest("HEX"),
+    ondeCrypto.createHash("sha256").update("abc").digest("HEX"),
     nodeCrypto.createHash("sha256").update("abc").digest("HEX"),
     "uppercase digest encoding",
   );
@@ -201,7 +201,7 @@ function checkHmac() {
     for (const key of keys) {
       for (const chunk of data) {
         assert.deepStrictEqual(
-          liteCrypto.createHmac(algorithm, key).update(chunk).digest("hex"),
+          ondeCrypto.createHmac(algorithm, key).update(chunk).digest("hex"),
           nodeCrypto.createHmac(algorithm, key).update(chunk).digest("hex"),
           `hmac ${algorithm}`,
         );
@@ -213,12 +213,12 @@ function checkHmac() {
   // Buffer's `.buffer` is the whole 8 KiB pool, whose other bytes are allocation-order dependent.
   const exactArrayBuffer = new Uint8Array([0x4a, 0x65, 0x66, 0x65]).buffer;
   assert.deepStrictEqual(
-    liteCrypto.createHmac("sha256", exactArrayBuffer).update("x").digest("hex"),
+    ondeCrypto.createHmac("sha256", exactArrayBuffer).update("x").digest("hex"),
     nodeCrypto.createHmac("sha256", exactArrayBuffer).update("x").digest("hex"),
     "hmac ArrayBuffer key",
   );
   assert.deepStrictEqual(
-    liteCrypto.createHmac("sha256", "").update("x").digest("hex"),
+    ondeCrypto.createHmac("sha256", "").update("x").digest("hex"),
     nodeCrypto.createHmac("sha256", "").update("x").digest("hex"),
     "hmac empty key",
   );
@@ -235,7 +235,7 @@ function checkHkdf() {
   for (const algorithm of ALGORITHMS) {
     for (const length of [1, 16, 42, 255 * sizes[algorithm]]) {
       assert.deepStrictEqual(
-        liteCrypto.hkdf(algorithm, ikm, salt, info, length).toString("hex"),
+        ondeCrypto.hkdf(algorithm, ikm, salt, info, length).toString("hex"),
         Buffer.from(nodeCrypto.hkdfSync(algorithm, ikm, salt, info, length)).toString("hex"),
         `hkdf ${algorithm} length ${length}`,
       );
@@ -244,14 +244,14 @@ function checkHkdf() {
 
   // Node accepts strings for ikm/salt/info as utf8.
   assert.deepStrictEqual(
-    liteCrypto.hkdf("sha256", "ikm", "salt", "info", 32).toString("hex"),
+    ondeCrypto.hkdf("sha256", "ikm", "salt", "info", 32).toString("hex"),
     Buffer.from(nodeCrypto.hkdfSync("sha256", "ikm", "salt", "info", 32)).toString("hex"),
     "hkdf string byte sources",
   );
 
   // Empty salt and info behave like RFC 5869's zero-filled defaults.
   assert.deepStrictEqual(
-    liteCrypto.hkdf("sha256", ikm, Buffer.alloc(0), Buffer.alloc(0), 42).toString("hex"),
+    ondeCrypto.hkdf("sha256", ikm, Buffer.alloc(0), Buffer.alloc(0), 42).toString("hex"),
     Buffer.from(nodeCrypto.hkdfSync("sha256", ikm, Buffer.alloc(0), Buffer.alloc(0), 42)).toString("hex"),
     "hkdf empty salt and info",
   );
@@ -269,7 +269,7 @@ function checkHkdfSync() {
     for (const length of [1, 16, 42, 255 * sizes[algorithm]]) {
       compare(
         `hkdfSync ${algorithm} length ${length}`,
-        () => liteCrypto.hkdfSync(algorithm, ikm, salt, info, length),
+        () => ondeCrypto.hkdfSync(algorithm, ikm, salt, info, length),
         () => nodeCrypto.hkdfSync(algorithm, ikm, salt, info, length),
       );
     }
@@ -286,7 +286,7 @@ function checkHkdfSync() {
     ["hkdfSync oversized output", (c) => c("sha256", Buffer.alloc(4), Buffer.alloc(0), Buffer.alloc(0), 8161)],
   ];
   for (const [label, call] of cases) {
-    compare(label, () => call(liteCrypto.hkdfSync), () => call(nodeCrypto.hkdfSync));
+    compare(label, () => call(ondeCrypto.hkdfSync), () => call(nodeCrypto.hkdfSync));
   }
 }
 
@@ -356,10 +356,10 @@ function checkErrors() {
   for (const [label, call] of cases) {
     // Clone the argument construction per API: Buffer/typed values are not mutated by the call,
     // so passing a builder is enough for these argument-only errors.
-    assert.deepStrictEqual(capture(() => call(liteCrypto)), capture(() => call(nodeCrypto)), label);
+    assert.deepStrictEqual(capture(() => call(ondeCrypto)), capture(() => call(nodeCrypto)), label);
   }
 
-  // hkdf validates its parameters in Node's order; the lite sync form mirrors `hkdfSync`.
+  // hkdf validates its parameters in Node's order; the onde sync form mirrors `hkdfSync`.
   const hkdfCases = [
     ["hkdf digest type", (c) => c(5, Buffer.alloc(4), Buffer.alloc(0), Buffer.alloc(0), 16)],
     ["hkdf ikm number", (c) => c("sha256", 5, Buffer.alloc(0), Buffer.alloc(0), 16)],
@@ -376,7 +376,7 @@ function checkErrors() {
   ];
   for (const [label, call] of hkdfCases) {
     assert.deepStrictEqual(
-      capture(() => call(liteCrypto.hkdf)),
+      capture(() => call(ondeCrypto.hkdf)),
       capture(() => call(nodeCrypto.hkdfSync)),
       label,
     );
@@ -384,7 +384,7 @@ function checkErrors() {
 
   // The callback slot is validated last, after the parameters.
   assert.deepStrictEqual(
-    capture(() => liteCrypto.hkdf("sha256", Buffer.alloc(4), Buffer.alloc(0), Buffer.alloc(0), 16, 7)),
+    capture(() => ondeCrypto.hkdf("sha256", Buffer.alloc(4), Buffer.alloc(0), Buffer.alloc(0), 16, 7)),
     capture(() => nodeCrypto.hkdf("sha256", Buffer.alloc(4), Buffer.alloc(0), Buffer.alloc(0), 16, 7)),
     "hkdf bad callback",
   );
@@ -397,22 +397,22 @@ function checkTimingSafeEqual() {
   const right = Buffer.from("0001020304050607", "hex");
   const different = Buffer.from("0001020304050608", "hex");
   assert.strictEqual(
-    liteCrypto.timingSafeEqual(left, right),
+    ondeCrypto.timingSafeEqual(left, right),
     nodeCrypto.timingSafeEqual(left, right),
     "timingSafeEqual equal buffers",
   );
   assert.strictEqual(
-    liteCrypto.timingSafeEqual(left, different),
+    ondeCrypto.timingSafeEqual(left, different),
     nodeCrypto.timingSafeEqual(left, different),
     "timingSafeEqual different buffers",
   );
   assert.strictEqual(
-    liteCrypto.timingSafeEqual(new Uint8Array([0, 1, 2]).subarray(1), new Uint8Array([1, 2, 3]).subarray(0, 2)),
+    ondeCrypto.timingSafeEqual(new Uint8Array([0, 1, 2]).subarray(1), new Uint8Array([1, 2, 3]).subarray(0, 2)),
     nodeCrypto.timingSafeEqual(new Uint8Array([0, 1, 2]).subarray(1), new Uint8Array([1, 2, 3]).subarray(0, 2)),
     "timingSafeEqual uses the view bytes",
   );
   assert.strictEqual(
-    liteCrypto.timingSafeEqual(new ArrayBuffer(0), new ArrayBuffer(0)),
+    ondeCrypto.timingSafeEqual(new ArrayBuffer(0), new ArrayBuffer(0)),
     nodeCrypto.timingSafeEqual(new ArrayBuffer(0), new ArrayBuffer(0)),
     "timingSafeEqual empty ArrayBuffers",
   );
@@ -475,7 +475,7 @@ function checkOneShotHash() {
   for (const args of cases) {
     compare(
       `hash(${args.map((value) => String(value)).join(", ")})`,
-      () => liteCrypto.hash(...args),
+      () => ondeCrypto.hash(...args),
       () => nodeCrypto.hash(...args),
     );
   }
@@ -502,7 +502,7 @@ function checkRandomFill() {
     ["randomFill(bad callback)", (c) => c.randomFill(Buffer.alloc(4), 5)],
   ];
   for (const [label, call] of errorCases) {
-    compare(label, () => call(liteCrypto), () => call(nodeCrypto));
+    compare(label, () => call(ondeCrypto), () => call(nodeCrypto));
   }
 
   // Identity and the written window are the observable parts of a successful fill.
@@ -513,15 +513,15 @@ function checkRandomFill() {
     ["DataView", () => new DataView(new ArrayBuffer(4))],
     ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
   ]) {
-    const lite = make();
+    const onde = make();
     const node = make();
-    assert.strictEqual(liteCrypto.randomFillSync(lite), lite, `randomFillSync returns ${label}`);
+    assert.strictEqual(ondeCrypto.randomFillSync(onde), onde, `randomFillSync returns ${label}`);
     assert.strictEqual(nodeCrypto.randomFillSync(node), node, `node randomFillSync returns ${label}`);
   }
 
   const liteWindow = Buffer.alloc(4, 0xaa);
   const nodeWindow = Buffer.alloc(4, 0xaa);
-  liteCrypto.randomFillSync(liteWindow, 1, 2);
+  ondeCrypto.randomFillSync(liteWindow, 1, 2);
   nodeCrypto.randomFillSync(nodeWindow, 1, 2);
   assert.strictEqual(liteWindow[0], 0xaa, "randomFillSync leaves bytes before the window alone");
   assert.strictEqual(liteWindow[3], 0xaa, "randomFillSync leaves bytes after the window alone");
@@ -535,7 +535,7 @@ async function checkRandomFillAsync() {
   let liteSync = true;
   let nodeSync = true;
   const liteResult = await new Promise((resolve) => {
-    liteCrypto.randomFill(liteBuffer, 1, 2, (error, filled) => {
+    ondeCrypto.randomFill(liteBuffer, 1, 2, (error, filled) => {
       resolve({ isSync: liteSync, error, same: filled === liteBuffer });
     });
     liteSync = false;
@@ -564,9 +564,9 @@ function checkGetRandomValues() {
       return new CustomBytes(4);
     },
   ]) {
-    const lite = make();
+    const onde = make();
     const node = make();
-    assert.strictEqual(liteCrypto.getRandomValues(lite), lite, "getRandomValues returns its argument");
+    assert.strictEqual(ondeCrypto.getRandomValues(onde), onde, "getRandomValues returns its argument");
     assert.strictEqual(nodeCrypto.getRandomValues(node), node, "node getRandomValues returns its argument");
   }
 
@@ -578,7 +578,7 @@ function checkGetRandomValues() {
     ["getRandomValues(too big)", (c) => c.getRandomValues(new Uint8Array(65537))],
   ];
   for (const [label, call] of errorCases) {
-    compare(label, () => call(liteCrypto), () => call(nodeCrypto));
+    compare(label, () => call(ondeCrypto), () => call(nodeCrypto));
   }
 
   // Node began rejecting shared backing stores inside v26: 26.10 fills the view, 26.13 throws.
@@ -594,12 +594,12 @@ function checkGetRandomValues() {
   if (nodeRejects) {
     compare(
       "getRandomValues(SharedArrayBuffer view)",
-      () => liteCrypto.getRandomValues(sharedView()),
+      () => ondeCrypto.getRandomValues(sharedView()),
       () => nodeCrypto.getRandomValues(sharedView()),
     );
   } else {
     assert.throws(
-      () => liteCrypto.getRandomValues(sharedView()),
+      () => ondeCrypto.getRandomValues(sharedView()),
       (error) => {
         assert.strictEqual(error.name, "TypeError", "shared view: name");
         assert.strictEqual(error.code, "ERR_INVALID_ARG_TYPE", "shared view: code");
@@ -628,15 +628,15 @@ async function checkCallbacks() {
       if (pending === 0) resolve(out);
     };
 
-    liteCrypto.randomBytes(8, (error, bytes) => {
+    ondeCrypto.randomBytes(8, (error, bytes) => {
       out.bytes = { error, isBuffer: Buffer.isBuffer(bytes), length: bytes && bytes.length };
       done();
     });
-    liteCrypto.randomInt(1, 10, (error, value) => {
+    ondeCrypto.randomInt(1, 10, (error, value) => {
       out.int = { error, value };
       done();
     });
-    liteCrypto.hkdf(
+    ondeCrypto.hkdf(
       "sha256",
       Buffer.from("ikm"),
       Buffer.from("salt"),
@@ -671,16 +671,16 @@ async function checkCallbacks() {
 
 function checkSurface() {
   assert.deepStrictEqual(
-    liteCrypto.getHashes(),
+    ondeCrypto.getHashes(),
     ["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha512-224", "sha512-256"],
     "getHashes lists the supported digests",
   );
-  const uuid = liteCrypto.randomUUID();
+  const uuid = ondeCrypto.randomUUID();
   assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
   // randomUUIDv7: same shape and timestamp prefix, values are random so only structure is
   // compared against the Node oracle.
-  const v7 = liteCrypto.randomUUIDv7();
+  const v7 = ondeCrypto.randomUUIDv7();
   const nodeV7 = nodeCrypto.randomUUIDv7();
   assert.match(v7, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.match(nodeV7, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -691,7 +691,7 @@ function checkSurface() {
     compare(
       `randomUUIDv7(${args.map((value) => String(value)).join(", ")})`,
       () => {
-        const value = liteCrypto.randomUUIDv7(...args);
+        const value = ondeCrypto.randomUUIDv7(...args);
         return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
           ? "v7"
           : value;
@@ -711,37 +711,37 @@ function checkSurface() {
 // wires one of its variants into `getHashes()`/`createHash` without checking Node, this fails.
 function checkEveryLiteDigestIsNodeSupported() {
   const nodeHashes = new Set(nodeCrypto.getHashes());
-  for (const name of liteCrypto.getHashes()) {
+  for (const name of ondeCrypto.getHashes()) {
     assert.ok(
       nodeHashes.has(name),
-      `lite exposes digest ${name}, which node's getHashes() does not list`,
+      `onde exposes digest ${name}, which node's getHashes() does not list`,
     );
     assert.doesNotThrow(
       () => nodeCrypto.createHash(name),
-      `node accepts the digest lite exposes: ${name}`,
+      `node accepts the digest onde exposes: ${name}`,
     );
     assert.doesNotThrow(
       () => nodeCrypto.createHmac(name, "k").update("x").digest(),
-      `node accepts HMAC with the digest lite exposes: ${name}`,
+      `node accepts HMAC with the digest onde exposes: ${name}`,
     );
   }
   for (const name of ["sha224", "sha256", "sha384", "sha512", "sha512-224", "sha512-256"]) {
     assert.ok(
-      liteCrypto.getHashes().includes(name),
-      `lite still exposes the node-supported digest ${name}`,
+      ondeCrypto.getHashes().includes(name),
+      `onde still exposes the node-supported digest ${name}`,
     );
   }
 }
 
 // Deliberate M3 gap, asserted rather than skipped: Node's OpenSSL accepts SHA-3 and the
-// truncated SHA-256 variants; lite supports the digests listed in docs/compat.md and rejects the
+// truncated SHA-256 variants; onde supports the digests listed in docs/compat.md and rejects the
 // rest. Keeping this explicit stops the divergence from silently disappearing from the oracle.
 function checkUnsupportedDigests() {
   for (const algorithm of ["sha3-256", "sha3-512", "sha256-192", "ripemd160"]) {
     assert.throws(
-      () => liteCrypto.createHash(algorithm),
+      () => ondeCrypto.createHash(algorithm),
       /Digest method not supported/,
-      `lite rejects unsupported digest ${algorithm}`,
+      `onde rejects unsupported digest ${algorithm}`,
     );
     assert.doesNotThrow(
       () => nodeCrypto.createHash(algorithm),

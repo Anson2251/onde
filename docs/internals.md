@@ -8,7 +8,7 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 
 ### Runtime and scheduler
 
-- [`lite <file>`](../crates/ln-cli/src/main.rs), `lite -e '<script>'`, `--check`, `--help`,
+- [`onde <file>`](../crates/ln-cli/src/main.rs), `onde -e '<script>'`, `--check`, `--help`,
   `--version`
 - `console.log` → stdout, `console.warn/error` → stderr, Node's `util.format`/`util.inspect`
 - `process`: `argv`, `env`, `cwd`/`chdir`, `platform`, `arch`, `version(s)`, `pid`/`ppid`,
@@ -68,7 +68,7 @@ are in the [README](../README.md); per-module compatibility and every deliberate
   `backup` over a bundled SQLite 3.53.2; user-defined functions and aggregates, the authorizer,
   changesets, JavaScript-backed virtual tables and extension loading. Sync-only, with Node's type
   conversion and binding rules. The `node-sqlite` feature can drop the whole module (and the
-  bundled C) from a build; `node-zlib` drops the `node:zlib` module and, in `lite`, zlib itself
+  bundled C) from a build; `node-zlib` drops the `node:zlib` module and, in `onde`, zlib itself
   (the only consumer there). The SDK keeps the payload inflater through a separate `zlib-payload`
   feature.
 
@@ -93,7 +93,7 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 
 ### Diagnostics
 
-`lite --check`, Node-shaped resolution errors with `code` (`MODULE_NOT_FOUND`,
+`onde --check`, Node-shaped resolution errors with `code` (`MODULE_NOT_FOUND`,
 `ERR_MODULE_NOT_FOUND`, `ERR_PACKAGE_PATH_NOT_EXPORTED`, `ERR_REQUIRE_ESM`, …), and uncaught-error
 rendering shared by scripts and modules.
 
@@ -118,7 +118,7 @@ and the execution context. See [ADR-0009](adr/0009-async-context.md) and
 
 ```
 crates/
-  ln-cli/        `lite` binary: args, budget flags, eval vs file       [exists]
+  ln-cli/        `onde` binary: args, budget flags, eval vs file       [exists]
   ln-runtime/    isolate bootstrap, host primitives, ESM/CJS loading,
                  loop, errors, worker/proc/signal bridges              [exists]
   ln-engine/     the engine wrapper, the host-owned job queue and the
@@ -147,7 +147,7 @@ test/
   conformance/   253 cases: scheduler (M1), modules, stdlib,
                  fs, stream, zlib, sqlite, net, http, https,
                  child_process, workers, readline, async_hooks, divergences
-  js/            stdlib tests (run under node and lite) + Node oracles
+  js/            stdlib tests (run under node and onde) + Node oracles
   smoke/         generated 30-package CJS + 10-package ESM set
   programs/      cat, wc -l, cp -r as real programs (M3 acceptance)
   net/           throughput, interop, fd-leak, slow-loris, cold start (M4)
@@ -168,11 +168,11 @@ cargo build -p ln-cli --no-default-features     # no node:sqlite/node:zlib (clea
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-./test/conformance/run.sh                       # 253/253 corpus cases against target/debug/lite
+./test/conformance/run.sh                       # 253/253 corpus cases against target/debug/onde
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
-./test/differential.sh                          # node vs lite, same stdout + exit code (239)
-./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs lite
-./test/js/run.sh                                # 85 stdlib suites under node and lite + oracles
+./test/differential.sh                          # node vs onde, same stdout + exit code (239)
+./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs onde
+./test/js/run.sh                                # 85 stdlib suites under node and onde + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
 ./test/async/run.sh                             # M6 acceptance: ALS matrix, hooks, 1M promises
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
@@ -180,11 +180,11 @@ FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip bench
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
 ./test/net/run.sh                               # M4 acceptance: bench, interop, fdleak, slowloris
 node test/bench/run.js                          # node vs onde: compute, codecs, stdlib (rebuilds release)
-node test/net/coldstart.js target/release/lite  # 25 spawns per expression, median
+node test/net/coldstart.js target/release/onde  # 25 spawns per expression, median
 ```
 
 The README's comparison table comes from those three: `coldstart.js` for boot, `bench.sh` for HTTP
-(with `LITE_RELEASE="$(command -v node)"` to point the same harness at another runtime), and
+(with `ONDE_RELEASE="$(command -v node)"` to point the same harness at another runtime), and
 `bench/run.js` for compute.
 
 `crates/ln-runtime/build.rs` minifies `js/` into `OUT_DIR/js` before the Rust sources embed it:
@@ -207,7 +207,7 @@ both node and onde (see [tuckbox/README.md](../tuckbox/README.md)).
 - **smoke/** generates 30 CommonJS and 10 ESM packages and resolves them under both runtimes.
 - **net/** is the M4 acceptance set; `NET_BENCH_SOFT=1` makes its performance rows informational,
   which is the mode CI uses.
-- **proc/** is the M5 acceptance set: every case runs under node and under lite; the worker echo
+- **proc/** is the M5 acceptance set: every case runs under node and under onde; the worker echo
   case runs 20k round-trips by default and 1M with `FULL=1`.
 
 ### Why the corpus compares stdout and the exit code, not stderr
@@ -217,7 +217,7 @@ body match, so stderr is asserted by the renderer unit tests and the CLI end-to-
 being byte-diffed against Node.
 
 Cases that mix a clamped 0 ms timer with `setImmediate` depend on whether the timer is already
-due when the loop starts — wall-clock timing in Node and in lite. `divergences/d04` carries a
+due when the loop starts — wall-clock timing in Node and in onde. `divergences/d04` carries a
 `.nodiff` marker and asserts the byte set rather than the order; the Node self-test and the
 differential harness skip it. The ordering rule itself is asserted by the non-racing cases
 (ADR-0003 §5).

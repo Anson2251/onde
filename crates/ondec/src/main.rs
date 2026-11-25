@@ -65,7 +65,7 @@ struct Build {
     #[arg(long, value_name = "link|wrappe", default_value = "link")]
     packager: String,
 
-    /// The `lite` binary to embed with --packager wrappe
+    /// The `onde` binary to embed with --packager wrappe
     #[arg(long, value_name = "PATH")]
     runtime: Option<PathBuf>,
 

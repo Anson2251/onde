@@ -3,9 +3,9 @@
 #
 #   ./test/net/fdleak.sh
 #   NET_CYCLES=50000 ./test/net/fdleak.sh
-#   LITE=/path/to/lite ./test/net/fdleak.sh
+#   ONDE=/path/to/onde ./test/net/fdleak.sh
 #
-# A lite server accepts NET_CYCLES (default 10000) connections that the node client opens, sends
+# A onde server accepts NET_CYCLES (default 10000) connections that the node client opens, sends
 # FIN on, and closes. The server's fd count and RSS are sampled after a small warm-up and once
 # more after the churn, then compared: fd growth must be <= 2 and RSS growth <= 8 MB.
 #
@@ -29,7 +29,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-LITE="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 cycles="${NET_CYCLES:-10000}"
 warmup="${NET_FDLEAK_WARMUP:-100}"
 concurrency="${NET_CONCURRENCY:-50}"
@@ -38,8 +38,8 @@ server_js="$here/fixtures/fd-server.js"
 . "$here/lib.sh"
 client_js="$here/fixtures/connect-cycles.js"
 
-if [ ! -x "$LITE" ]; then
-  echo "no lite runtime at '$LITE'; set LITE=/path/to/lite" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde runtime at '$onde'; set ONDE=/path/to/onde" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -64,7 +64,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$LITE" "$server_js" "$tmp/port" >"$tmp/server.log" 2>&1 &
+"$onde" "$server_js" "$tmp/port" >"$tmp/server.log" 2>&1 &
 server_pid=$!
 
 i=0
@@ -79,7 +79,7 @@ while [ ! -s "$tmp/port" ]; do
 done
 port="$(cat "$tmp/port")"
 
-echo "fdleak: runtime=$LITE cycles=$cycles concurrency=$concurrency"
+echo "fdleak: runtime=$onde cycles=$cycles concurrency=$concurrency"
 
 # A short warm-up allocates the per-socket buffers and any lazily created pool state, so the
 # baseline is not compared against a cold process.

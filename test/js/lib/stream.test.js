@@ -1,6 +1,6 @@
 "use strict";
 
-// Runtime-agnostic self-check for js/lib/stream.js. Runs under `node` and under lite:
+// Runtime-agnostic self-check for js/lib/stream.js. Runs under `node` and under onde:
 // no `node:` imports, no test framework, only the module under test.
 //
 // Every wait is a short timer; the assertions below never depend on wall-clock precision.

@@ -39,7 +39,7 @@ installed but no Linux C toolchain.
 - Sizes: unstripped archive 32.5 MB (no LTO) → 7.8–12.2 MB (`lto="fat"`, `opt-level="z"`,
   `panic="abort"`, `codegen-units=1`); an `onde_main` executable came out **4.45 MB →
   2.89 MB stripped → 2.87 MB with `-dead_strip` + `strip`** (eval-only driver, see §5), versus the
-  repo's 5.32 MB `lite` binary (4.62 MB stripped).
+  repo's 5.32 MB `onde` binary (4.62 MB stripped).
 - For the payload, `-Wl,-sectcreate` (macOS), `.incbin`/`ld -r -b binary` (ELF), C23 `#embed`, or a
   Rust `include_bytes!` static all beat a generated `unsigned char blob[] = {...}` by 10x at
   compile time: 10 MB blob = 3.7 s and 61 MB of C source with `xxd -i`, 0.20 s with `#embed`.
@@ -190,7 +190,7 @@ pub extern "C" fn onde_main(argc: c_int, argv: *const *const c_char) -> c_int { 
   `clang++` without it produced `"onde_version()", referenced from: _main … declaration possibly
   missing 'extern "C'"`; with `extern "C" { … }` it linked and ran. Ship a header with
   `#ifdef __cplusplus extern "C" { #endif`.
-- `argc`/`argv` translation is mechanical, but decide the `argv[0]` convention: Node/`lite` expose
+- `argc`/`argv` translation is mechanical, but decide the `argv[0]` convention: Node/`onde` expose
   `process.argv[0]` as the executable and `argv[1]` as the script. For an embedded host there is no
   script path — the natural mapping is `argv[0] = program name`, `argv[1..]` = user args, and
   `process.argv[1]` pointing at `process.execPath`-equivalent. Worth an ADR; `__filename` for the
@@ -231,7 +231,7 @@ handled consistently" ([Rust Reference](https://doc.rust-lang.org/reference/link
   drains.
 - **`std::process::exit` runs `atexit`/libc handlers but skips Rust destructors on the stack.**
   *Verified*: a `Drop` impl printing on drop never printed; exit code was 3 as requested. In the
-  staticlib this matters more than in `lite`, because the host may have registered `atexit`
+  staticlib this matters more than in `onde`, because the host may have registered `atexit`
   handlers, open `FILE*`s and its own thread-local state; `exit()` from inside the library will run
   *its* handlers and may surprise the host.
 - Better contract for an embedder: `onde_main` returns the exit code and lets the host decide, and
@@ -253,7 +253,7 @@ handled consistently" ([Rust Reference](https://doc.rust-lang.org/reference/link
   because it is process-global. `libc::setlocale` is already a dependency (`libc` is in the tree).
 - **Signal handlers are process-global.** `crates/ln-io/src/signal.rs` installs handlers with
   `libc::signal(...)` for `process.on('SIGINT')`-style listeners and restores `SIG_DFL`
-  (`signal.rs:124,223,244`). In `lite` that is fine; in an embedded app it can silently replace the
+  (`signal.rs:124,223,244`). In `onde` that is fine; in an embedded app it can silently replace the
   host's handler (e.g. a GUI toolkit's SIGINT/SIGTERM handling, or a debugger's). Recommendation:
   make signal installation opt-in via `Config` (`signals: false` by default when `ONDE_EMBEDDED=1`
   or when `onde_main` is called with a flag), and never install a handler for `SIGPIPE` behind the
@@ -342,13 +342,13 @@ on the C side does not apply to Rust objects. Options:
 - **Build-time**: `-C default-hidden-visibility` does not exist; `#[link_section]`/`pub(crate)` do
   not change symbol binding. If symbol bloat matters, the lever is `-C lto=fat` +
   `--gc-sections`/`-dead_strip`, not visibility.
-- `strip -x` keeps global symbols and drops locals (4.79 MB vs 4.62 MB for full `strip` on `lite`),
+- `strip -x` keeps global symbols and drops locals (4.79 MB vs 4.62 MB for full `strip` on `onde`),
   useful when you want crash-symbolication names but no local noise.
 
 ### Debug info, LTO, panic=abort interactions
 
 - The repo's release profile has no `debug` setting, so `debug = 0` (no DWARF). *Verified* on
-  `target/release/lite`: `otool -l | grep __DWARF` → 0. The 5.3 MB is text + a full symbol table;
+  `target/release/onde`: `otool -l | grep __DWARF` → 0. The 5.3 MB is text + a full symbol table;
   `strip` removes 696 KB of it (→ 4,621,248), `strip -x` 523 KB (→ 4,794,328).
 - If you build the staticlib with `debug = 2` to get usable backtraces, expect the archive to grow
   several-fold and to leak absolute paths (use `--remap-path-prefix`). Better: `debug = 1`
@@ -397,7 +397,7 @@ cross-toolchain for quickjs (and a perlasm-capable assembler for `ring`), not ju
 Ways out, in order of practicality:
 
 1. **Build on the target** (CI matrix: `macos-latest` arm64 + `x86_64` cross, `ubuntu-latest`
-   x86_64 + arm64 via `cross`/docker, `windows-latest`). This is what ships today's `lite`
+   x86_64 + arm64 via `cross`/docker, `windows-latest`). This is what ships today's `onde`
    binary; keep doing it.
 2. **`cargo-zigbuild`** — drives `zig cc` as the C cross-compiler and linker
    ([repo](https://github.com/rust-cross/cargo-zigbuild)), which handles quickjs's C and glibc/musl
@@ -414,7 +414,7 @@ Ways out, in order of practicality:
 - `x86_64-unknown-linux-musl` is static-CRT by default ("targets … linked statically by default …
   `x86_64-unknown-linux-musl`", [Rust Reference](https://doc.rust-lang.org/reference/linkage.html)),
   so `cargo build --target x86_64-unknown-linux-musl` gives a `libonde.a` whose future consumers
-  must also be musl-static, and a musl-static `lite` with no runtime deps. musl's resolver
+  must also be musl-static, and a musl-static `onde` with no runtime deps. musl's resolver
   differences are documented: parallel nameserver queries, no NSS module loading, `search` handling
   that differs from glibc, no IDN ([musl wiki](https://wiki.musl-libc.org/functional-differences-from-glibc.html)).
 - glibc **fully static** is the one to avoid: "all kinds of features in the libc (locale (through
@@ -488,7 +488,7 @@ Measured on this tree (arm64 macOS, `lto`/`opt-level`/`panic` as noted; all with
 | `.exe` from that archive + C `main` | 4,445,224 |
 | …`strip` | 2,889,096 |
 | …`-Wl,-dead_strip` + `strip` | 2,870,424 |
-| reference: `target/release/lite` (`lto="thin"`, `opt-level=3`, `cgu=1`, `panic="abort"`) | 5,317,472 |
+| reference: `target/release/onde` (`lto="thin"`, `opt-level=3`, `cgu=1`, `panic="abort"`) | 5,317,472 |
 | …`strip` / `strip -x` | 4,621,248 / 4,794,328 |
 | toy exe (3 tiny exports, no LTO archive) / `-dead_strip` / `+strip` | 1,470,256 / 467,376 / 342,064 |
 
@@ -498,7 +498,7 @@ Readings:
   linker only pulls referenced members. `opt-level="z"` + fat LTO + `cgu=1` + `panic="abort"` cut
   the *archive* ~4x (32.5 → 7.8 MB with the same three toy exports). The executable comparison is
   confounded: 4.4 MB (my `onde_main`, which only evaluates a `console.log`, so most of `ln-io` is
-  unreachable) versus 5.3 MB (`lite`, which parses argv, reads files, and keeps the whole net /
+  unreachable) versus 5.3 MB (`onde`, which parses argv, reads files, and keeps the whole net /
   process / worker surface reachable). Do not read the 5.3 → 4.4 difference as a pure flag win.
 - Expect a real embedded onde app at **4–6 MB unstripped, ~2.9–4.6 MB stripped** depending on how
   much of `ln-io`/`ln-runtime` is reachable (net + process + worker + signal code is a lot of
@@ -528,7 +528,7 @@ Flags that actually reduce output, in order of leverage:
 
 ### What is actually in the blob
 
-`qjsc` mode (what an onde `lite compile` would mirror): evaluate the source with
+`qjsc` mode (what an onde `onde compile` would mirror): evaluate the source with
 `JS_EVAL_FLAG_COMPILE_ONLY` (+ `JS_EVAL_TYPE_MODULE` for ESM), then `JS_WriteObject(ctx, &len, obj,
 JS_WRITE_OBJ_BYTECODE)`. *Verified* by reimplementing exactly that against the vendored quickjs-ng
 and round-tripping a script and a module:
@@ -561,7 +561,7 @@ mitigation; do not accept blobs from the network.
 
 ### Repo status (context for the plan)
 
-- No bytecode path exists yet: `lite` has no `compile`/`--emit` mode, and `docs/architecture.md:73`
+- No bytecode path exists yet: `onde` has no `compile`/`--emit` mode, and `docs/architecture.md:73`
   + `docs/roadmap.md:44,479` schedule "bootstrap + stdlib compiled to bytecode at build time" for
   **M7**. `crates/ln-runtime/src/lib.rs:61` embeds the minified `bootstrap.js` with
   `include_str!(concat!(env!("OUT_DIR"), "/js/bootstrap.js"))` — the existing precedent for
@@ -595,24 +595,24 @@ mitigation; do not accept blobs from the network.
   by construction: compiler and runtime are the same build.
 
 None of them have a version *handshake*; they all remove the mismatch by construction. onde cannot
-fully do that (the user's `lite` and the user's `libonde.a` are separate artifacts), so add an
+fully do that (the user's `onde` and the user's `libonde.a` are separate artifacts), so add an
 explicit stamp.
 
 ### Recommended enforcement for onde
 
-1. **`lite compile app.js -o app.bc`** writes the blob *and* a fixed-size header record:
+1. **`onde compile app.js -o app.bc`** writes the blob *and* a fixed-size header record:
    `{ magic, format_version, bc_version, quickjs_ng_version, sizeof_jsvalue, endian, ptr_width,
    atom_table_hash, flags }` where `atom_table_hash` is a build-script hash over
    `quickjs-atom.h` + `quickjs.c`'s `BC_VERSION` (both readable from the vendored tree at build
    time). The stamp costs 32 bytes and catches the atom-shift class of bug that `BC_VERSION` misses.
 2. **`onde_main` reads the stamp before `JS_ReadObject`** and fails closed with a clear message
-   (`onde: bytecode was compiled by lite 0.1.0 (quickjs-ng 0.16.2, bc 28, lp64-le); this runtime is
+   (`onde: bytecode was compiled by onde 0.1.0 (quickjs-ng 0.16.2, bc 28, lp64-le); this runtime is
    quickjs-ng 0.16.2, bc 28, lp64-le — mismatch in atom table`).
-3. **`lite --version`** prints the same stamp, and the staticlib exports `onde_engine_stamp()` in
+3. **`onde --version`** prints the same stamp, and the staticlib exports `onde_engine_stamp()` in
    the same tuple, so a build can diff them in CI.
 4. **Generated C carries it too** (§7): the emitted `onde_blob.c` embeds the stamp as a struct next
    to the array, so `nm`/`strings` on the final binary tells you which engine it expects.
-5. Add a CI job that compiles a fixture with `lite`, links it against the *packaged* `libonde.a`,
+5. Add a CI job that compiles a fixture with `onde`, links it against the *packaged* `libonde.a`,
    and runs it — the only way to catch a stale stamp.
 
 ---
@@ -654,7 +654,7 @@ crate-type entries); the packaging story is what differs.
 *(a) Generated C array — the "generated C file" the brief asks about*
 
 ```c
-/* lite compile --emit-c app.bc > app_blob.c */
+/* onde compile --emit-c app.bc > app_blob.c */
 const unsigned char onde_blob[] = { 0x1c, 0xf9, 0x84, /* … */ };
 const unsigned long onde_blob_len = 142;
 ```
@@ -766,7 +766,7 @@ named section. `include_str!` of the minified `bootstrap.js` is already how this
 #endif
 ```
 
-Ship this as `onde_embed.h` plus a tiny `lite embed` subcommand that emits the right one for the
+Ship this as `onde_embed.h` plus a tiny `onde embed` subcommand that emits the right one for the
 target, and the user never sees a linker flag.
 
 ---
@@ -777,17 +777,17 @@ target, and the user never sees a linker flag.
    `ln-runtime`; `src/lib.rs` exports `onde_main`, `onde_version`, `onde_engine_stamp`,
    `onde_free_error`/last-error accessor, and (optionally) the quickjs C API re-export.
    `ln-cli`'s `real_main()` moves into it as `pub fn run_with_argv(Vec<String>) -> i32`, with
-   `lite` becoming a 40-line wrapper. This also removes `process::exit` from the library path.
+   `onde` becoming a 40-line wrapper. This also removes `process::exit` from the library path.
 2. `#[profile.release]` gains `strip = "symbols"`, `lto = "fat"`, `opt-level = "z"` for the
    staticlib crate only (a `[profile.release.package.ln-staticlib]` override is not enough — LTO is
    whole-graph; instead give the staticlib its own `--profile staticlib` in `.cargo/config.toml`).
-3. `lite compile --emit c|raw|stamp` implementing §6, with `#[link_section]`-friendly output and
+3. `onde compile --emit c|raw|stamp` implementing §6, with `#[link_section]`-friendly output and
    the 32-byte stamp. Reuse the `qjsc` conventions (`-b` raw, `-e` main+C, `-s` strip source).
 4. Docs: a `docs/embedding.md` with the three link lines (macOS/Linux static/Windows), the
-   `--print native-static-libs` output, and the "same build must produce `lite` and `libonde.a`"
+   `--print native-static-libs` output, and the "same build must produce `onde` and `libonde.a`"
    rule stated as a hard requirement.
 5. CI: build the staticlib on all three OSes, link a 20-line C fixture and a C++ fixture against
-   it, run them, `strip` and record sizes, and run the `lite`-compiled-blob round trip.
+   it, run them, `strip` and record sizes, and run the `onde`-compiled-blob round trip.
 
 Open questions for the ADR:
 

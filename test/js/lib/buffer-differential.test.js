@@ -8,7 +8,7 @@
 // handful of hand-written cases in buffer.test.js. Here a naive reference implementation is written
 // inside the test, and:
 //
-//   under lite: our Buffer (the Rust host call) must agree with the reference;
+//   under onde: our Buffer (the Rust host call) must agree with the reference;
 //   under node: Node's Buffer must agree with the reference, which validates the reference itself.
 //
 // Both arms together mean "our search agrees with Node's" for the generated cases, transitively.

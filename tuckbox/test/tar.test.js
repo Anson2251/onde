@@ -1,7 +1,7 @@
 "use strict";
 
 // Unit tests for `dist/lib/tar.js`. Plain CommonJS, no framework: the same file runs under `node`
-// and under `lite`, and prints a single `ok tar <N> assertions` line on success.
+// and under `onde`, and prints a single `ok tar <N> assertions` line on success.
 //
 // Every archive is built here, block by block. Committing binary fixtures would hide which bytes
 // the reader is actually being asked about; generating them makes each case explicit.

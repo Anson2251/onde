@@ -152,7 +152,7 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
   const startNanos = BigInt(host.hrtimeNs());
   // Node starts with `process.exitCode === undefined`; it only becomes a number when set.
   let exitCodeValue;
-  let title = "lite";
+  let title = "onde";
 
   class Process extends EventEmitter {
     constructor() {
@@ -171,12 +171,11 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       this.ppid = host.ppid;
       // `version` is the Node release onde is compatible with, not onde's own version: tooling
       // gates on it and cannot do anything useful with "v0.1.0". onde's identity stays visible in
-      // `versions.onde` (and `versions.lite`, which predates the rename).
+      // `versions.onde`.
       this.version = host.nodeVersion;
       this.versions = {
         node: host.nodeVersion.replace(/^v/, ""),
         onde: host.version.replace(/^v/, ""),
-        lite: host.version.replace(/^v/, ""),
       };
       // `node:sqlite` reports the bundled SQLite, as Node reports its own.
       if (host.sqlite !== undefined && host.sqlite !== null) {
@@ -475,7 +474,7 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       if (code !== undefined) error.code = code;
       if (detail !== undefined) error.detail = detail;
       if (this.listenerCount("warning") === 0) {
-        host.write(`(lite:${this.pid}) ${error.name}: ${error.message}\n`, true);
+        host.write(`(onde:${this.pid}) ${error.name}: ${error.message}\n`, true);
       } else {
         this.emit("warning", error);
       }

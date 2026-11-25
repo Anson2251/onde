@@ -1,4 +1,4 @@
-// M5 acceptance: stdio and process-event ordering, run under node and lite.
+// M5 acceptance: stdio and process-event ordering, run under node and onde.
 "use strict";
 const { spawn } = require("child_process");
 const runtime = process.env.RUNTIME || process.execPath;
@@ -16,7 +16,7 @@ child.on("exit", (code) => order.push(`exit:${code}`));
 child.on("close", (code) => {
   order.push(`close:${code}`);
   // stdout/stderr order between two pipes is not guaranteed; the stream set and the process
-  // events are. Node and lite both deliver exit before close and both pipes before both.
+  // events are. Node and onde both deliver exit before close and both pipes before both.
   check("stream set", [...new Set(order.filter((item) => item === "stdout" || item === "stderr"))].sort().join(","), "stderr,stdout");
   check("exit code", code, 4);
   check("close last", order[order.length - 1], "close:4");

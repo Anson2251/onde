@@ -41,7 +41,7 @@ rather than a copy); and `Buffer.compare`/`equals`, from 28 µs to 0.55 µs per 
 All three were checked against a randomized reference before being trusted: 12,016 assertions for
 search and comparison together (3,500 generated cases), and 3,011 for UTF-8 (1,500 generated strings
 and byte arrays). Each
-arm validates a different thing, Node's implementation validates the reference and lite's validates
+arm validates a different thing, Node's implementation validates the reference and onde's validates
 the host, and both were mutation-tested by breaking the host and watching them fail.
 
 B1/B2 added base64/hex and the `StringDecoder` boundary; their rebench is below.
@@ -52,7 +52,7 @@ Release build at `5450b0d`, `BENCH_REPS=5 node test/bench/run.js`, medians of fi
 payload. Per call is the benchmark total divided by its iteration count (20k for the Buffer
 operations, 50k for `write`); "before" is the JavaScript loop above.
 
-| Workload | Node 26 | lite before | lite now | vs Node | vs before |
+| Workload | Node 26 | onde before | onde now | vs Node | vs before |
 |---|---|---|---|---|---|
 | `Buffer.from(base64)` | 0.17 µs | 196 µs | 3.1 µs | 18.8x | 63x |
 | `Buffer.toString("base64")` | 0.16 µs | 80 µs | 1.2 µs | 7.2x | 69x |

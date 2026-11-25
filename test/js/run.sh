@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 # Differential test runner for the JavaScript stdlib (js/lib).
 #
-#   ./test/js/run.sh                 # every *.test.js under node and lite, compare stdout+exit
-#   LITE=/path/to/lite ./test/js/run.sh
+#   ./test/js/run.sh                 # every *.test.js under node and onde, compare stdout+exit
+#   ONDE=/path/to/onde ./test/js/run.sh
 #
 # Two kinds of case:
 #   * `*.test.js`   runtime-agnostic: requires our module by relative path and asserts literals.
-#                   Run under both node and lite; their output must be identical.
+#                   Run under both node and onde; their output must be identical.
 #   * `*.oracle.js` Node-only differential against the corresponding Node builtin. These are the
 #                   cases that keep our behaviour honest even before onde can run them.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-lite="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "node not found: the stdlib oracle cannot run" >&2
   exit 2
 fi
-if [ ! -x "$lite" ]; then
-  echo "no lite binary at '$lite'; run 'cargo build' or set LITE=" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde binary at '$onde'; run 'cargo build' or set ONDE=" >&2
   exit 2
 fi
 
@@ -58,7 +58,7 @@ run_case() {
 for file in "$here"/lib/*.test.js; do
   [ -e "$file" ] || continue
   run_case test "$file" node
-  run_case test "$file" "$lite"
+  run_case test "$file" "$onde"
 done
 
 for file in "$here"/lib/*.oracle.js; do

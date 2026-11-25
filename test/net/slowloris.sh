@@ -3,11 +3,11 @@
 #
 #   ./test/net/slowloris.sh                 # 2000 half-open connections, under a minute
 #   NET_CONNS=10000 ulimit -n 20000 ./test/net/slowloris.sh   # the 10k variant
-#   LITE=/path/to/lite ./test/net/slowloris.sh
+#   ONDE=/path/to/onde ./test/net/slowloris.sh
 #   NET_SLOWLORIS_RAW=1 ./test/net/slowloris.sh   # the floor: raw TCP, no HTTP layer
 #
 # NET_CONNS (default 2000) sockets each send a partial request head and then idle. While they are
-# held open the script samples the lite server's RSS (must stay below 25 MB), then opens one more
+# held open the script samples the onde server's RSS (must stay below 25 MB), then opens one more
 # connection with a head over `maxHeaderSize` and asserts the canned 431 plus a close.
 #
 # The default is deliberately 2000: 10k needs a raised fd limit and roughly 30-60 s on a laptop.
@@ -17,7 +17,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-LITE="${LITE:-$root/target/debug/lite}"
+onde="${ONDE:-${LITE:-$root/target/debug/onde}}"
 conns="${NET_CONNS:-2000}"
 rss_limit_mb="${NET_SLOWLORIS_RSS_MB:-25}"
 # The floor variant serves raw TCP (accept, consume, never answer) so the difference between the
@@ -35,8 +35,8 @@ probe_js="$here/http-431.js"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
 
-if [ ! -x "$LITE" ]; then
-  echo "no lite runtime at '$LITE'; set LITE=/path/to/lite" >&2
+if [ ! -x "$onde" ]; then
+  echo "no onde runtime at '$onde'; set ONDE=/path/to/onde" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -69,7 +69,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$LITE" "$server_js" "$tmp/port" >"$tmp/server.log" 2>&1 &
+"$onde" "$server_js" "$tmp/port" >"$tmp/server.log" 2>&1 &
 server_pid=$!
 
 i=0
@@ -84,7 +84,7 @@ while [ ! -s "$tmp/port" ]; do
 done
 
 rss_base="$(rss_kb "$server_pid")"
-echo "slowloris: runtime=$LITE connections=$conns mode=$mode rss_limit=${rss_limit_mb}MB baseline=${rss_base}KB"
+echo "slowloris: runtime=$onde connections=$conns mode=$mode rss_limit=${rss_limit_mb}MB baseline=${rss_base}KB"
 
 node "$client_js" "$tmp/port" "$conns" >"$tmp/client.log" 2>&1 &
 client_pid=$!

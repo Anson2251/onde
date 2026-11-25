@@ -1,7 +1,7 @@
 "use strict";
 
 // HTTP(S) client used by every "client" leg of test/net/interop.sh. It runs under node and under
-// lite, so its assertions are the shared contract:
+// onde, so its assertions are the shared contract:
 //
 //   <runtime> http-client.js <port-file>
 //

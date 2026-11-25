@@ -125,9 +125,9 @@ function createRequire(fromFile, parentModule) {
     if (typeof specifier !== "string") {
       throw invalidArgType("id", "string", specifier);
     }
-    // Builtin sources live in a virtual tree (`<lite:buffer>`), not on disk: resolve their
+    // Builtin sources live in a virtual tree (`<onde:buffer>`), not on disk: resolve their
     // sibling requires against the embedded registry instead of the filesystem.
-    if (fromFile.startsWith("<lite:")) {
+    if (fromFile.startsWith("<onde:")) {
       const internal = resolveInternalSpecifier(specifier, fromFile);
       if (internal !== null) return requireBuiltin(internal);
     }
@@ -211,8 +211,8 @@ function joinVirtualSpecifier(directory, specifier) {
 /// Map a require made from an embedded module onto a builtin name, or return null.
 ///
 /// The embedded sources live in one flat registry, so only the requiring file says which
-/// directory a relative specifier means: `<lite:internal/fs>` is `internal/fs` on disk, while
-/// `<lite:fs>` is `fs`. Join the specifier against that virtual directory first, then fall back
+/// directory a relative specifier means: `<onde:internal/fs>` is `internal/fs` on disk, while
+/// `<onde:fs>` is `fs`. Join the specifier against that virtual directory first, then fall back
 /// to the basename search for the shapes the flat registry does not mirror.
 function resolveInternalSpecifier(specifier, fromFile) {
   const name = canonicalBuiltin(specifier);
@@ -221,8 +221,8 @@ function resolveInternalSpecifier(specifier, fromFile) {
 
   const base = name.slice(name.lastIndexOf("/") + 1).replace(/\.js$/, "");
   const candidates = [];
-  if (typeof fromFile === "string" && fromFile.startsWith("<lite:")) {
-    const embedded = fromFile.slice("<lite:".length);
+  if (typeof fromFile === "string" && fromFile.startsWith("<onde:")) {
+    const embedded = fromFile.slice("<onde:".length);
     const directory = embedded.startsWith("internal/") ? "internal" : "";
     candidates.push(joinVirtualSpecifier(directory, name));
   }
@@ -291,12 +291,12 @@ function requireBuiltin(specifier) {
     );
   }
 
-  const filename = `<lite:${name}>`;
+  const filename = `<onde:${name}>`;
   const module = makeModule(filename, null);
   module.id = name;
   builtinCache[name] = module;
   try {
-    host.evalCjs(filename, source, module.exports, module.require, module, "<lite>");
+    host.evalCjs(filename, source, module.exports, module.require, module, "<onde>");
   } catch (error) {
     delete builtinCache[name];
     throw error;

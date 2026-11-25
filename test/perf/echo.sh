@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One TCP echo run: <runtime> serves test/net/fixtures/echo-server.js, node drives the client.
 #
-#   ./test/perf/echo.sh target/release/lite
+#   ./test/perf/echo.sh target/release/onde
 #   ./test/perf/echo.sh "$(command -v node)"
 #
 # Prints one RESULT line. test/perf/run.sh runs it twice and compares, so both sides use the same
@@ -11,7 +11,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-runtime="${1:-$root/target/release/lite}"
+runtime="${1:-$root/target/release/onde}"
 connections="${PERF_ECHO_CONNECTIONS:-20}"
 rounds="${PERF_ECHO_ROUNDS:-200}"
 payload="${PERF_ECHO_PAYLOAD:-1024}"

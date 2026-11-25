@@ -3,15 +3,15 @@
 // Self-check for `http`/`https` over the handle bridge.
 //
 // Skipped under plain Node: the host primitives that make the transport work only exist under
-// lite. The assertions are still written against Node's observable semantics (status lines,
+// onde. The assertions are still written against Node's observable semantics (status lines,
 // header order, framing bytes, socket reuse), so a failure names the behaviour, never a port, a
 // path or a timing.
 //
-//   ./target/debug/lite test/js/lib/http.test.js
+//   ./target/debug/onde test/js/lib/http.test.js
 //   ./test/js/run.sh
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: lite host unavailable");
+  console.log("skip: onde host unavailable");
   process.exit(0);
 }
 

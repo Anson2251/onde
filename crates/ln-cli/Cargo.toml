@@ -4,20 +4,21 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The `lite` CLI for onde"
+description = "The `onde` CLI for onde"
 publish = false
+default-run = "onde"
 
 [[bin]]
-name = "lite"
+name = "onde"
 path = "src/main.rs"
 
 [features]
-# `node:sqlite` and `node:zlib` are on by default; `--no-default-features` builds a slim `lite`
+# `node:sqlite` and `node:zlib` are on by default; `--no-default-features` builds a slim `onde`
 # where requiring either gives a message naming the missing feature.
 default = ["node-sqlite", "node-zlib"]
 node-sqlite = ["ln-runtime/node-sqlite"]
 node-zlib = ["ln-runtime/node-zlib"]
-# `lite` never executes a compiled payload, so this is not in `default`; the mapping exists so the
+# `onde` never executes a compiled payload, so this is not in `default`; the mapping exists so the
 # feature set is complete for a caller that wants it.
 zlib-payload = ["ln-runtime/zlib-payload"]
 

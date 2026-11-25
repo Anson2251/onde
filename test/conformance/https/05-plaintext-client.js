@@ -16,7 +16,7 @@ const ca = fs.readFileSync(path.join(fixtures, "ca-cert.pem"));
 const server = https.createServer({ key, cert }, (req, res) => {
   res.end("still alive");
 });
-// Node reports the failed handshake here; the event does not exist in lite, which is why it is
+// Node reports the failed handshake here; the event does not exist in onde, which is why it is
 // only listened to, never printed.
 server.on("tlsClientError", () => {});
 

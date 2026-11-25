@@ -216,7 +216,7 @@ function executionAsyncResource() {
 
 // --- createHook --------------------------------------------------------------------------------
 
-const kEnabled = Symbol("lite.async_hooks.enabled");
+const kEnabled = Symbol("onde.async_hooks.enabled");
 
 class AsyncHook {
   constructor(callbacks) {
@@ -272,10 +272,10 @@ function createHook(callbacks) {
 
 // --- AsyncResource -----------------------------------------------------------------------------
 
-const kId = Symbol("lite.async_hooks.id");
-const kType = Symbol("lite.async_hooks.type");
-const kTrigger = Symbol("lite.async_hooks.trigger");
-const kDestroyed = Symbol("lite.async_hooks.destroyed");
+const kId = Symbol("onde.async_hooks.id");
+const kType = Symbol("onde.async_hooks.type");
+const kTrigger = Symbol("onde.async_hooks.trigger");
+const kDestroyed = Symbol("onde.async_hooks.destroyed");
 
 class AsyncResource {
   constructor(type, opts) {

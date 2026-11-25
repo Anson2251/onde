@@ -4,12 +4,12 @@
 //
 // The test loads the checkout sources under both runtimes rather than the builtin, because Node's
 // builtin `constants` is composed from Node's much larger `fs`/`os`/`crypto` tables. Loading the
-// sources here means Node and lite assert the same key set and print the same assertion count.
+// sources here means Node and onde assert the same key set and print the same assertion count.
 // The builtin is checked separately for registration (`constants` and `node:constants` are one
 // object) and for the shape a caller sees.
 //
 //   node test/js/lib/constants.test.js
-//   ./target/debug/lite test/js/lib/constants.test.js
+//   ./target/debug/onde test/js/lib/constants.test.js
 
 const constants = require("../../../js/lib/constants.js");
 const fsConstants = require("../../../js/lib/fs.js").constants;
