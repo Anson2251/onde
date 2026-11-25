@@ -3,7 +3,7 @@ name = "ln-sqlite"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "SQLite connections, statements and values for onde's node:sqlite, engine-free and tokio-free"
 publish = false
 

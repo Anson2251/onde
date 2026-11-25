@@ -3,7 +3,7 @@ name = "ln-zlib"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "gzip/zlib/raw-deflate and crc32 for onde, engine-free and tokio-free"
 publish = false
 

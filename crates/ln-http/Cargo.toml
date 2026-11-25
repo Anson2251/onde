@@ -3,7 +3,7 @@ name = "ln-http"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "Sans-io HTTP/1.1 codec for onde: bytes in, events out"
 publish = false
 

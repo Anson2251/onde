@@ -5,7 +5,7 @@ edition.workspace = true
 # Not the workspace's 1.89: the bundler's tree (oxc 0.158) requires 1.97. `ondec` is a host-only
 # build tool and never part of the SDK, so this does not raise the runtime's floor.
 rust-version = "1.97"
-license.workspace = true
+license = "MPL-2.0"
 description = "The onde deployment compiler: bundle a JavaScript app into a standalone executable"
 publish = false
 

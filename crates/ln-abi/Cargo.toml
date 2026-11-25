@@ -3,7 +3,7 @@ name = "ln-abi"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "The onde engine ABI stamp: one identity string shared by the runtime, the archive and the build tool"
 publish = false
 

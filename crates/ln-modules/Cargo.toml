@@ -3,7 +3,7 @@ name = "ln-modules"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "Engine-free module resolution for onde (CJS, ESM, package.json maps)"
 publish = false
 

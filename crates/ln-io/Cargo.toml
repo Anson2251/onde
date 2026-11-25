@@ -3,7 +3,7 @@ name = "ln-io"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MPL-2.0"
 description = "Blocking fs ops, the tokio offload pool and the M4 network transports for onde"
 publish = false
 

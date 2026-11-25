@@ -3,7 +3,7 @@ name = "ln-sched"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "Reference microtask/tick scheduler for onde (engine-free)"
 publish = false
 

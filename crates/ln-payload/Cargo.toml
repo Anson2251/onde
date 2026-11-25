@@ -3,7 +3,7 @@ name = "ln-payload"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 description = "The onde payload: a flat key/value map of ES modules linked into a standalone executable"
 publish = false
 

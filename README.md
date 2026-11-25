@@ -14,7 +14,7 @@ Contents: [Quick start](#quick-start) · [Building](#building) ·
 [What's in the box](#whats-in-the-box) · [Footprint](#footprint) ·
 [Performance](#performance) · [One executable](#one-executable) ·
 [Milestones](#milestones) · [Compatibility](#compatibility) · [Tuckbox](#tuckbox) ·
-[Why](#why) · [Docs](#where-to-read-next)
+[Why](#why) · [Licensing](#licensing) · [Docs](#where-to-read-next)
 
 ## Quick start
 
@@ -344,3 +344,35 @@ microtask queue has to be re-hosted carefully. Those are what this repository bu
 
 The decisions behind the structure (scheduler, event loop, module system, handles, HTTP codec) are
 in [docs/adr/](docs/adr/), and [internals.md](docs/internals.md) §5 gives the reading order.
+
+## Licensing
+
+onde is free for commercial use under both of its licenses. The split is by crate, and the rule is
+"the bricks are MIT, the machine is MPL-2.0".
+
+**MPL-2.0 — the runtime machine:** `ln-engine`, `ln-runtime`, `ln-io`, `ln-embed`, `ln-cli`,
+`ondec`. Use it, modify it, sell it, embed it in a product. If you distribute a modified version,
+the files you changed stay under MPL-2.0 and their source must be made available. Files you add
+are yours to license as you like. Distributing an unmodified build only asks that recipients can
+reach the source, which for this repository is a URL.
+
+**MIT — the reusable bricks:** `ln-abi`, `ln-payload`, `ln-crypto`, `ln-error`, `ln-http`,
+`ln-sched`, `ln-sqlite`, `ln-zlib`, `ln-modules`. Take them anywhere, including into closed-source
+products, as long as the copyright notice travels with them.
+
+The full texts are [LICENSE](LICENSE) (MPL-2.0, canonical copy from mozilla.org) and
+[LICENSE-MIT](LICENSE-MIT).
+
+In practice:
+
+- Embedding onde in a closed-source product is allowed; your own code stays yours.
+- Forking onde and shipping a closed-source distribution is not.
+- Every third-party dependency of this tree is permissive or MPL-2.0 (enforced by `deny.toml`), so
+  the MPL-2.0 crates combine cleanly with all of them, and downstream projects under MIT, Apache-2.0
+  or GPL can depend on these crates without adopting MPL-2.0 for their own files.
+
+Contributions are accepted under the license of the crate being touched, with a `Signed-off-by`
+line (DCO). Copyright stays with each author; this project takes no assignment, and there is no CLA.
+
+The name and logo are covered by neither license.
+

@@ -3,7 +3,7 @@ name = "ln-embed"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MPL-2.0"
 description = "The C ABI of a compiled onde app: onde.h and libonde-<tuple>.a"
 publish = false
 
