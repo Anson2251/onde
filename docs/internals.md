@@ -68,7 +68,8 @@ are in the [README](../README.md); per-module compatibility and every deliberate
   `backup` over a bundled SQLite 3.53.2; user-defined functions and aggregates, the authorizer,
   changesets, JavaScript-backed virtual tables and extension loading. Sync-only, with Node's type
   conversion and binding rules. The `node-sqlite` feature can drop the whole module (and the
-  bundled C) from a build; `node-zlib` drops the `node:zlib` surface, not the payload inflater.
+  bundled C) from a build; `node-zlib` drops the `node:zlib` module only, because `ln-zlib` stays
+  linked as the payload inflater.
 
 ### Processes, threads and lines — M5
 

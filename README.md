@@ -62,9 +62,11 @@ cargo build -p ln-cli --no-default-features --features node-sqlite # one of them
 cargo test --all
 ```
 
-`node-sqlite` also links the bundled SQLite. `node-zlib` only removes the `node:zlib` surface: the
-inflater stays linked because `--compress zlib` payloads need it. A module the build left out
-fails with its feature named, on `require` and `import`, instead of a generic unknown-module error:
+`node-sqlite` also links the bundled SQLite. `node-zlib` only removes the `node:zlib` module:
+zlib itself stays linked in every build because `ln-zlib` (flate2/miniz_oxide) is a transitive
+dependency of the payload decoder, whether or not the module feature is on. The flag saves the
+module's embedded JS and host binding (~40 KB), not the library. A module the build left out fails
+with its feature named, on `require` and `import`, instead of a generic unknown-module error:
 
 > node:sqlite is not available: the `node-sqlite` feature is not enabled in this build. Rebuild
 > without `--no-default-features` (or with `--features node-sqlite`) to include it.
@@ -102,7 +104,7 @@ machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resol
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
 | install size | 7.6 MB | 77 MB | 58 MB |
-| install size, `--no-default-features` (no `node:sqlite`/`node:zlib`) | 5.5 MB | — | — |
+| install size, both module features off (SQLite dropped; zlib stays linked) | 5.5 MB | — | — |
 | cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
 | cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
@@ -112,6 +114,10 @@ machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resol
 At 9.3 MB resident, a hundred onde processes cost less than the tool around them; the same hundred
 Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's 11.6, and
 QuickJS has an engine to initialize either way.
+
+Feature cost, measured on the same release build: `node-sqlite` adds **2.0 MB** (the bundled
+SQLite), while `node-zlib` adds **~40 KB** — the library is linked either way, so only the module
+surface is optional. `cargo tree -i ln-zlib` shows the dependency under both feature sets.
 
 ## Performance
 
