@@ -25,10 +25,6 @@ edition = "2021"
 # current stable (1.100 at the time of writing). 1.89 is the floor of the current rusqlite
 # generation, which keeps a later upgrade from needing another bump.
 rust-version = "1.89"
-# Default for new crates only. Every crate states its own license: the runtime machine
-# (`ln-engine`, `ln-runtime`, `ln-io`, `ln-embed`, `ln-cli`, `ondec`) is MPL-2.0 so a modified
-# fork cannot be shipped closed; the reusable bricks are MIT. See README § Licensing.
-license = "MPL-2.0"
 
 [profile.release]
 lto = "thin"
