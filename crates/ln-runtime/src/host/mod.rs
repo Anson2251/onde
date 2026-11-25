@@ -32,6 +32,7 @@ use ln_engine::{cjs_wrapper, js};
 use ln_modules::url as file_url;
 use ln_modules::{Kind, Resolution};
 
+#[cfg(feature = "node-net")]
 use crate::handles::HandleBridge;
 use crate::host_error::{
     io_error_code, io_error_message, throw_node_error, throw_node_error_value,
@@ -44,9 +45,12 @@ use ln_error::NodeError;
 
 mod buffer;
 mod codec;
+#[cfg(feature = "node-crypto")]
 mod crypto;
+#[cfg(feature = "node-net")]
 mod dns;
 mod fs;
+#[cfg(feature = "node-net")]
 mod net;
 mod proc;
 mod signal;
@@ -76,7 +80,9 @@ pub(crate) struct HostState {
     pub memory_requested: Rc<Cell<bool>>,
     /// The isolate's single op/handle id sequence (ADR-0006 §2.1).
     pub ids: Arc<RequestIdAllocator>,
-    /// The handle table: `host.net` submits commands through it (ADR-0006).
+    /// The handle table: `host.net` submits commands through it (ADR-0006). Compiled only with
+    /// `node-net`: without sockets there are no handles to own.
+    #[cfg(feature = "node-net")]
     pub handles: Rc<HandleBridge>,
     /// The worker table: `host.worker` submits spawns and messages through it (ADR-0008).
     pub workers: Rc<WorkerBridge>,
@@ -102,8 +108,15 @@ pub(crate) struct HostState {
 
 /// The builtin names this build can actually load.
 ///
-/// A feature-off build must not advertise `sqlite` (the loader asks `builtinSource`, which has no
-/// arm for it). The node:-only names are filtered by the loader, which knows the specifier.
+/// A feature-off build must not advertise a module it cannot load (the loader asks
+/// `builtinSource`, which has no arm for it). The node:-only names are filtered by the loader,
+/// which knows the specifier. `https` rides on both halves of the network stack, so it is only
+/// advertised when `tls` (and therefore `net`) is on.
+///
+/// Clippy suggests `matches!` here when a build has every module feature off and each `cfg!`
+/// folds to `false`; that rewrite would be wrong the moment one feature is on, so the table stays
+/// a match.
+#[allow(clippy::match_like_matches_macro)]
 fn public_builtin_names() -> impl Iterator<Item = &'static str> {
     ln_modules::BUILTINS
         .iter()
@@ -111,6 +124,9 @@ fn public_builtin_names() -> impl Iterator<Item = &'static str> {
         .filter(|name| match *name {
             "sqlite" => cfg!(feature = "node-sqlite"),
             "zlib" => cfg!(feature = "node-zlib"),
+            "crypto" => cfg!(feature = "node-crypto"),
+            "net" | "http" | "dns" => cfg!(feature = "node-net"),
+            "tls" | "https" => cfg!(feature = "node-tls"),
             _ => true,
         })
 }
@@ -784,6 +800,7 @@ pub(crate) fn install<'js>(
 
     // --- crypto primitives -----------------------------------------------------------------
 
+    #[cfg(feature = "node-crypto")]
     crypto::install(ctx, &host, state)?;
 
     // --- compression primitives -------------------------------------------------------------
@@ -800,10 +817,12 @@ pub(crate) fn install<'js>(
 
     // --- network handles (M4, ADR-0006) -----------------------------------------------------
 
+    #[cfg(feature = "node-net")]
     net::install(ctx, &host, state)?;
 
     // --- DNS (M4, an op rather than a handle) -----------------------------------------------
 
+    #[cfg(feature = "node-net")]
     dns::install(ctx, &host, state)?;
 
     ctx.globals().set("__ln_host", host)?;

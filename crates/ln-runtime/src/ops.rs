@@ -300,16 +300,20 @@ pub(crate) fn op_value_to_js<'js>(
 /// `dns.lookup`'s result shape: an array of `{ address, family }` with the family as Node's
 /// numeric `4`/`6` (unlike `socket.address()`, which uses `"IPv4"`). The JS layer picks the first
 /// entry for the non-`all` callback form.
-fn addrs_to_js<'js>(ctx: &js::Ctx<'js>, addrs: &[ln_io::net::Addr]) -> js::Result<js::Value<'js>> {
+///
+/// `ln_io::Addr` rather than `ln_io::net::Addr`: the `dns` module lives behind `node-net`, but the
+/// op-value shape is part of the always-compiled op protocol, so the address type moved to the
+/// crate root.
+fn addrs_to_js<'js>(ctx: &js::Ctx<'js>, addrs: &[ln_io::Addr]) -> js::Result<js::Value<'js>> {
     let array = js::Array::new(ctx.clone())?;
     for (index, addr) in addrs.iter().enumerate() {
         let object = js::Object::new(ctx.clone())?;
         match addr {
-            ln_io::net::Addr::Ip(address) => {
+            ln_io::Addr::Ip(address) => {
                 object.set("address", address.ip().to_string())?;
                 object.set("family", if address.is_ipv4() { 4 } else { 6 })?;
             }
-            ln_io::net::Addr::Unix(path) => {
+            ln_io::Addr::Unix(path) => {
                 object.set("address", path.to_string_lossy().into_owned())?;
                 object.set("family", "unix")?;
             }

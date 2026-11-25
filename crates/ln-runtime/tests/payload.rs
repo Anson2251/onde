@@ -6,7 +6,11 @@
 //! takes — including the engine-identity check that protects `JS_ReadObject`.
 
 use ln_engine::compile;
-use ln_payload::{Builder, Codec, Kind, Parsed, Payload};
+use ln_payload::{Builder, Kind, Parsed, Payload};
+// Only the zlib-compressed payload test names a codec, and that test exists only with the
+// payload decoder enabled; a `--no-default-features` build would otherwise import it for nothing.
+#[cfg(feature = "zlib-payload")]
+use ln_payload::Codec;
 use ln_runtime::{Config, Failure, Isolate, PayloadBytes};
 
 fn compile_module(key: &str, source: &str, strip_source: bool) -> Vec<u8> {

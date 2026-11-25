@@ -13,16 +13,24 @@
 //! [ADR-0006]: ../../../docs/adr/0006-handles-and-events.md
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use socket2::{SockRef, TcpKeepalive};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf as TcpReadHalf, OwnedWriteHalf as TcpWriteHalf};
 use tokio::net::unix::{OwnedReadHalf as UnixReadHalf, OwnedWriteHalf as UnixWriteHalf};
 use tokio::net::{TcpStream, UnixStream};
+
+// rustls-only: the TLS variants below are the only things that name these types.
+#[cfg(feature = "tls")]
+use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
+#[cfg(feature = "tls")]
+use std::pin::Pin;
+#[cfg(feature = "tls")]
+use std::task::{Context, Poll};
+#[cfg(feature = "tls")]
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+#[cfg(feature = "tls")]
 use tokio_rustls::{client as tls_client, server as tls_server};
 
 /// One connected transport, immediately before it is split for its task.
@@ -31,6 +39,7 @@ pub(crate) enum Transport {
     Unix(UnixStream),
     /// Boxed: a rustls session is ~1.2 KiB against a plain socket's ~40 bytes, and the enum lives
     /// in every connection task (clippy's `large_enum_variant`).
+    #[cfg(feature = "tls")]
     Tls(Box<TlsKind>),
 }
 
@@ -46,6 +55,7 @@ impl Transport {
                 let (reader, writer) = stream.into_split();
                 (Reader::Unix(reader), Writer::Unix(writer))
             }
+            #[cfg(feature = "tls")]
             Transport::Tls(stream) => {
                 // `tokio::io::split` rather than `into_split`: a TLS stream is one object with two
                 // directions, and the halves only borrow it for the duration of one poll.
@@ -61,11 +71,13 @@ impl Transport {
 ///
 /// One enum rather than two `Transport` variants because the connection task must not care which
 /// side of the handshake it is on; the only difference is a type parameter inside tokio-rustls.
+#[cfg(feature = "tls")]
 pub(crate) enum TlsKind {
     Client(tls_client::TlsStream<TcpStream>),
     Server(tls_server::TlsStream<TcpStream>),
 }
 
+#[cfg(feature = "tls")]
 impl TlsKind {
     /// The TCP socket under the session, for the live socket options (`setNoDelay`,
     /// `setKeepAlive`) that belong to the OS socket, not to the TLS layer.
@@ -77,6 +89,7 @@ impl TlsKind {
     }
 }
 
+#[cfg(feature = "tls")]
 impl AsyncRead for TlsKind {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -90,6 +103,7 @@ impl AsyncRead for TlsKind {
     }
 }
 
+#[cfg(feature = "tls")]
 impl AsyncWrite for TlsKind {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -122,6 +136,7 @@ impl AsyncWrite for TlsKind {
 pub(crate) enum Reader {
     Tcp(TcpReadHalf),
     Unix(UnixReadHalf),
+    #[cfg(feature = "tls")]
     Tls(ReadHalf<TlsKind>),
 }
 
@@ -132,6 +147,7 @@ impl Reader {
         match self {
             Reader::Tcp(half) => half.read(buffer).await,
             Reader::Unix(half) => half.read(buffer).await,
+            #[cfg(feature = "tls")]
             Reader::Tls(half) => half.read(buffer).await,
         }
     }
@@ -144,6 +160,7 @@ pub(crate) enum Writer {
     /// The write half plus the underlying socket's fd: `setNoDelay`/`setKeepAlive` are OS socket
     /// options, and `tokio::io::WriteHalf` does not hand back the wrapped stream. The fd stays
     /// valid because the `TlsKind` holding it lives in the same `Writer`.
+    #[cfg(feature = "tls")]
     Tls {
         half: WriteHalf<TlsKind>,
         fd: RawFd,
@@ -156,6 +173,7 @@ impl Writer {
         match self {
             Writer::Tcp(half) => half.write(bytes).await,
             Writer::Unix(half) => half.write(bytes).await,
+            #[cfg(feature = "tls")]
             Writer::Tls { half, .. } => half.write(bytes).await,
         }
     }
@@ -177,6 +195,7 @@ impl Writer {
         match self {
             Writer::Tcp(half) => half.shutdown().await,
             Writer::Unix(half) => half.shutdown().await,
+            #[cfg(feature = "tls")]
             Writer::Tls { half, .. } => half.shutdown().await,
         }
     }
@@ -185,6 +204,7 @@ impl Writer {
         match self {
             Writer::Tcp(half) => half.as_ref().set_nodelay(no_delay),
             // The TLS layer sits on a TCP socket: the option belongs to the socket underneath.
+            #[cfg(feature = "tls")]
             Writer::Tls { fd, .. } => with_socket(*fd, |socket| socket.set_tcp_nodelay(no_delay)),
             // TCP options do not exist on a Unix socket; Node's calls are no-ops there too.
             Writer::Unix(_) => Ok(()),
@@ -195,6 +215,7 @@ impl Writer {
     pub(crate) fn set_keep_alive(&self, enable: bool, delay_ms: u32) -> io::Result<()> {
         match self {
             Writer::Tcp(half) => set_tcp_keep_alive(half.as_ref(), enable, delay_ms),
+            #[cfg(feature = "tls")]
             Writer::Tls { fd, .. } => {
                 with_socket(*fd, |socket| keep_alive(&socket, enable, delay_ms))
             }
@@ -211,6 +232,7 @@ impl Writer {
     pub(crate) fn set_reset_on_close(&self) -> io::Result<()> {
         match self {
             Writer::Tcp(half) => SockRef::from(half.as_ref()).set_linger(Some(Duration::ZERO)),
+            #[cfg(feature = "tls")]
             Writer::Tls { fd, .. } => {
                 with_socket(*fd, |socket| socket.set_linger(Some(Duration::ZERO)))
             }
@@ -227,6 +249,7 @@ impl Writer {
         match self {
             Writer::Tcp(half) => half.as_ref().take_error(),
             Writer::Unix(half) => half.as_ref().take_error(),
+            #[cfg(feature = "tls")]
             Writer::Tls { fd, .. } => with_socket(*fd, |socket| socket.take_error()),
         }
     }
@@ -236,6 +259,7 @@ impl Writer {
 ///
 /// SAFETY: the caller passes an fd it owns (the `TlsKind` in the same `Writer` guarantees the
 /// lifetime); `BorrowedFd` does not close it on drop.
+#[cfg(feature = "tls")]
 fn with_socket<R>(
     fd: RawFd,
     operation: impl FnOnce(SockRef<'_>) -> io::Result<R>,

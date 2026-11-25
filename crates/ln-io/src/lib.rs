@@ -15,9 +15,19 @@
 //! in `docs/m3-plan.md`; the M4 contract is [`net`] and `docs/m4-plan.md`; the M5 child-process
 //! contract is [`proc`] and `docs/m5-plan.md`. Extend them, do not rename them.
 
+// The address types and `dns.lookup` stay available without the network transports; only the
+// sockets and the HTTP/1.1 codec that ride on them need the `net` feature.
+mod addr;
+mod dns;
+// The TCP/Unix/HTTP-1.1 handle protocol, and the TLS layer on top of it. Both are optional: a
+// runtime built without `net` has no network module at all (no stub), so `ln_io::net` simply
+// does not exist in that build. `tls` implies `net` because a TLS stream is always over TCP.
+#[cfg(feature = "net")]
 pub mod net;
 pub mod proc;
 pub mod signal;
+
+pub use addr::{Addr, IpFamily};
 
 use std::ffi::CString;
 use std::fs;
@@ -106,7 +116,7 @@ pub enum OpValue {
     Dir(Vec<DirEntry>),
     /// Resolved addresses (`dns.lookup`). Ports are `0`: a lookup returns addresses, not
     /// endpoints, and the JS layer attaches the port to the connection target.
-    Addrs(Vec<net::Addr>),
+    Addrs(Vec<addr::Addr>),
 }
 
 /// One filesystem capability. Paths are UTF-8 strings by the time they reach this layer: the JS
@@ -260,7 +270,7 @@ pub enum Op {
     /// resolver runs on the blocking pool (ADR-0005, m4-plan §2.6).
     Lookup {
         host: String,
-        family: net::IpFamily,
+        family: addr::IpFamily,
         all: bool,
     },
 }
@@ -458,7 +468,7 @@ impl Op {
             Op::Statfs { path } => statfs(&path),
             // `getaddrinfo` is synchronous by nature; this arm is the body of the blocking-pool
             // work, so being sync is correct (m4-plan §2.6).
-            Op::Lookup { host, family, all } => net::dns::lookup(&host, family, all),
+            Op::Lookup { host, family, all } => dns::lookup(&host, family, all),
         }
     }
 }
@@ -1660,7 +1670,7 @@ mod tests {
             (
                 Op::Lookup {
                     host: "localhost".into(),
-                    family: net::IpFamily::Either,
+                    family: addr::IpFamily::Either,
                     all: false,
                 },
                 "getaddrinfo",

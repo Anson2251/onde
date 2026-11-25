@@ -104,6 +104,7 @@ pub(crate) fn bytes<'js>(
 }
 
 /// Like [`bytes`], but `undefined`/`null` mean "no data" (`hkdf`'s optional salt/info).
+#[cfg(feature = "node-crypto")]
 pub(crate) fn bytes_or_empty<'js>(value: Option<&js::Value<'js>>) -> Result<Vec<u8>, NodeError> {
     match value {
         Some(value) if !value.is_undefined() && !value.is_null() => bytes_value(value, "data"),

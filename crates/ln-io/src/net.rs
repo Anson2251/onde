@@ -11,7 +11,6 @@
 //! One id space: handle ids and op ids come from the same `RequestId` sequence (see
 //! `docs/m4-plan.md` §2.1), so an id in a `Completion` is never ambiguous.
 
-use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -19,15 +18,25 @@ use ln_error::NodeError;
 use ln_http::{Limits, Role};
 
 mod connection;
-pub(crate) mod dns;
 mod error;
 mod listener;
 mod registry;
 mod service;
+// TLS is a wrapper over the TCP transport and exists only with rustls: a `net`-only build has no
+// `node:tls` to ask for it, so the module and its options disappear together (see the feature
+// docs in `Cargo.toml`).
+#[cfg(feature = "tls")]
 mod tls;
 mod transport;
 
 pub use service::NetService;
+
+// The address types also serve `dns.lookup`, which stays available without `net`; they now live
+// in `crate::addr` and are re-exported here so the `ln_io::net::{Addr, IpFamily}` paths survive.
+pub use crate::addr::{Addr, IpFamily};
+// `family_matches` is crate-private, and a `pub use` of a `pub(crate)` item is E0364; a
+// `pub(crate)` re-export still provides the `net::family_matches` path the transport tasks use.
+pub(crate) use crate::addr::family_matches;
 
 /// Identifies one live connection for its lifetime. Same id space as [`crate::RequestId`].
 pub type HandleId = u64;
@@ -36,66 +45,9 @@ pub type HandleId = u64;
 /// bound here is what makes the slow-loris criterion a property of the design (ADR-0006 H7).
 pub const MAX_CHUNK: u32 = 64 * 1024;
 
-/// Address family requested by the JS layer (`net.connect({ family })`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IpFamily {
-    V4,
-    V6,
-    #[default]
-    Either,
-}
-
-/// A bound or connected endpoint, as `server.address()` / `socket.address()` report it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Addr {
-    Ip(SocketAddr),
-    Unix(PathBuf),
-}
-
-impl Addr {
-    /// Node's `family` string: `"IPv4"`, `"IPv6"` or `"unix"`.
-    pub fn family(&self) -> &'static str {
-        match self {
-            Addr::Ip(address) if address.is_ipv4() => "IPv4",
-            Addr::Ip(_) => "IPv6",
-            Addr::Unix(_) => "unix",
-        }
-    }
-
-    /// The port; Unix sockets have none, so `0`.
-    pub fn port(&self) -> u16 {
-        match self {
-            Addr::Ip(address) => address.port(),
-            Addr::Unix(_) => 0,
-        }
-    }
-
-    pub fn ip(&self) -> Option<IpAddr> {
-        match self {
-            Addr::Ip(address) => Some(address.ip()),
-            Addr::Unix(_) => None,
-        }
-    }
-}
-
-impl From<SocketAddr> for Addr {
-    fn from(address: SocketAddr) -> Self {
-        Addr::Ip(address)
-    }
-}
-
-/// Address-family filter shared by `net.connect({ family })`, `server.listen` and
-/// `dns.lookup({ family })`: `Either` accepts both, the others keep one family only.
-pub(crate) fn family_matches(address: IpAddr, family: IpFamily) -> bool {
-    match family {
-        IpFamily::Either => true,
-        IpFamily::V4 => address.is_ipv4(),
-        IpFamily::V6 => address.is_ipv6(),
-    }
-}
-
 /// TLS options for the client role. PEM bytes, not paths: the JS layer reads the files with
 /// `fs.readFileSync`, so there is one file-reading path and one error shape.
+#[cfg(feature = "tls")]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TlsClientOptions {
     /// SNI name. `None` means "use the connect host", as Node does.
@@ -108,6 +60,7 @@ pub struct TlsClientOptions {
     pub alpn: Vec<String>,
 }
 
+#[cfg(feature = "tls")]
 impl TlsClientOptions {
     /// Node's defaults: verification on, no extra roots, no ALPN.
     pub fn new() -> Self {
@@ -121,6 +74,7 @@ impl TlsClientOptions {
 }
 
 /// TLS options for the server role.
+#[cfg(feature = "tls")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerOptions {
     pub cert_pem: Vec<u8>,
@@ -138,6 +92,8 @@ pub struct ConnectOptions {
     pub no_delay: bool,
     /// `setKeepAlive(enable, initialDelay)`; `None` leaves the OS default alone.
     pub keep_alive_ms: Option<u32>,
+    /// No `tls` field without the feature: JS cannot build TLS options without `node:tls`.
+    #[cfg(feature = "tls")]
     pub tls: Option<TlsClientOptions>,
 }
 
@@ -149,6 +105,7 @@ impl Default for ConnectOptions {
             local_port: None,
             no_delay: true,
             keep_alive_ms: None,
+            #[cfg(feature = "tls")]
             tls: None,
         }
     }
@@ -161,6 +118,8 @@ pub struct ListenOptions {
     pub ipv6_only: bool,
     /// Node's `exclusive`: do not share the port with a previous listener.
     pub exclusive: bool,
+    /// No `tls` field without the feature: see [`ConnectOptions::tls`].
+    #[cfg(feature = "tls")]
     pub tls: Option<TlsServerOptions>,
 }
 
@@ -170,6 +129,7 @@ impl Default for ListenOptions {
             backlog: 511,
             ipv6_only: false,
             exclusive: false,
+            #[cfg(feature = "tls")]
             tls: None,
         }
     }
@@ -338,6 +298,8 @@ pub type EventSink = Arc<dyn Fn(HandleId, Event) + Send + Sync>;
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
     use super::*;
 
     /// H1: commands and events cross a thread boundary, so they must be `Send` by construction.
@@ -350,8 +312,11 @@ mod tests {
         assert_send::<HandleIdSource>();
         assert_send::<ConnectTarget>();
         assert_send::<ListenTarget>();
-        assert_send::<TlsClientOptions>();
-        assert_send::<TlsServerOptions>();
+        #[cfg(feature = "tls")]
+        {
+            assert_send::<TlsClientOptions>();
+            assert_send::<TlsServerOptions>();
+        }
     }
 
     #[test]
@@ -367,6 +332,7 @@ mod tests {
         assert_eq!(unix.ip(), None);
     }
 
+    #[cfg(feature = "tls")]
     #[test]
     fn tls_client_defaults_match_node() {
         let tls = TlsClientOptions::new();

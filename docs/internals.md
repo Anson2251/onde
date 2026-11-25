@@ -70,7 +70,11 @@ are in the [README](../README.md); per-module compatibility and every deliberate
   conversion and binding rules. The `node-sqlite` feature can drop the whole module (and the
   bundled C) from a build; `node-zlib` drops the `node:zlib` module and, in `onde`, zlib itself
   (the only consumer there). The SDK keeps the payload inflater through a separate `zlib-payload`
-  feature.
+  feature. The network stack has two flags: `node-net` drops `net`, `http` and `dns` together with
+  the socket layer and the `ln-http` codec, and `node-tls` drops `tls`/`https` and the rustls
+  provider underneath (it implies `node-net`, since a TLS stream is always over a socket).
+  `node-crypto` drops `node:crypto` and the RustCrypto digests; it is independent of the network
+  flags. Per-flag binary cost is measured in the README's feature-footprint section.
 
 ### Processes, threads and lines — M5
 

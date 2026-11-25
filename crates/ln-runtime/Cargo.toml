@@ -8,14 +8,20 @@ description = "Isolate bootstrap, host globals and the microtask checkpoint driv
 publish = false
 
 [dependencies]
-ln-crypto = { path = "../ln-crypto" }
+# `node:crypto` (host/crypto.rs, host_crypto.rs). Optional so a size-sensitive build can drop
+# the RustCrypto digests with the `node-crypto` feature; it is in `default` so the normal binary
+# keeps the module.
+ln-crypto = { path = "../ln-crypto", optional = true }
 ln-engine = { path = "../ln-engine" }
 ln-error = { path = "../ln-error" }
 # The locked codec types (Event, BodyMode, Role, Limits) appear inside `ln_io::net::Event::Http`
 # and in the `httpAttach` command, so the bridge names them directly instead of re-declaring a
-# mirror enum. This is the same crate `ln-io` already depends on; no new external dependency.
-ln-http = { path = "../ln-http" }
-ln-io = { path = "../ln-io" }
+# mirror enum. Only the `node-net` feature keeps those paths compiled, so the dependency is
+# optional with it.
+ln-http = { path = "../ln-http", optional = true }
+# Default features off: `net`/`tls` here are driven by `node-net`/`node-tls`, so disabling a
+# runtime flag actually removes the code (and rustls) instead of leaving ln-io's defaults on.
+ln-io = { path = "../ln-io", default-features = false }
 ln-sched = { path = "../ln-sched" }
 ln-modules = { path = "../ln-modules" }
 # Two independent consumers: `node:zlib` (host/zlib.rs) and the inflater for a `--compress zlib`
@@ -40,15 +46,32 @@ base64 = "0.23"
 serde_json = "1"
 
 [features]
-# Default features cover a full interpreter and an SDK: both Node modules plus the zlib payload
-# decoder. `node-sqlite` pulls in the bundled SQLite. `node-zlib` pulls in zlib for the module;
-# `zlib-payload` pulls it in for `--compress zlib` compiled apps. `onde` takes only the module
-# features (`ln-cli` disables defaults), so it drops zlib when `node-zlib` is off; `ln-embed`
-# keeps `zlib-payload` for the apps it links.
-default = ["node-sqlite", "node-zlib", "zlib-payload"]
+# Default features cover a full interpreter and an SDK: every Node module plus the zlib payload
+# decoder. `node-sqlite` pulls in the bundled SQLite, `node-zlib` the compression module,
+# `node-crypto` the RustCrypto digests, `node-net` the socket layer plus HTTP/1.1, and
+# `node-tls` rustls on top of it. `zlib-payload` pulls zlib in for `--compress zlib` compiled
+# apps. `onde` takes only the module features (`ln-cli` disables defaults).
+default = [
+    "node-sqlite",
+    "node-zlib",
+    "node-net",
+    "node-tls",
+    "node-crypto",
+    "zlib-payload",
+]
 node-sqlite = ["dep:ln-sqlite"]
 node-zlib = ["dep:ln-zlib"]
 zlib-payload = ["dep:ln-zlib"]
+# `node:net`, `node:http` and `node:dns` (host/net.rs, host/dns.rs, handles.rs). Dropping it also
+# drops the ln-http codec and the socket layer; `ln-io` keeps tokio, which the fs offload pool,
+# child processes and signals still need.
+node-net = ["dep:ln-http", "ln-io/net"]
+# `node:tls` and `node:https`, and the rustls provider underneath them. Implies `node-net`: a TLS
+# stream is always over a socket, so there is no tls-without-net state to represent.
+node-tls = ["node-net", "ln-io/tls"]
+# `node:crypto` (host/crypto.rs, host_crypto.rs). Independent of the network flags: the module
+# shares no code with net or tls.
+node-crypto = ["dep:ln-crypto"]
 # Embeds the bootstrap source in a release build as well as the snapshot, so the two boot paths can
 # be A/B measured in one optimized binary (m7-plan §4.3). Never on in a shipped build: it is ~55 KiB
 # of source that only exists to be compared against (D72).

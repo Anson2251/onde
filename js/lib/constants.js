@@ -17,7 +17,17 @@
 
 const fs = require("./fs.js");
 const os = require("./os.js");
-const crypto = require("./crypto.js");
+
+// `crypto` is optional (`node-crypto`): a size-trimmed build compiles the module out, and this
+// deprecated grab bag must still load without it. The host answers `builtinUnavailable` with the
+// same text the loader would throw, so the condition is asked rather than guessed with a catch
+// (a real load failure in the module must not be swallowed). Under plain Node, where `__ln_host`
+// does not exist, the require below loads the local file as usual.
+const cryptoUnavailable =
+  typeof __ln_host !== "undefined" &&
+  typeof __ln_host.builtinUnavailable === "function" &&
+  __ln_host.builtinUnavailable("crypto") !== null;
+const crypto = cryptoUnavailable ? null : require("./crypto.js");
 
 const constants = Object.assign({}, fs.constants);
 
@@ -32,7 +42,7 @@ for (const group of Object.keys(os.constants)) {
 // onde's crypto has no `constants` today. Checking instead of assuming keeps this module working
 // unchanged when one appears; a non-object export is ignored rather than spread into the flat
 // object.
-if (crypto.constants !== null && typeof crypto.constants === "object") {
+if (crypto !== null && crypto.constants !== null && typeof crypto.constants === "object") {
   Object.assign(constants, crypto.constants);
 }
 

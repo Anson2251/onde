@@ -21,8 +21,12 @@ use tokio::net::{lookup_host, TcpListener, UnixListener};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::connection::Connection;
-use super::error::{from_errno, from_io, from_io_at, from_io_detail, not_found, resolve_error};
+use super::error::{from_errno, from_io, from_io_at, from_io_detail};
 use super::registry::Shared;
+// The resolver errors moved with `dns.lookup`, which is an op and no longer lives under `net`.
+use crate::dns::{not_found, resolve_error};
+// TLS is rustls-only: a `net`-only build never builds a config and never names the module.
+#[cfg(feature = "tls")]
 use super::tls::{self, ServerTls};
 use super::transport::Transport;
 use super::{Addr, Command, Event, HandleId, ListenOptions, ListenTarget};
@@ -78,7 +82,9 @@ pub(crate) async fn run(
     mut commands: UnboundedReceiver<Command>,
 ) {
     // The TLS config is built once, before binding: a malformed chain is one server `error`, and
-    // every accepted connection then shares the cached config (m4-plan §2.5).
+    // every accepted connection then shares the cached config (m4-plan §2.5). A `net`-only build
+    // has no `node:tls` to ask for TLS, so it never builds one.
+    #[cfg(feature = "tls")]
     let tls = match tls_config(&target) {
         Ok(tls) => tls,
         Err(error) => {
@@ -122,32 +128,21 @@ pub(crate) async fn run(
                         // `0` means "no handle" (ADR-0006 §2.1); never advertise one.
                         continue;
                     }
-                    match (tls.clone(), transport) {
-                        (None, transport) => {
-                            let connection = Connection::new(shared.clone(), handle, transport);
-                            if !shared.spawn_connection(handle, connection) {
-                                // An id collision is an allocator bug; refusing to emit
-                                // `connection` for a handle nobody can address is the safe answer.
-                                continue;
-                            }
-                            shared.emit(
-                                id,
-                                Event::Connection {
-                                    handle,
-                                    remote,
-                                    alpn: None,
-                                    protocol: None,
-                                },
-                            );
-                        }
-                        (Some(config), Transport::Tcp(stream)) => {
-                            // The handshake runs in the child task and the child emits
-                            // `connection` itself once TLS is up, so a slow handshake cannot stall
-                            // this loop and a failed one never shows JS a socket (see
-                            // `Connection::accept_tls`).
+                    // The handshake runs in the child task and the child emits `connection` itself
+                    // once TLS is up, so a slow handshake cannot stall this loop and a failed one
+                    // never shows JS a socket (see `Connection::accept_tls`). A `net`-only build
+                    // has no config to hold: TLS options cannot reach a listener without
+                    // `node:tls`, so every accepted transport there is plain.
+                    #[cfg(feature = "tls")]
+                    if let Some(config) = tls.clone() {
+                        // A TLS listener is always TCP (`tls_config` refuses Unix), so a non-TCP
+                        // transport cannot be a TLS one and is dropped without `connection`.
+                        if let Transport::Tcp(stream) = transport {
                             let connection_shared = shared.clone();
                             let remote = remote.clone();
-                            let spawned = shared.spawn_connection_task(handle, move |commands| {
+                            // The child emits `connection` itself, so a failed spawn (an id
+                            // collision) has nothing to report here.
+                            let _ = shared.spawn_connection_task(handle, move |commands| {
                                 Connection::accept_tls(
                                     connection_shared,
                                     handle,
@@ -158,14 +153,24 @@ pub(crate) async fn run(
                                     commands,
                                 )
                             });
-                            if !spawned {
-                                continue;
-                            }
                         }
-                        // A TLS listener is always TCP (`tls_config` refuses Unix), so there is no
-                        // third combination to handle.
-                        (Some(_), _) => continue,
+                        continue;
                     }
+                    let connection = Connection::new(shared.clone(), handle, transport);
+                    if !shared.spawn_connection(handle, connection) {
+                        // An id collision is an allocator bug; refusing to emit
+                        // `connection` for a handle nobody can address is the safe answer.
+                        continue;
+                    }
+                    shared.emit(
+                        id,
+                        Event::Connection {
+                            handle,
+                            remote,
+                            alpn: None,
+                            protocol: None,
+                        },
+                    );
                 }
                 Err(error) => {
                     let errno = error.raw_os_error().unwrap_or(libc::EIO);
@@ -220,6 +225,7 @@ fn retryable_errno(errno: i32) -> bool {
 ///
 /// TLS over a Unix socket is refused rather than downgraded to plaintext: the transport halves are
 /// TCP-shaped, and a silent plaintext listener is a security bug, not a compatibility gap.
+#[cfg(feature = "tls")]
 fn tls_config(target: &ListenTarget) -> Result<Option<ServerTls>, NodeError> {
     let (options, unix) = match target {
         ListenTarget::Tcp { options, .. } => (options, false),

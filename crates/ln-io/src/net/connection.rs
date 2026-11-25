@@ -25,8 +25,12 @@ use ln_http::{Conn, Event as HttpEvent, ProtocolError, Role};
 use tokio::net::{lookup_host, TcpSocket, TcpStream, UnixStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::error::{from_io, from_io_at, from_io_detail, not_found, resolve_error};
+use super::error::{from_io, from_io_at, from_io_detail};
 use super::registry::Shared;
+// The resolver errors moved with `dns.lookup`, which is an op and no longer lives under `net`.
+use crate::dns::{not_found, resolve_error};
+// TLS is rustls-only: without the feature there is no handshake to perform or name.
+#[cfg(feature = "tls")]
 use super::tls::{self, ServerTls};
 use super::transport::{set_tcp_keep_alive, Reader, Transport, Writer};
 use super::{
@@ -170,6 +174,7 @@ impl Connection {
     /// has succeeded: a peer that never completes one never becomes a socket JS can see, and a
     /// failed handshake is reported on the (invisible) child handle as `error` + `closed`, never as
     /// a `connection` event.
+    #[cfg(feature = "tls")]
     pub(crate) async fn accept_tls(
         shared: Arc<Shared>,
         id: HandleId,
@@ -847,7 +852,9 @@ impl Connection {
     }
 }
 
-/// Emit `error` then `closed` for a handle that never became visible to JS.
+/// Emit `error` then `closed` for a handle that never became visible to JS. Only the TLS accept
+/// path can hand a registered id to something that never became a socket.
+#[cfg(feature = "tls")]
 fn fail_before_connected(shared: &Shared, id: HandleId, error: NodeError) {
     shared.emit(id, Event::Error { error });
     shared.emit(id, Event::Closed { had_error: true });
@@ -876,25 +883,29 @@ async fn establish(target: &ConnectTarget) -> Result<Established, NodeError> {
             options,
         } => {
             let (stream, local, remote) = connect_tcp(host, *port, options).await?;
-            let Some(tls_options) = &options.tls else {
+            // Without the `tls` feature `ConnectOptions` has no `tls` field, and JS cannot ask
+            // for TLS without `node:tls`, so every connect is plaintext.
+            #[cfg(feature = "tls")]
+            if let Some(tls_options) = &options.tls {
+                let accepted = tls::connect(stream, tls_options, host).await?;
                 return Ok(Established {
-                    transport: Transport::Tcp(stream),
+                    transport: accepted.transport,
                     local,
                     remote,
-                    alpn: None,
-                    protocol: None,
+                    alpn: accepted.alpn,
+                    protocol: accepted.protocol,
                 });
-            };
-            let accepted = tls::connect(stream, tls_options, host).await?;
+            }
             Ok(Established {
-                transport: accepted.transport,
+                transport: Transport::Tcp(stream),
                 local,
                 remote,
-                alpn: accepted.alpn,
-                protocol: accepted.protocol,
+                alpn: None,
+                protocol: None,
             })
         }
         ConnectTarget::Unix { path, options } => {
+            #[cfg(feature = "tls")]
             if options.tls.is_some() {
                 // TLS over a Unix socket needs a rustls stream generic over the IO type; the
                 // transport halves are TCP-shaped, so M4 refuses rather than silently connecting

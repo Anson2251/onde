@@ -1,3 +1,6 @@
+// TLS tests need both features: `tls` implies `net`, but keep the pair explicit for readers.
+#![cfg(all(feature = "net", feature = "tls"))]
+
 //! TLS end-to-end tests at the handle-service boundary: a real listener on `127.0.0.1:0`, a real
 //! connector, the fixture CA and a real rustls handshake.
 //!

@@ -1,25 +1,20 @@
-//! Socket and resolver errno → `NodeError`, with Node's codes and message shape.
+//! Socket errno → `NodeError`, with Node's codes and message shape.
 //!
 //! [`ln_error`]'s errno table is filesystem-shaped: the socket codes (`ECONNREFUSED`,
-//! `ECONNRESET`, `EADDRINUSE`, ...) and the `getaddrinfo` failures (`ENOTFOUND`, `EAI_AGAIN`,
-//! `EAI_FAIL`) are not in it. They live here until they move down to `ln-error`, so that every
-//! error this module reports already carries the code and `syscall` Node's JS layer exposes
-//! (see the WP1 report: `ln-error`'s table should grow these entries).
+//! `ECONNRESET`, `EADDRINUSE`, ...) are not in it. They live here until they move down to
+//! `ln-error`, so that every error this module reports already carries the code and `syscall`
+//! Node's JS layer exposes (see the WP1 report: `ln-error`'s table should grow these entries).
 //!
 //! Nothing in this file allocates per byte or touches a JS value: it is the error half of the
 //! handle protocol's line discipline.
+//!
+//! The `getaddrinfo` shapes (`ENOTFOUND`, `EAI_AGAIN`, `EAI_FAIL`) left in favour of `crate::dns`:
+//! `dns.lookup` is an op that stays available without `net`, so its errors must too.
 
 use std::io;
 use std::path::Path;
 
 use ln_error::NodeError;
-
-/// libuv's errno for `ENOTFOUND` (`UV_ENOTFOUND` in `uv.h`).
-pub(crate) const ERRNO_ENOTFOUND: i32 = -3008;
-/// libuv's errno for `EAI_AGAIN` (`UV_EAI_AGAIN`).
-pub(crate) const ERRNO_EAI_AGAIN: i32 = -3004;
-/// libuv's errno for `EAI_FAIL` (`UV_EAI_FAIL`).
-pub(crate) const ERRNO_EAI_FAIL: i32 = -3005;
 
 /// Node's code and libuv description for the socket errnos `ln-error` does not carry yet.
 fn socket_errno(errno: i32) -> Option<(&'static str, &'static str)> {
@@ -103,51 +98,6 @@ pub(crate) fn from_errno(
     }
 }
 
-/// A `getaddrinfo` failure, in Node's `dns.lookup` shape: `code`, `errno`, `syscall:
-/// "getaddrinfo"` and a message that starts with the code and names the host.
-fn gai_error(host: &str, code: &'static str, errno: i32) -> NodeError {
-    NodeError {
-        code,
-        name: "Error",
-        message: format!("getaddrinfo {code} {host}"),
-        syscall: Some("getaddrinfo"),
-        path: None,
-        errno: Some(errno),
-        cause: None,
-    }
-}
-
-/// `ENOTFOUND`: the host has no addresses, or none of the requested family.
-pub(crate) fn not_found(host: &str) -> NodeError {
-    gai_error(host, "ENOTFOUND", ERRNO_ENOTFOUND)
-}
-
-/// Classify a resolver failure.
-///
-/// `std`'s `ToSocketAddrs` collapses every `getaddrinfo` failure into one
-/// `io::ErrorKind::Uncategorized` error whose message is `gai_strerror`'s text, so the EAI code
-/// cannot be recovered exactly. The message is the only signal available: Node's `dns.lookup`
-/// reports `ENOTFOUND` for "no such host" and `EAI_AGAIN` for a temporary resolver failure, and
-/// anything else is `EAI_FAIL`. (`ln-io` deliberately does not reach for `libc::getaddrinfo`
-/// here: the extra FFI and `addrinfo` walk would duplicate what `std` already does correctly.)
-pub(crate) fn resolve_error(host: &str, error: &io::Error) -> NodeError {
-    if error.kind() == io::ErrorKind::NotFound {
-        return not_found(host);
-    }
-    let message = error.to_string().to_ascii_lowercase();
-    if message.contains("try again") || message.contains("temporary") {
-        gai_error(host, "EAI_AGAIN", ERRNO_EAI_AGAIN)
-    } else if message.contains("not known")
-        || message.contains("no such host")
-        || message.contains("does not resolve")
-        || message.contains("nodename")
-    {
-        gai_error(host, "ENOTFOUND", ERRNO_ENOTFOUND)
-    } else {
-        gai_error(host, "EAI_FAIL", ERRNO_EAI_FAIL)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,21 +144,5 @@ mod tests {
     #[test]
     fn unknown_errnos_stay_unknown() {
         assert_eq!(from_errno(123_456, "read", None, None).code, "UNKNOWN");
-    }
-
-    #[test]
-    fn resolver_failures_classify_to_node_codes() {
-        let noname = io::Error::other("nodename nor servname provided, or not known");
-        let error = resolve_error("no-such-host.invalid", &noname);
-        assert_eq!(error.code, "ENOTFOUND");
-        assert_eq!(error.syscall, Some("getaddrinfo"));
-        assert_eq!(error.errno, Some(ERRNO_ENOTFOUND));
-        assert_eq!(error.message, "getaddrinfo ENOTFOUND no-such-host.invalid");
-
-        let again = io::Error::other("Temporary failure in name resolution");
-        assert_eq!(resolve_error("x.invalid", &again).code, "EAI_AGAIN");
-
-        let failed = io::Error::other("resolver exploded");
-        assert_eq!(resolve_error("x.invalid", &failed).code, "EAI_FAIL");
     }
 }

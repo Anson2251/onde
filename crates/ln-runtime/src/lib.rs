@@ -40,8 +40,10 @@ use ln_sched::{
 mod args;
 mod async_hooks;
 mod bootstrap;
+#[cfg(feature = "node-net")]
 mod handles;
 mod host;
+#[cfg(feature = "node-crypto")]
 mod host_crypto;
 mod host_error;
 mod modules;
@@ -54,6 +56,7 @@ mod workers;
 pub use report::render_uncaught;
 
 use async_hooks::AsyncTracker;
+#[cfg(feature = "node-net")]
 use handles::HandleBridge;
 use host::HostState;
 use modules::ModuleRuntime;
@@ -415,7 +418,9 @@ pub struct Isolate {
     modules: Rc<ModuleRuntime>,
     /// The async-op bridge: pool, result slots and abort flags.
     ops: Rc<OpBridge>,
-    /// The handle bridge: network tasks, parked events and loop refs (ADR-0006).
+    /// The handle bridge: network tasks, parked events and loop refs (ADR-0006). Only the
+    /// `node-net` feature compiles it; without sockets there is nothing to own.
+    #[cfg(feature = "node-net")]
     handles: Rc<HandleBridge>,
     /// The worker bridge: worker threads, parked events and loop refs (ADR-0008).
     workers: Rc<workers::WorkerBridge>,
@@ -516,6 +521,7 @@ impl Isolate {
             config.io_threads,
             ids.clone(),
         ));
+        #[cfg(feature = "node-net")]
         let handles = Rc::new(HandleBridge::new(
             driver.clone(),
             sender.clone(),
@@ -578,6 +584,7 @@ impl Isolate {
             dispatcher: None,
             modules,
             ops,
+            #[cfg(feature = "node-net")]
             handles,
             workers,
             signals,
@@ -638,6 +645,7 @@ impl Isolate {
             memory_requested: self.memory_requested.clone(),
             ops: self.ops.clone(),
             ids: self.ops.ids().clone(),
+            #[cfg(feature = "node-net")]
             handles: self.handles.clone(),
             #[cfg(feature = "node-sqlite")]
             sqlite: self.sqlite.clone(),
@@ -1276,6 +1284,7 @@ impl Isolate {
             return Ok(());
         }
 
+        #[cfg(feature = "node-net")]
         if let Some(events) = self.handles.take(id) {
             // Bookkeeping happens before JS runs: a `closed` event releases the handle's ref here,
             // and an accepted connection becomes addressable before its `connection` handler can
@@ -1446,6 +1455,7 @@ impl Isolate {
         self.signals.shutdown();
         self.procs.shutdown();
         self.ipc.shutdown();
+        #[cfg(feature = "node-net")]
         self.handles.shutdown();
         self.workers.shutdown();
         // Close every SQLite connection while the engine is still alive: a future user-defined
@@ -1522,11 +1532,13 @@ impl Isolate {
     }
 
     /// Network handles JavaScript currently knows about (diagnostics/tests).
+    #[cfg(feature = "node-net")]
     pub fn live_handles(&self) -> usize {
         self.handles.live_handles()
     }
 
     /// External loop refs held by live handles: 0 or 1 per handle (H3, diagnostics/tests).
+    #[cfg(feature = "node-net")]
     pub fn handle_refs(&self) -> usize {
         self.handles.held_refs()
     }
@@ -1653,6 +1665,7 @@ impl Drop for Isolate {
         self.signals.shutdown();
         self.procs.shutdown();
         self.ipc.shutdown();
+        #[cfg(feature = "node-net")]
         self.handles.shutdown();
         self.workers.shutdown();
         // Close every SQLite connection while the engine is still alive: a future user-defined
@@ -1721,7 +1734,9 @@ fn run_op_done(
 
 /// One handle event batch, followed by the usual bridge drain and a single checkpoint (the caller
 /// runs it). The events were parked as plain Rust data (H1); this converts them on the isolate
-/// thread and calls `__ln_handle_event` for each, in task order (H2).
+/// thread and calls `__ln_handle_event` for each, in task order (H2). Compiled only with
+/// `node-net`, which is the only thing that can park a handle event.
+#[cfg(feature = "node-net")]
 fn run_handle_events(
     engine: &Rc<Engine>,
     exit: &Rc<ExitState>,

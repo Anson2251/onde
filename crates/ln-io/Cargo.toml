@@ -7,9 +7,17 @@ license.workspace = true
 description = "Blocking fs ops, the tokio offload pool and the M4 network transports for onde"
 publish = false
 
+[features]
+default = ["net", "tls"]
+# The sockets and the HTTP/1.1 codec that ride on them.
+net = ["dep:ln-http", "dep:socket2"]
+# rustls on top of net. Implies net: a TLS stream is always over TCP.
+tls = ["net", "dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:rustls-pemfile"]
+
 [dependencies]
 ln-error = { path = "../ln-error" }
-ln-http = { path = "../ln-http" }
+# The HTTP/1.1 codec under the sockets: only the `net` feature needs it.
+ln-http = { path = "../ln-http", optional = true }
 getrandom = "0.2"
 # `net`/`io-util` are M4: sockets, DNS and the connection tasks that drive `ln-http`.
 # `macros` is `tokio::select!`, the one `await` point that waits on commands, reads and writes
@@ -26,20 +34,22 @@ tokio = { version = "1", features = [
     "signal",
 ] }
 
-# M4 TLS (WP6). The provider is pinned to `ring`: rustls' default `aws-lc-rs` needs cmake/nasm,
-# while `ring` needs only the C compiler the engine already requires (m4-plan §1).
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+# M4 TLS (WP6), behind the `tls` feature. The provider is pinned to `ring`: rustls' default
+# `aws-lc-rs` needs cmake/nasm, while `ring` needs only the C compiler the engine already
+# requires (m4-plan §1).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
 # Node's bundled Mozilla root store (`tls.rootCertificates` / the default client trust anchors).
-webpki-roots = "1"
+webpki-roots = { version = "1", optional = true }
 # PEM parsing for `ca`/`cert`/`key`.
-rustls-pemfile = "2"
+rustls-pemfile = { version = "2", optional = true }
 # Optional OS trust store (`ONDE_USE_SYSTEM_CA=1`), Node's `--use-system-ca` equivalent.
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # SO_KEEPALIVE timings (TCP_KEEPIDLE/TCP_KEEPINTVL) and the listener options tokio does not expose.
-socket2 = "0.6"
+# Only the `net` feature's listeners and transports use it, so it is optional like `ln-http`.
+socket2 = { version = "0.6", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

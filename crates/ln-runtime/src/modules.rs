@@ -41,6 +41,9 @@ pub(crate) fn builtin_unavailable_message(name: &str) -> Option<String> {
     let feature = match name {
         "sqlite" if !cfg!(feature = "node-sqlite") => "node-sqlite",
         "zlib" if !cfg!(feature = "node-zlib") => "node-zlib",
+        "crypto" if !cfg!(feature = "node-crypto") => "node-crypto",
+        "net" | "http" | "dns" if !cfg!(feature = "node-net") => "node-net",
+        "tls" | "https" if !cfg!(feature = "node-tls") => "node-tls",
         _ => return None,
     };
     Some(disabled_builtin_message(name, feature))
@@ -79,14 +82,20 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "test" => bundled_js!("lib/test.js"),
         "buffer" => bundled_js!("lib/buffer.js"),
         "constants" => bundled_js!("lib/constants.js"),
+        #[cfg(feature = "node-crypto")]
         "crypto" => bundled_js!("lib/crypto.js"),
+        #[cfg(feature = "node-net")]
         "dns" => bundled_js!("lib/dns.js"),
         "os" => bundled_js!("lib/os.js"),
         "console" => bundled_js!("lib/console.js"),
         "module" => bundled_js!("lib/module.js"),
+        #[cfg(feature = "node-net")]
         "http" => bundled_js!("lib/http.js"),
+        #[cfg(feature = "node-tls")]
         "https" => bundled_js!("lib/https.js"),
+        #[cfg(feature = "node-tls")]
         "tls" => bundled_js!("lib/tls.js"),
+        #[cfg(feature = "node-net")]
         "net" => bundled_js!("lib/net.js"),
         "worker_threads" => bundled_js!("lib/worker_threads.js"),
         "child_process" => bundled_js!("lib/child_process.js"),
@@ -663,12 +672,17 @@ mod tests {
     #[test]
     fn every_builtin_has_an_embedded_source() {
         for name in ln_modules::BUILTINS {
-            // A build without the `node-sqlite` feature lists the name for the resolver's error
+            // A build without a module's feature lists the name for the resolver's error
             // message but deliberately has no source for it.
-            if !cfg!(feature = "node-sqlite") && *name == "sqlite" {
-                continue;
-            }
-            if !cfg!(feature = "node-zlib") && *name == "zlib" {
+            let gated = match *name {
+                "sqlite" => !cfg!(feature = "node-sqlite"),
+                "zlib" => !cfg!(feature = "node-zlib"),
+                "crypto" => !cfg!(feature = "node-crypto"),
+                "net" | "http" | "dns" => !cfg!(feature = "node-net"),
+                "tls" | "https" => !cfg!(feature = "node-tls"),
+                _ => false,
+            };
+            if gated {
                 continue;
             }
             assert!(

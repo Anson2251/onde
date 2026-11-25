@@ -1,3 +1,6 @@
+// The whole file needs the `net` feature: without it there is no network module at all.
+#![cfg(feature = "net")]
+
 //! Deterministic integration tests for the M4 network handles.
 //!
 //! Every listener binds `127.0.0.1:0`; every receive is bounded by `recv_timeout`, and no

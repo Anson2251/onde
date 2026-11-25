@@ -6,7 +6,7 @@ onde runs the code around the work: CLIs, build steps, config, request handlers 
 the plugin layer inside another tool. It speaks Node's module system (`require`, `import`,
 `node_modules`, `exports` maps), its core modules (`fs`, `stream`, `net`, `http`, `https`, `tls`,
 `dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and installs as a
-7.6 MB binary (5.4 MB without the optional modules).
+7.6 MB binary (3.7 MB with every optional module compiled out).
 
 Status: M0–M7 are done; M8, the 1.0 compatibility sweep, packaging and publish, is next.
 
@@ -48,30 +48,41 @@ console.log(db.prepare("SELECT v FROM t").get()); // [Object: null prototype] { 
 
 ## Building
 
-`node:sqlite` and `node:zlib` are Cargo features named `node-sqlite` and `node-zlib`, and both are
-on by default. A third feature, `zlib-payload`, carries the inflater used by `--compress zlib`
-compiled apps.
+Every optional Node module is a Cargo feature, and all of them are on by default:
+
+| feature | module(s) it compiles in | what it links |
+|---|---|---|
+| `node-net` | `net`, `http`, `dns` | the socket layer and the `ln-http` HTTP/1.1 codec |
+| `node-tls` | `tls`, `https` (implies `node-net`) | rustls over `ring`, with the bundled Mozilla roots |
+| `node-crypto` | `crypto` | RustCrypto MD5/SHA-1/SHA-2, HMAC and HKDF |
+| `node-sqlite` | `node:sqlite` | the bundled SQLite 3.53.2 amalgamation |
+| `node-zlib` | `zlib` | zlib |
+
+`zlib-payload` and `zstd-payload` are not modules: they carry the payload decoders a compiled app
+needs for `--compress zlib` and `--compress zstd`.
 
 ```sh
-cargo build                                                       # both modules
+cargo build                                                         # every module
 cargo build --release
-cargo build -p ln-cli --no-default-features                       # neither
-cargo build -p ln-cli --no-default-features --features node-sqlite # one of them
+cargo build -p ln-cli --no-default-features                         # none of them
+cargo build -p ln-cli --no-default-features --features node-net     # sockets, no TLS
+cargo build -p ln-cli --no-default-features --features node-tls     # tls implies net
 cargo test --all
 ```
 
-`node-sqlite` also links the bundled SQLite. In `onde`, `node-zlib` is the only zlib consumer, so
-leaving it out drops zlib from that binary. The SDK is different: `ln-embed` enables
-`zlib-payload` by default so compiled apps can inflate `--compress zlib` payloads, and
-`node-zlib` there only adds the module (~40 KB; zlib is already present). An SDK archive built
-without `zlib-payload` refuses a zlib-compressed app with a message instead of misreading it. A
-module the build left out fails with its feature named, on `require` and `import`, instead of a
-generic unknown-module error:
+In `onde`, `node-zlib` is the only zlib consumer, so leaving the feature out drops zlib from that
+binary. The SDK is different: `ln-embed` enables `zlib-payload` by default so compiled apps can inflate
+`--compress zlib` payloads, and `node-zlib` there only adds the module (about 40 KB; zlib is
+already present). An SDK archive built without `zlib-payload` refuses a zlib-compressed app with
+a message instead of misreading it. A module the build left out fails with its feature named, on
+`require` and `import`, instead of a generic unknown-module error:
 
 > node:sqlite is not available: the `node-sqlite` feature is not enabled in this build. Rebuild
 > without `--no-default-features` (or with `--features node-sqlite`) to include it.
 
-`./test/features/run.sh` builds both, neither and each feature alone, and asserts the messages.
+`./test/features/run.sh` builds the matrix (default, none, each flag alone, and `node-tls` without
+`node-net` to prove the implication) and asserts every message. `./test/features/size.sh` prints
+the release cost of each flag; the numbers are in [Footprint](#footprint).
 
 ## What's in the box
 
@@ -103,8 +114,8 @@ machine's sampler falls back to `footprint`, whose 1 MB granularity cannot resol
 
 | metric | onde | Node 26 | Bun 1.3 |
 |---|---:|---:|---:|
-| install size | 7.6 MB | 77 MB | 58 MB |
-| install size, both module features off (SQLite and zlib dropped from `onde`) | 5.4 MB | — | — |
+| install size, full features (default) | 7.6 MB | 77 MB | 58 MB |
+| install size, no optional features | 3.7 MB | — | — |
 | cold start, `-e '1+1'` | 11.6 ms | 92.9 ms | 8.0 ms |
 | cold start, `require("http")` | 18.4 ms | 94.2 ms | 15.5 ms |
 | peak RSS, hello HTTP server | 9.3 MB | 44.2 MB | 33.2 MB |
@@ -115,10 +126,36 @@ At 9.3 MB resident, a hundred onde processes cost less than the tool around them
 Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's 11.6, and
 QuickJS has an engine to initialize either way.
 
-Feature cost, measured on the same release build: in `onde`, `node-sqlite` adds **2.1 MB** (the
-bundled SQLite) and `node-zlib` adds **~90 KB** (zlib plus the module). In a compiled-app archive,
-`zlib-payload` is already on, so `node-zlib` adds only the module, about 40 KB. `cargo tree -i
-ln-zlib` shows which build carries the library.
+### Feature flags and what they cost
+
+The baseline is the minimal release build, `--no-default-features` at 3.7 MB; the full build is
+7.6 MB. Each figure is what that flag adds on top of the baseline.
+
+| feature | modules it brings back | footprint | what it links |
+|---|---|---:|---|
+| baseline | core only (`fs`, `stream`, `buffer`, `console`, `path`, `os` …) | 3.7 MB | QuickJS, the runtime core, tokio (fs pool, child_process IPC, signals) |
+| `node-zlib` | `zlib` | +106 KB | zlib |
+| `node-crypto` | `crypto` | +127 KB | `ln-crypto`: SHA-1, SHA-2, MD5, HMAC, HKDF |
+| `node-net` | `net`, `http`, `dns` | +220 KB | the socket layer and the `ln-http` HTTP/1.1 codec |
+| `node-tls` | `tls`, `https` | +1.4 MB | rustls, tokio-rustls, `ring`, `webpki-roots`, `rustls-pemfile` |
+| `node-sqlite` | `node:sqlite` | +2.1 MB | the bundled SQLite 3.53.2 amalgamation |
+
+The costs add up to the full build, and each is measured as a step on the ladder rather than by
+subtracting from the full build, so they are what a size-trimmed build actually pays when the
+module comes back. Measured on the same machine and system as the table above (M3 MacBook Air,
+macOS arm64), on 2026-11-25, release profile with thin LTO. The byte-level figures move with the
+toolchain and the linker; the deltas are the part worth comparing, and
+`./test/features/size.sh` re-measures them on the machine it runs on.
+
+`node-tls` is where the weight is, and `https` is its only other consumer in the stdlib.
+
+`node-net` does **not** remove tokio, and the table does not claim it does: the fs offload pool,
+child-process IPC and signals use tokio whatever the module flags say, so tokio and `mio` stay in
+the graph (`socket2` with them, through tokio's `net` feature). What `node-net` removes is the
+module code and our direct `socket2` dependency; the measured delta is the honest number for that.
+
+In a compiled-app archive, `zlib-payload` is already on, so `node-zlib` adds only the module,
+about 40 KB. `cargo tree -i ln-zlib` shows which build carries the library.
 
 ## Performance
 

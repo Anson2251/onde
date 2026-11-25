@@ -13,9 +13,12 @@ name = "onde"
 path = "src/main.rs"
 
 [features]
-# `node:sqlite` and `node:zlib` are on by default; `--no-default-features` builds a slim `onde`
-# where requiring either gives a message naming the missing feature.
-default = ["node-sqlite", "node-zlib"]
+# Every optional module is on by default; `--no-default-features` builds a slim `onde` where
+# requiring one gives a message naming the missing feature. `node-tls` implies `node-net`.
+default = ["node-net", "node-tls", "node-crypto", "node-sqlite", "node-zlib"]
+node-net = ["ln-runtime/node-net"]
+node-tls = ["ln-runtime/node-tls"]
+node-crypto = ["ln-runtime/node-crypto"]
 node-sqlite = ["ln-runtime/node-sqlite"]
 node-zlib = ["ln-runtime/node-zlib"]
 # `onde` never executes a compiled payload, so this is not in `default`; the mapping exists so the

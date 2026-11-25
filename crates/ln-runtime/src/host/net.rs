@@ -15,9 +15,10 @@ use ln_engine::js;
 use ln_error::NodeError;
 use ln_http::{Limits, Role};
 use ln_io::net::{
-    Command, ConnectOptions, ConnectTarget, IpFamily, ListenOptions, ListenTarget,
-    TlsClientOptions, TlsServerOptions, MAX_CHUNK,
+    Command, ConnectOptions, ConnectTarget, IpFamily, ListenOptions, ListenTarget, MAX_CHUNK,
 };
+#[cfg(feature = "node-tls")]
+use ln_io::net::{TlsClientOptions, TlsServerOptions};
 
 use crate::args;
 use crate::host_error::throw_node_error_value;
@@ -78,10 +79,13 @@ pub(crate) fn build_net_command<'js>(
             let backlog = optional_i32(args, 3, "backlog", 511)?;
             let ipv6_only = optional_bool(args, 4, "ipv6Only", false)?;
             let exclusive = optional_bool(args, 5, "exclusive", false)?;
+            #[cfg(not(feature = "node-tls"))]
+            reject_tls_arg(args, 6, "listen")?;
             let options = ListenOptions {
                 backlog,
                 ipv6_only,
                 exclusive,
+                #[cfg(feature = "node-tls")]
                 tls: tls_server_arg(args, 6)?,
             };
             Ok(Command::Listen(match path {
@@ -99,12 +103,15 @@ pub(crate) fn build_net_command<'js>(
         "connect" => {
             let path = optional_string(args, 2, "path")?;
             let family = family_arg(args, 3)?;
+            #[cfg(not(feature = "node-tls"))]
+            reject_tls_arg(args, 8, "connect")?;
             let options = ConnectOptions {
                 family,
                 local_address: optional_string(args, 4, "localAddress")?,
                 local_port: optional_port(args, 5, "localPort")?,
                 no_delay: optional_bool(args, 6, "noDelay", true)?,
                 keep_alive_ms: optional_opt_u32(args, 7, "keepAliveMs")?,
+                #[cfg(feature = "node-tls")]
                 tls: tls_client_arg(args, 8)?,
             };
             Ok(Command::Connect(match path {
@@ -315,11 +322,35 @@ fn family_arg<'js>(args: &[js::Value<'js>], index: usize) -> Result<IpFamily, No
 
 // --- TLS options -----------------------------------------------------------------------------
 
+/// A `tls` argument in a build without `node-tls`.
+///
+/// The JS `tls`/`https` modules are compiled out with the feature, so nothing in the stdlib can
+/// produce a non-null value here. If something still does, refusing loudly is better than
+/// silently downgrading a connection that asked for TLS to plaintext.
+#[cfg(not(feature = "node-tls"))]
+fn reject_tls_arg<'js>(
+    args: &[js::Value<'js>],
+    index: usize,
+    command: &str,
+) -> Result<(), NodeError> {
+    match present(args, index) {
+        Some(value) if !value.is_null() => Err(NodeError::new(
+            "ERR_UNKNOWN_BUILTIN_MODULE",
+            format!(
+                "net.{command} was given TLS options, but node:tls is not available: the \
+                 `node-tls` feature is not enabled in this build."
+            ),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// `client`'s TLS argument: `{ servername, rejectUnauthorized, caPem, alpn }`.
 ///
 /// `null`/`undefined` means "plaintext". The shape is validated here so a bad argument throws at
 /// the call site; a bad *certificate* is a connection error (it needs PEM parsing, which happens
 /// lazily in `ln-io` when the config is first built).
+#[cfg(feature = "node-tls")]
 fn tls_client_arg<'js>(
     args: &[js::Value<'js>],
     index: usize,
@@ -336,6 +367,7 @@ fn tls_client_arg<'js>(
 }
 
 /// `listen`'s TLS argument: `{ certPem, keyPem, alpn }`.
+#[cfg(feature = "node-tls")]
 fn tls_server_arg<'js>(
     args: &[js::Value<'js>],
     index: usize,
@@ -356,6 +388,7 @@ fn tls_server_arg<'js>(
     }))
 }
 
+#[cfg(feature = "node-tls")]
 fn optional_object<'js>(
     args: &[js::Value<'js>],
     index: usize,
@@ -374,6 +407,7 @@ fn optional_object<'js>(
     }
 }
 
+#[cfg(feature = "node-tls")]
 fn field<'js>(object: &js::Object<'js>, name: &str) -> Result<js::Value<'js>, NodeError> {
     object.get::<_, js::Value<'js>>(name).map_err(|_| {
         NodeError::new(
@@ -383,6 +417,7 @@ fn field<'js>(object: &js::Object<'js>, name: &str) -> Result<js::Value<'js>, No
     })
 }
 
+#[cfg(feature = "node-tls")]
 fn optional_field_string<'js>(
     object: &js::Object<'js>,
     name: &str,
@@ -394,6 +429,7 @@ fn optional_field_string<'js>(
     args::string(Some(&value), name).map(Some)
 }
 
+#[cfg(feature = "node-tls")]
 fn optional_field_bool<'js>(
     object: &js::Object<'js>,
     name: &str,
@@ -406,6 +442,7 @@ fn optional_field_bool<'js>(
     args::bool_value(Some(&value), name)
 }
 
+#[cfg(feature = "node-tls")]
 fn optional_field_bytes<'js>(
     object: &js::Object<'js>,
     name: &str,
@@ -418,6 +455,7 @@ fn optional_field_bytes<'js>(
 }
 
 /// An ALPN protocol list: an array of strings in preference order (empty when omitted).
+#[cfg(feature = "node-tls")]
 fn field_string_array<'js>(object: &js::Object<'js>, name: &str) -> Result<Vec<String>, NodeError> {
     let value = field(object, name)?;
     if value.is_undefined() || value.is_null() {
@@ -479,6 +517,7 @@ mod tests {
                     assert_eq!(options.backlog, 511);
                     assert!(!options.ipv6_only);
                     assert!(!options.exclusive);
+                    #[cfg(feature = "node-tls")]
                     assert!(options.tls.is_none());
                 }
                 other => panic!("unexpected command: {other:?}"),
@@ -529,6 +568,7 @@ mod tests {
                     assert_eq!(options.local_port, Some(4444));
                     assert!(!options.no_delay);
                     assert_eq!(options.keep_alive_ms, Some(5000));
+                    #[cfg(feature = "node-tls")]
                     assert!(options.tls.is_none());
                 }
                 other => panic!("unexpected command: {other:?}"),
@@ -607,6 +647,7 @@ mod tests {
     }
 
     /// TLS options are plain data (m4-plan §2.5): PEM bytes plus the knobs Node honours.
+    #[cfg(feature = "node-tls")]
     #[test]
     fn tls_options_are_carried_as_plain_data() {
         with_ctx(|ctx| {
@@ -648,6 +689,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "node-tls")]
     #[test]
     fn a_tls_server_requires_cert_and_key() {
         with_ctx(|ctx| {
