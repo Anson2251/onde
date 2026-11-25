@@ -7,7 +7,7 @@ difference: SQLite is a stateful C library, so the host boundary is handle-based
 function per operation.
 
 Status: **implemented, 2026-11-24.** WP0–WP7 landed: `crates/ln-sqlite`, the
-`__ln_host.sqlite` facade, `js/lib/sqlite.js`, the `sqlite` feature (default on, one-line off),
+`__ln_host.sqlite` facade, `js/lib/sqlite.js`, the `node-sqlite` feature (default on, one-line off),
 thirteen Node-recorded conformance cases, `test/js/lib/sqlite.test.js` and the docs. WP5
 (`function`, `aggregate`, `setAuthorizer`), WP6 (`Session`/changesets, `createModule` virtual
 tables, `loadExtension`) are in; the only Node surface left out is `diagnostics_channel`'s
@@ -92,36 +92,39 @@ looking like safe code, and the raw calls are about 250 lines.
 
 ### 2.4 Feature wiring and size
 
-**Decided (2026-11-24):** compiled in by default in `ln-runtime` and `ln-embed`, with a Cargo
-feature named `sqlite` that turns it off in one line and no refactor:
-`ln-runtime` has `default = ["sqlite"]`, `sqlite = ["dep:ln-sqlite"]`; `ln-embed` adds `sqlite` to
-its defaults (it already uses `default-features = false`) and maps it to `ln-runtime/sqlite`;
-`ln-cli` follows the default. Off means: the match arm in `modules.rs` is `#[cfg]`-gated, the host
-module is not compiled, `host.builtinNames` omits the name, and `isBuiltin("node:sqlite")` is
-false (it asks `builtinSource`). `require("node:sqlite")` then fails with
-`ERR_UNKNOWN_BUILTIN_MODULE`, which is the honest answer for a build that does not carry it.
+**Decided (2026-11-24):** both modules are **default features**, named for what they enable —
+`node-sqlite` and `node-zlib` — not for the library underneath. `ln-runtime`:
 
 ```toml
-# crates/ln-runtime/Cargo.toml
-ln-sqlite = { path = "../ln-sqlite", optional = true }
-
 [features]
-default = ["sqlite"]
-sqlite = ["dep:ln-sqlite"]
+default = ["node-sqlite", "node-zlib"]
+node-sqlite = ["dep:ln-sqlite"]
+node-zlib = []
 ```
 
-Unlike zstd, `node:sqlite` is a Node core module: a `lite` binary that cannot load it is a
-compatibility gap, and a compiled app that imports it must fail at build time, not at run time.
-The cost is measured, not assumed: WP0 records the release-binary delta for `lite` and for an
-`ondec` hello-world link. The budget is **≤ +1.5 MB stripped**; if the measurement exceeds it, the
-fallback is the zstd pattern (`sqlite = ["dep:ln-sqlite"]` default-on for `lite`, default-on for
-`ln-embed` with an option to build a slim archive). That decision is open (§9, O1).
+`ln-cli` and `ln-embed` mirror them (`node-sqlite = ["ln-runtime/node-sqlite"]`,
+`node-zlib = ["ln-runtime/node-zlib"]`); `ln-cli` and `ln-embed` no longer take `ln-runtime`'s
+defaults, so the SDK keeps both unless a caller asks otherwise. Turning `node-sqlite` off drops
+the bundled SQLite. `node-zlib` only removes the module surface: `ln-zlib` stays linked because
+`--compress zlib` payloads need the inflater regardless of whether `node:zlib` exists.
 
-If gating is ever added, the seam is already there: `modules.rs::builtin_source` can return `None`
-for `"sqlite"`, and `host::builtinNames` can filter to names that have a source, so a feature-off
-build hides the module instead of advertising a broken one.
+A module that a build leaves out must read as a build choice, not a typo. `modules::
+builtin_unavailable_message` produces the same text for CommonJS and ESM:
 
----
+> `node:sqlite` is not available: the `node-sqlite` feature is not enabled in this build. Rebuild
+> without `--no-default-features` (or with `--features node-sqlite`) to include it.
+
+The error code stays Node's `ERR_UNKNOWN_BUILTIN_MODULE`, and `builtinModules`/`isBuiltin` do not
+advertise a module that cannot load (the default-on build advertises `node:zlib` in
+`builtinModules`, `node:sqlite` only through `isBuiltin("node:sqlite")`, matching Node's node:-only
+rule).
+
+Size, measured 2026-11-24 (release, macOS arm64, no strip): **7,648,208 bytes with both
+features**, **5,533,968 without either**; the `node-zlib` module alone adds only the embedded JS
+because the inflater is already in the image. The sqlite delta (+2.11 MB, +38%) is above the
+plan's original 1.5 MB target and is recorded rather than hidden; the features are the documented
+opt-out. An `ondec` hello-world link measured 6,892,976 bytes with SQLite (6.6 MiB) and 4,627,480
+bytes with a slim archive (4.4 MiB).
 
 ## 3. The host boundary
 
@@ -629,7 +632,7 @@ the behaviour is documented. Record the oracle and SQLite versions in the suite 
   1.5 MB target; the measured number is recorded rather than hidden, and the 2026-11-24 decision
   (default-on for Node parity, one-line off switch) stands. `--no-default-features` reproduces the
   5.5 MB binary. An `ondec` hello-world link measured 6,892,976 bytes with SQLite (6.6 MiB) and
-  4,627,480 bytes with a slim archive (4.4 MiB); `ln-embed` exposes the same `sqlite` feature.
+  4,627,480 bytes with a slim archive (4.4 MiB); `ln-embed` exposes the same `node-sqlite` feature.
 - **Cold start** was re-measured with `test/net/coldstart.js` after the change: `-e '1+1'` 10.98 ms
   against 11.6 ms in the README (load average 16.5), `require("http")` 17.63 ms against 18.4 ms —
   no regression, because `sqlite3_initialize` is lazy and the module's JS is only compiled when
@@ -645,14 +648,14 @@ the behaviour is documented. Record the oracle and SQLite versions in the suite 
 
 | id | risk / decision | proposal |
 |---|---|---|
-| R1 | **Binary size** | measured +2.11 MB (+38%), including WP5/WP6; default-on per the 2026-11-24 decision, with the `sqlite` feature and `--no-default-features` as the documented opt-out. The 1.5 MB target was missed and is recorded above |
+| R1 | **Binary size** | measured +2.11 MB (+38%), including WP5/WP6; default-on per the 2026-11-24 decision, with the `node-sqlite` feature and `--no-default-features` as the documented opt-out. The 1.5 MB target was missed and is recorded above |
 | R2 | **Unsafe re-entry for callbacks** (WP5) | landed with the invariants written at the trampolines and exercised by tests that throw, recurse and close; the fallback (ship without UDFs) was not needed |
 | R3 | **SQLite version skew** (3.53.2 vs 3.54.1) | no version-dependent corpus cases; `process.versions.sqlite` reports the truth |
 | R4 | **MSRV** (rusqlite 0.40 vs workspace 1.80) | resolved: the workspace floor is raised to 1.89 (rusqlite 0.43's declared minimum and the current generation's floor), documented in `Cargo.toml`; all testing runs on stable 1.100 |
 | R5 | **Bundled C build** | already required by quickjs; CI covers macOS/Ubuntu; Windows is untested (recorded) |
 | R6 | **No GC finalization** | documented divergence; teardown closes everything; file descriptors are not leaked by GC timing |
 | R7 | **`node:`-only change touches the resolver** | smallest possible change (`NODE_ONLY` + loader filter); tests pin `require("sqlite")`/`isBuiltin`/`builtinModules` |
-| O1 | **Should standalone apps pay for SQLite by default?** | **decided:** yes, default-on everywhere; `--no-default-features` (or `sqlite` feature off) removes it without a refactor |
+| O1 | **Should standalone apps pay for SQLite by default?** | **decided:** yes, default-on everywhere; `--no-default-features` (or `node-sqlite` feature off) removes it without a refactor |
 | O2 | **Should WP5/WP6 be in this landing or a follow-up?** | **resolved:** WP5/WP6 landed in the same work package on 2026-11-24; only `diagnostics_channel` remains |
 | O3 | **Milestone placement** | **decided:** standalone work package (zlib precedent); no roadmap renumbering |
 
@@ -668,7 +671,7 @@ the behaviour is documented. Record the oracle and SQLite versions in the suite 
 4. `cargo test --all`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all -- --check`
    and `cargo deny check` are green.
 5. The release-binary size delta is recorded in `README.md` (7.5 MB against 5.5 MB) and the
-   `sqlite` feature is the documented opt-out; the 1.5 MB target is recorded as missed, not hidden.
+   `node-sqlite` feature is the documented opt-out; the 1.5 MB target is recorded as missed, not hidden.
 6. `docs/compat.md`, `docs/internals.md`, `README.md` and `js/README.md` describe exactly what
    shipped, including the divergences (no GC finalization, no `diagnostics_channel`, backup's
    chunked loop, the bundled SQLite version).

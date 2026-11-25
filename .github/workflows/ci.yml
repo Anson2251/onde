@@ -30,6 +30,8 @@ jobs:
         run: cargo test --all
       - name: build
         run: cargo build
+      - name: feature flags (node:sqlite/node:zlib on, off and mixed)
+        run: ./test/features/run.sh
       - name: M7 diagnostics (trace structure, timing, trace-gc)
         run: ./test/diag/run.sh
       - name: M7 node:test pilot (same transcript under node and lite)

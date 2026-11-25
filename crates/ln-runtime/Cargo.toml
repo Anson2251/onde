@@ -19,16 +19,18 @@ ln-io = { path = "../ln-io" }
 ln-sched = { path = "../ln-sched" }
 ln-modules = { path = "../ln-modules" }
 # `node:zlib`'s whole-buffer gzip/deflate/crc32 implementation (host/zlib.rs), and the inflater
-# for a `--compress`ed compiled-app payload at startup.
+# for a `--compress zlib` compiled-app payload at startup. Always linked: the `node-zlib` feature only
+# removes the module surface, not the payload decoder.
 ln-zlib = { path = "../ln-zlib" }
 # `node:sqlite` (host/sqlite.rs). Optional so a size-sensitive build can drop the bundled SQLite
-# with one feature flag; `default = ["sqlite"]` keeps the normal binary complete.
+# with the `node-sqlite` feature; it is in `default` so the normal binary is complete.
 ln-sqlite = { path = "../ln-sqlite", optional = true }
 # The payload format a compiled app carries: parsed here, encoded by `ondec`.
 ln-payload = { path = "../ln-payload" }
-# A compiled app's `--compress zstd` payload. Optional because it is the only decoder here that
-# costs binary size (zlib is already linked for `node:zlib`): a build without this feature refuses
-# a zstd payload with a message instead of misreading it.
+# A compiled app's `--compress zstd` payload. Optional because it is the only payload decoder
+# that costs binary size (the zlib inflater stays linked for `--compress zlib` even when the
+# `node:zlib` module is turned off): a build without this feature refuses a zstd payload with a
+# message instead of misreading it.
 zstd = { version = "0.13", optional = true }
 # `memchr`-class byte search for Buffer.indexOf/lastIndexOf (already in the graph).
 memchr = "2"
@@ -39,11 +41,13 @@ base64 = "0.23"
 serde_json = "1"
 
 [features]
-# `sqlite` is on by default because `node:sqlite` is a Node core module; turning it off drops the
-# bundled SQLite and the embedded module without touching any other code (modules.rs and
-# host/mod.rs are `cfg`-gated, and the builtin table hides a name with no source).
-default = ["sqlite"]
-sqlite = ["dep:ln-sqlite"]
+# Both modules are on by default because they are Node core modules; each feature only gates the
+# `node:` surface (the host module, the embedded JS and the builtin table entry). Turning `sqlite`
+# off also drops the bundled SQLite; `zlib` leaves `ln-zlib` linked because the payload decoder
+# needs it for `--compress zlib` compiled apps.
+default = ["node-sqlite", "node-zlib"]
+node-sqlite = ["dep:ln-sqlite"]
+node-zlib = []
 # Embeds the bootstrap source in a release build as well as the snapshot, so the two boot paths can
 # be A/B measured in one optimized binary (m7-plan §4.3). Never on in a shipped build: it is ~55 KiB
 # of source that only exists to be compared against (D72).

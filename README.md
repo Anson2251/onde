@@ -78,6 +78,14 @@ At 9.3 MB resident, a hundred onde processes cost less than the tool around them
 hundred Node processes need 4.42 GB. Startup is not the win: Bun opens in 8.0 ms against onde's
 11.6, and QuickJS has an engine to initialize either way.
 
+`node:sqlite` and `node:zlib` are Cargo features named `node-sqlite` and `node-zlib`, and both
+are on by default. A slim build is `cargo build -p ln-cli --no-default-features`; keeping one
+module is `--no-default-features --features node-sqlite` (or `node-zlib`). Requiring a module the
+build left out names the feature instead of reporting an unknown module:
+
+> node:sqlite is not available: the `node-sqlite` feature is not enabled in this build. Rebuild
+> without `--no-default-features` (or with `--features node-sqlite`) to include it.
+
 ### Hot path
 
 | metric | onde | Node 26 | Bun 1.3 |

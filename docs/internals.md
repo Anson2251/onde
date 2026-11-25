@@ -67,8 +67,8 @@ are in the [README](../README.md); per-module compatibility and every deliberate
 - `sqlite` (after M7): `Database`/`Statement`/`Session`/`SQLTagStore`, the 45 `constants` and
   `backup` over a bundled SQLite 3.53.2; user-defined functions and aggregates, the authorizer,
   changesets, JavaScript-backed virtual tables and extension loading. Sync-only, with Node's type
-  conversion and binding rules. The host `sqlite` feature can drop the whole module (and the
-  bundled C) from a build.
+  conversion and binding rules. The `node-sqlite` feature can drop the whole module (and the
+  bundled C) from a build; `node-zlib` drops the `node:zlib` surface, not the payload inflater.
 
 ### Processes, threads and lines — M5
 
@@ -161,7 +161,8 @@ vendor/          rquickjs-sys 0.14.0 + patched quickjs-ng 0.17.0        [M6]
 ## 3. Build and test
 
 ```sh
-cargo test --all                                # 549 tests across the crates
+cargo test --all                                # 550 tests across the crates
+cargo build -p ln-cli --no-default-features     # no node:sqlite/node:zlib (clear error on require)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 

@@ -424,7 +424,7 @@ pub struct Isolate {
     /// Child processes: spawned processes and their pipes (M5).
     procs: Rc<ProcBridge>,
     /// SQLite connections, statements and backups (`node:sqlite`).
-    #[cfg(feature = "sqlite")]
+    #[cfg(feature = "node-sqlite")]
     sqlite: Rc<host::sqlite::SqliteState>,
     /// async_hooks ids and the execution context (M6).
     async_hooks: Rc<AsyncTracker>,
@@ -543,7 +543,7 @@ impl Isolate {
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .filter(|fd| *fd > 0)
         };
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "node-sqlite")]
         let sqlite = Rc::new(host::sqlite::SqliteState::new());
         let async_hooks = AsyncTracker::new();
         // A worker gets no diagnostics of its own: one trace file per process is the contract, and
@@ -582,7 +582,7 @@ impl Isolate {
             workers,
             signals,
             procs,
-            #[cfg(feature = "sqlite")]
+            #[cfg(feature = "node-sqlite")]
             sqlite,
             async_hooks,
             ipc,
@@ -639,7 +639,7 @@ impl Isolate {
             ops: self.ops.clone(),
             ids: self.ops.ids().clone(),
             handles: self.handles.clone(),
-            #[cfg(feature = "sqlite")]
+            #[cfg(feature = "node-sqlite")]
             sqlite: self.sqlite.clone(),
             async_hooks: self.async_hooks.clone(),
             async_forced: self.async_hooks.is_started(),
@@ -1450,7 +1450,7 @@ impl Isolate {
         self.workers.shutdown();
         // Close every SQLite connection while the engine is still alive: a future user-defined
         // function must not outlive the context that owns its callback.
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "node-sqlite")]
         self.sqlite.shutdown();
         // No completion may be delivered after shutdown (O4); release the refs of the parked
         // results the loop will never dispatch.
@@ -1657,7 +1657,7 @@ impl Drop for Isolate {
         self.workers.shutdown();
         // Close every SQLite connection while the engine is still alive: a future user-defined
         // function must not outlive the context that owns its callback.
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "node-sqlite")]
         self.sqlite.shutdown();
         // The pinned dispatcher must not outlive the runtime it belongs to.
         self.async_hooks.forget_dispatch();

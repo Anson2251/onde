@@ -50,11 +50,12 @@ mod fs;
 mod net;
 mod proc;
 mod signal;
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "node-sqlite")]
 pub(crate) mod sqlite;
 mod stdio;
 mod text;
 mod worker;
+#[cfg(feature = "node-zlib")]
 mod zlib;
 
 /// All state a host function may touch.
@@ -90,7 +91,7 @@ pub(crate) struct HostState {
     /// `Some` when this isolate is a worker.
     pub worker: Option<Rc<crate::WorkerRole>>,
     /// SQLite handles: connections, statements and in-flight backups (`node:sqlite`).
-    #[cfg(feature = "sqlite")]
+    #[cfg(feature = "node-sqlite")]
     pub sqlite: Rc<sqlite::SqliteState>,
     /// async_hooks ids and the execution context (M6).
     pub async_hooks: Rc<crate::async_hooks::AsyncTracker>,
@@ -104,13 +105,14 @@ pub(crate) struct HostState {
 /// A feature-off build must not advertise `sqlite` (the loader asks `builtinSource`, which has no
 /// arm for it). The node:-only names are filtered by the loader, which knows the specifier.
 fn public_builtin_names() -> impl Iterator<Item = &'static str> {
-    ln_modules::BUILTINS.iter().copied().filter(|_name| {
-        #[cfg(feature = "sqlite")]
-        let available = true;
-        #[cfg(not(feature = "sqlite"))]
-        let available = *_name != "sqlite";
-        available
-    })
+    ln_modules::BUILTINS
+        .iter()
+        .copied()
+        .filter(|name| match *name {
+            "sqlite" => cfg!(feature = "node-sqlite"),
+            "zlib" => cfg!(feature = "node-zlib"),
+            _ => true,
+        })
 }
 
 pub(crate) fn install<'js>(
@@ -706,6 +708,15 @@ pub(crate) fn install<'js>(
         )?,
     )?;
 
+    // A readable explanation for a builtin this build was compiled without (`sqlite`, `zlib`).
+    // The loader turns it into an ERR_UNKNOWN_BUILTIN_MODULE whose message says how to include it.
+    host.set(
+        "builtinUnavailable",
+        js::Function::new(ctx.clone(), |name: String| -> js::Result<Option<String>> {
+            Ok(crate::modules::builtin_unavailable_message(&name))
+        })?,
+    )?;
+
     // The names that only resolve with the `node:` prefix (`sqlite`), so the loader can answer
     // `module.isBuiltin("sqlite") === false` while `isBuiltin("node:sqlite") === true`.
     host.set(
@@ -777,11 +788,12 @@ pub(crate) fn install<'js>(
 
     // --- compression primitives -------------------------------------------------------------
 
+    #[cfg(feature = "node-zlib")]
     zlib::install(ctx, &host, state)?;
 
     // --- the database (node:sqlite) ---------------------------------------------------------
 
-    #[cfg(feature = "sqlite")]
+    #[cfg(feature = "node-sqlite")]
     sqlite::install(ctx, &host, state)?;
     text::install(ctx, &host, state)?;
     buffer::install(ctx, &host, state)?;

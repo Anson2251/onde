@@ -32,6 +32,28 @@ macro_rules! bundled_js {
     };
 }
 
+/// A readable explanation when a known builtin was compiled out of this build.
+///
+/// The loader uses this both for the CommonJS `require` path and for ESM imports, so a missing
+/// feature reads as "rebuild like this", not as a typo. The message names the feature and the
+/// build command; the error code stays Node's `ERR_UNKNOWN_BUILTIN_MODULE`.
+pub(crate) fn builtin_unavailable_message(name: &str) -> Option<String> {
+    let feature = match name {
+        "sqlite" if !cfg!(feature = "node-sqlite") => "node-sqlite",
+        "zlib" if !cfg!(feature = "node-zlib") => "node-zlib",
+        _ => return None,
+    };
+    Some(disabled_builtin_message(name, feature))
+}
+
+/// The wording is separate so a default build can test it without disabling a feature.
+fn disabled_builtin_message(name: &str, feature: &str) -> String {
+    format!(
+        "node:{name} is not available: the `{feature}` feature is not enabled in this build. \
+         Rebuild without `--no-default-features` (or with `--features {feature}`) to include it."
+    )
+}
+
 pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
     let source = match name {
         "path" => bundled_js!("lib/path.js"),
@@ -68,10 +90,11 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "net" => bundled_js!("lib/net.js"),
         "worker_threads" => bundled_js!("lib/worker_threads.js"),
         "child_process" => bundled_js!("lib/child_process.js"),
+        // Both are Node core modules compiled in by default; a `--no-default-features` build drops
+        // the arm and `builtinNames` stops advertising the name.
+        #[cfg(feature = "node-zlib")]
         "zlib" => bundled_js!("lib/zlib.js"),
-        // `sqlite` is a Node core module and is compiled in by default; a `--no-default-features`
-        // build drops it (the match arm is gone and `builtinNames` stops advertising it).
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "node-sqlite")]
         "sqlite" => bundled_js!("lib/sqlite.js"),
         "internal/loader" | "loader" => bundled_js!("lib/loader.js"),
         "internal/errors" => bundled_js!("lib/internal/errors.js"),
@@ -473,10 +496,12 @@ fn load_builtin<'js>(
     builtin: &str,
 ) -> js::Result<js::Module<'js, js::module::Declared>> {
     if builtin_source(builtin).is_none() && builtin != "process" {
+        let message = builtin_unavailable_message(builtin)
+            .unwrap_or_else(|| format!("No such built-in module: {canonical}"));
         return Err(throw_node_error(
             ctx,
             "ERR_UNKNOWN_BUILTIN_MODULE",
-            &format!("No such built-in module: {canonical}"),
+            &message,
         ));
     }
 
@@ -620,9 +645,12 @@ mod tests {
     #[test]
     fn every_builtin_has_an_embedded_source() {
         for name in ln_modules::BUILTINS {
-            // A build without the `sqlite` feature lists the name for the resolver's error
+            // A build without the `node-sqlite` feature lists the name for the resolver's error
             // message but deliberately has no source for it.
-            if !cfg!(feature = "sqlite") && *name == "sqlite" {
+            if !cfg!(feature = "node-sqlite") && *name == "sqlite" {
+                continue;
+            }
+            if !cfg!(feature = "node-zlib") && *name == "zlib" {
                 continue;
             }
             assert!(
@@ -644,6 +672,16 @@ mod tests {
     fn internal_bytes_is_reachable_without_being_public() {
         assert!(builtin_source("internal/bytes").is_some());
         assert_eq!(ln_modules::lookup_builtin("internal/bytes"), None);
+    }
+
+    #[test]
+    fn disabled_message_names_the_module_and_feature() {
+        let message = disabled_builtin_message("sqlite", "node-sqlite");
+        assert!(message.contains("node:sqlite"));
+        assert!(message.contains("`node-sqlite` feature"));
+        assert!(message.contains("not enabled in this build"));
+        assert!(message.contains("--features node-sqlite"));
+        assert!(message.contains("--no-default-features"));
     }
 
     #[test]

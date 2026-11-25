@@ -17,11 +17,13 @@ crate-type = ["staticlib"]
 # A linked app carries the zstd payload decoder unless the archive is built without it. Off by
 # default would be silent breakage for anyone who uses `--compress zstd`; on by default costs
 # ~250 KB of decoder in every app, which is the trade the release decides (see the docs).
-default = ["zstd-payload", "sqlite"]
+default = ["zstd-payload", "node-sqlite", "node-zlib"]
 zstd-payload = ["ln-runtime/zstd"]
 # A slim archive can be built with `--no-default-features`; a compiled app that imports
-# `node:sqlite` then fails at build time rather than at run time, which is the honest failure.
-sqlite = ["ln-runtime/sqlite"]
+# `node:sqlite`/`node:zlib` then fails at build time rather than at run time, which is the honest
+# failure. The features mirror `ln-runtime`'s.
+node-sqlite = ["ln-runtime/node-sqlite"]
+node-zlib = ["ln-runtime/node-zlib"]
 
 [dependencies]
 ln-runtime = { path = "../ln-runtime", default-features = false }

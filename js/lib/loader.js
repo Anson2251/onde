@@ -280,10 +280,14 @@ function requireBuiltin(specifier) {
 
   const source = host.builtinSource(name);
   if (source === null || source === undefined) {
+    // A known builtin can be compiled out (`--no-default-features`); say which feature is
+    // missing instead of reporting it as an unknown module.
+    const unavailable =
+      typeof host.builtinUnavailable === "function" ? host.builtinUnavailable(name) : null;
     throw codedError(
       Error,
       "ERR_UNKNOWN_BUILTIN_MODULE",
-      `No such built-in module: ${specifier}`,
+      unavailable || `No such built-in module: ${specifier}`,
     );
   }
 
