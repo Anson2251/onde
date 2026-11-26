@@ -53,6 +53,10 @@ jobs:
         run: ./test/standalone/run.sh
       - name: conformance corpus
         run: ./test/conformance/run.sh
+      - name: permissions (CLI matrix, inventory, deny-all sweep, race)
+        # The deny-all sweep reuses the conformance corpus with every grant withheld; it is the
+        # guarantee that a gate is wired, not a copy of the corpus's expected output.
+        run: ./test/perm/run.sh
       - name: conformance on the bootstrap snapshot path
         # Criterion 9 of m7-plan §6: the release profile boots from build-time bytecode. This runs
         # the same corpus through the bytecode path in a debug build, where both paths are

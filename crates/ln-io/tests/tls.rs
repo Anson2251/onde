@@ -18,7 +18,7 @@ use ln_io::net::{
     Addr, Command, ConnectOptions, ConnectTarget, Event, EventSink, HandleId, HandleIdSource,
     ListenOptions, ListenTarget, NetService, TlsClientOptions, TlsServerOptions,
 };
-use ln_io::Pool;
+use ln_io::{Permit, Pool};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -73,7 +73,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let pool = Arc::new(Pool::new(1).expect("tokio pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("tokio pool"));
         let (tx, rx) = mpsc::channel();
         let sink: EventSink = Arc::new(move |id, event| {
             let _ = tx.send((id, event));
@@ -84,7 +84,7 @@ impl Harness {
             Arc::new(move || next_id.fetch_add(1, Ordering::SeqCst))
         };
         Harness {
-            service: NetService::new(pool.clone(), sink, ids),
+            service: NetService::new(pool.clone(), sink, ids, Permit::unconfined()),
             events: Events {
                 rx,
                 pending: HashMap::new(),

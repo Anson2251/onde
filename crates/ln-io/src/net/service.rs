@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use super::connection::Connection;
 use super::listener;
 use super::registry::Shared;
-use crate::Pool;
+use crate::{Permit, Pool};
 
 use super::{Command, EventSink, HandleId, HandleIdSource};
 
@@ -28,9 +28,9 @@ pub struct NetService {
 
 impl NetService {
     /// `pool` must be the process-wide pool (ADR-0006 §5): one tokio runtime for ops and handles.
-    pub fn new(pool: Arc<Pool>, sink: EventSink, ids: HandleIdSource) -> Self {
+    pub fn new(pool: Arc<Pool>, sink: EventSink, ids: HandleIdSource, permit: Permit) -> Self {
         NetService {
-            shared: Arc::new(Shared::new(pool.handle(), sink, ids)),
+            shared: Arc::new(Shared::new(pool.handle(), sink, ids, permit)),
             _pool: pool,
         }
     }
@@ -113,7 +113,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn service() -> (NetService, Arc<AtomicUsize>) {
-        let pool = Arc::new(Pool::new(1).expect("pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("pool"));
         let delivered = Arc::new(AtomicUsize::new(0));
         let counter = delivered.clone();
         let sink: EventSink = Arc::new(move |_id, _event| {
@@ -124,7 +124,10 @@ mod tests {
             let next = next.clone();
             Arc::new(move || next.fetch_add(1, Ordering::SeqCst) as HandleId)
         };
-        (NetService::new(pool, sink, ids), delivered)
+        (
+            NetService::new(pool, sink, ids, Permit::unconfined()),
+            delivered,
+        )
     }
 
     /// The service crosses the isolate/worker boundary and is shared by every handle.

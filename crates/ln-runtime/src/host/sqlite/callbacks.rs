@@ -28,6 +28,7 @@ use ln_engine::js;
 use ln_engine::js::qjs;
 use ln_engine::js::IntoJs;
 use ln_error::NodeError;
+use ln_perm::{Capability, Request};
 use ln_sqlite::{
     AggregateFunction, Authorizer, ChangesetHandler, FunctionOptions, ScalarFunction, Value,
 };
@@ -792,12 +793,22 @@ pub(super) fn install<'js>(
     }
 
     {
+        let permit = state.permit.clone();
         let state = state.sqlite.clone();
         sqlite.set(
             "enableLoadExtension",
             js::Function::new(
                 ctx.clone(),
                 move |ctx: js::Ctx<'js>, id: u32, allow: bool| -> js::Result<()> {
+                    if allow {
+                        // Native code entering the process is one capability, not one API
+                        // (ADR-0011 §5.3, `ffi.load`). Turning it off needs no grant.
+                        permit
+                            .check(&Request::Toggle {
+                                capability: Capability::FfiLoad,
+                            })
+                            .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    }
                     let database = state
                         .connection(id)
                         .map_err(|error| throw_node_error_value(&ctx, &error))?;
@@ -809,6 +820,7 @@ pub(super) fn install<'js>(
     }
 
     {
+        let permit = state.permit.clone();
         let state = state.sqlite.clone();
         sqlite.set(
             "loadExtension",
@@ -819,6 +831,11 @@ pub(super) fn install<'js>(
                       path: String,
                       entry_point: js::Value<'js>|
                       -> js::Result<()> {
+                    permit
+                        .check(&Request::Toggle {
+                            capability: Capability::FfiLoad,
+                        })
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
                     let database = state
                         .connection(id)
                         .map_err(|error| throw_node_error_value(&ctx, &error))?;

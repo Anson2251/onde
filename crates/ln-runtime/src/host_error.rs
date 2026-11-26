@@ -75,6 +75,13 @@ pub(crate) fn node_error_object<'js>(
     if let Some(path) = &error.path {
         object.set("path", path.display().to_string())?;
     }
+    if let Some(denial) = &error.denial {
+        // The properties exist on every form: this one conversion serves the sync throw, the
+        // completion callback and the promise rejection (ADR-0011 §5.7).
+        object.set("capability", denial.capability)?;
+        object.set("resource", denial.resource.as_str())?;
+        object.set("policy", denial.policy.as_str())?;
+    }
     if let Some(cause) = &error.cause {
         object.set("cause", node_error_value(ctx, cause)?)?;
     }

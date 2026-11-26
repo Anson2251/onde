@@ -31,6 +31,7 @@ use std::time::Instant;
 use ln_engine::{cjs_wrapper, js};
 use ln_modules::url as file_url;
 use ln_modules::{Kind, Resolution};
+use ln_perm::{Capability, Request};
 
 #[cfg(feature = "node-net")]
 use crate::handles::HandleBridge;
@@ -74,6 +75,8 @@ pub(crate) struct HostState {
     pub modules: Rc<ModuleRuntime>,
     /// The async-op bridge: shared result slots, abort flags and the offload pool.
     pub ops: Rc<OpBridge>,
+    /// The isolate's permission policy. Host calls that are not an `Op` gate through it.
+    pub permit: ln_io::Permit,
     /// Cached engine heap size, refreshed between JS calls (see `Isolate::refresh_memory`).
     pub memory: Rc<Cell<usize>>,
     /// Set when JS asks for `memoryUsage`; the loop takes one sample at the next turn.
@@ -137,6 +140,15 @@ pub(crate) fn install<'js>(
     argv: &[String],
 ) -> js::Result<()> {
     let host = js::Object::new(ctx.clone())?;
+    // The loader's privileged functions are a separate global (ADR-0011 §5.4.1). `bootstrap.js`
+    // captures them, freezes `__ln_host`, and deletes this global after the loader has installed;
+    // a user script therefore cannot reach a direct file read.
+    let loader = js::Object::new(ctx.clone())?;
+    // perm: exempt (ADR-0011 §5.4) — `host.write` to 0/1/2, `chdir`, the informational getters
+    // (`cwd`, `homedir`, `tmpdir`, `hostname`, `pid`, `uid`, `osInfo`, `platform`), timers, the
+    // `async_*` hooks, `exit`/`setExitCode`, IPC send, the compute calls (`crypto`, `text`,
+    // `buffer`, `zlib`) and signal installation. Every other host primitive is either gated at its
+    // call site or loader/registry plumbing; the inventory test classifies the names.
 
     // --- M1 scheduler primitives -----------------------------------------------------------
 
@@ -447,6 +459,7 @@ pub(crate) fn install<'js>(
     }
     host.set("argv", argv_array)?;
     host.set("platform", crate::platform())?;
+    loader.set("platform", crate::platform())?;
     host.set("pid", std::process::id())?;
     host.set("ppid", parent_pid())?;
     host.set("version", format!("v{}", env!("CARGO_PKG_VERSION")))?;
@@ -456,21 +469,53 @@ pub(crate) fn install<'js>(
     // and docs/compat.md tracks where the claim is imperfect.
     host.set("nodeVersion", "v22.14.0")?;
 
+    {
+        // `env.read` filters here, at the one primitive both `process.env` and `util.getEnv` read,
+        // so there is no second path to the environment (ADR-0011 §5.4, row 10).
+        let permit = state.permit.clone();
+        host.set(
+            "env",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>| -> js::Result<js::Object<'js>> {
+                    let env = js::Object::new(ctx.clone())?;
+                    let mut variables: Vec<(String, String)> = std::env::vars().collect();
+                    variables.sort_by(|a, b| a.0.cmp(&b.0));
+                    for (key, value) in variables {
+                        if !permit.allows(&Request::Env { name: &key }) {
+                            continue;
+                        }
+                        env.set(key.as_str(), value.as_str())?;
+                    }
+                    Ok(env)
+                },
+            )?,
+        )?;
+    }
+
+    // `constants` asks this before requiring the optional `node:crypto` module. It is a message
+    // helper, not a read: the privileged loader gets the same function below.
     host.set(
-        "env",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>| -> js::Result<js::Object<'js>> {
-                let env = js::Object::new(ctx.clone())?;
-                let mut variables: Vec<(String, String)> = std::env::vars().collect();
-                variables.sort_by(|a, b| a.0.cmp(&b.0));
-                for (key, value) in variables {
-                    env.set(key.as_str(), value.as_str())?;
-                }
-                Ok(env)
-            },
-        )?,
+        "builtinUnavailable",
+        js::Function::new(ctx.clone(), |name: String| -> js::Result<Option<String>> {
+            Ok(crate::modules::builtin_unavailable_message(&name))
+        })?,
     )?;
+
+    {
+        // `process.permission.has(scope, reference)`. The matcher is the same one the gates use;
+        // this only exposes the answer, never a way to move the policy (ADR-0011 §5.9).
+        let permit = state.permit.clone();
+        host.set(
+            "permissionHas",
+            js::Function::new(
+                ctx.clone(),
+                move |scope: String, reference: Option<String>| -> js::Result<bool> {
+                    Ok(permission_has(&permit, &scope, reference.as_deref()))
+                },
+            )?,
+        )?;
+    }
 
     host.set(
         "cwd",
@@ -588,7 +633,7 @@ pub(crate) fn install<'js>(
 
     {
         let modules = state.modules.clone();
-        host.set(
+        loader.set(
             "resolve",
             js::Function::new(
                 ctx.clone(),
@@ -635,7 +680,7 @@ pub(crate) fn install<'js>(
 
     {
         let modules = state.modules.clone();
-        host.set(
+        loader.set(
             "metaResolve",
             js::Function::new(
                 ctx.clone(),
@@ -655,62 +700,23 @@ pub(crate) fn install<'js>(
         )?;
     }
 
-    host.set(
-        "readFile",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, path: String| -> js::Result<String> {
-                std::fs::read_to_string(&path).map_err(|error| {
-                    let code = io_error_code(&error);
-                    throw_node_error(
-                        &ctx,
-                        code,
-                        &io_error_message(code, "open", Path::new(&path), &error),
-                    )
-                })
-            },
-        )?,
+    loader.set(
+        "readSource",
+        loader_read(ctx, state.permit.clone(), crate::modules::Class::Source)?,
+    )?;
+    loader.set(
+        "readData",
+        loader_read(ctx, state.permit.clone(), crate::modules::Class::Data)?,
     )?;
 
-    host.set(
-        "realpath",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, path: String| -> js::Result<String> {
-                std::fs::canonicalize(&path)
-                    .map(|resolved| resolved.display().to_string())
-                    .map_err(|error| {
-                        let code = io_error_code(&error);
-                        throw_node_error(
-                            &ctx,
-                            code,
-                            &io_error_message(code, "realpath", Path::new(&path), &error),
-                        )
-                    })
-            },
-        )?,
-    )?;
-
-    host.set(
-        "statKind",
-        js::Function::new(ctx.clone(), |path: String| -> js::Result<Option<String>> {
-            match std::fs::metadata(&path) {
-                Ok(metadata) if metadata.is_file() => Ok(Some("file".to_owned())),
-                Ok(metadata) if metadata.is_dir() => Ok(Some("dir".to_owned())),
-                Ok(_) => Ok(Some("other".to_owned())),
-                Err(_) => Ok(None),
-            }
-        })?,
-    )?;
-
-    host.set(
+    loader.set(
         "builtinSource",
         js::Function::new(ctx.clone(), |name: String| -> js::Result<Option<String>> {
             Ok(builtin_source(&name).map(ToOwned::to_owned))
         })?,
     )?;
 
-    host.set(
+    loader.set(
         "builtinNames",
         js::Function::new(
             ctx.clone(),
@@ -726,7 +732,7 @@ pub(crate) fn install<'js>(
 
     // A readable explanation for a builtin this build was compiled without (`sqlite`, `zlib`).
     // The loader turns it into an ERR_UNKNOWN_BUILTIN_MODULE whose message says how to include it.
-    host.set(
+    loader.set(
         "builtinUnavailable",
         js::Function::new(ctx.clone(), |name: String| -> js::Result<Option<String>> {
             Ok(crate::modules::builtin_unavailable_message(&name))
@@ -735,7 +741,7 @@ pub(crate) fn install<'js>(
 
     // The names that only resolve with the `node:` prefix (`sqlite`), so the loader can answer
     // `module.isBuiltin("sqlite") === false` while `isBuiltin("node:sqlite") === true`.
-    host.set(
+    loader.set(
         "nodeOnlyBuiltins",
         js::Function::new(
             ctx.clone(),
@@ -749,7 +755,7 @@ pub(crate) fn install<'js>(
         )?,
     )?;
 
-    host.set(
+    loader.set(
         "evalCjs",
         js::Function::new(
             ctx.clone(),
@@ -825,8 +831,143 @@ pub(crate) fn install<'js>(
     #[cfg(feature = "node-net")]
     dns::install(ctx, &host, state)?;
 
+    // The loader object is deleted before a script runs, so this is the only place its surface can
+    // be checked. Debug builds (the test suite) fail loudly if a key is added or removed without
+    // updating the list the inventory documents.
+    #[cfg(debug_assertions)]
+    {
+        let keys: Vec<String> = loader.keys().filter_map(Result::ok).collect();
+        debug_assert_eq!(
+            keys.len(),
+            PRIVILEGED_KEYS.len(),
+            "the privileged loader surface changed: {keys:?}"
+        );
+        for key in PRIVILEGED_KEYS {
+            debug_assert!(
+                keys.iter().any(|actual| actual == key),
+                "missing privileged loader key: {key}"
+            );
+        }
+    }
+
+    ctx.globals().set("__ln_loader", loader)?;
     ctx.globals().set("__ln_host", host)?;
     Ok(())
+}
+
+/// The keys `__ln_loader` must carry (ADR-0011 §5.4.1). Kept next to the install so the debug
+/// guard can compare the object it built with the documented set.
+const PRIVILEGED_KEYS: [&str; 10] = [
+    "platform",
+    "resolve",
+    "metaResolve",
+    "readSource",
+    "readData",
+    "builtinSource",
+    "builtinNames",
+    "builtinUnavailable",
+    "nodeOnlyBuiltins",
+    "evalCjs",
+];
+
+/// The `process.permission.has` matcher. Unknown scopes answer `false` (Node's fallthrough);
+/// `child` and `worker` are the Node spellings of `child.spawn`/`worker.spawn`.
+fn permission_has(permit: &ln_io::Permit, scope: &str, reference: Option<&str>) -> bool {
+    let capability = match scope {
+        "fs.read" => Capability::FsRead,
+        "fs.write" => Capability::FsWrite,
+        "net.connect" => Capability::NetConnect,
+        "net.listen" => Capability::NetListen,
+        "net.resolve" => Capability::NetResolve,
+        "child.spawn" | "child" => Capability::ChildSpawn,
+        "worker.spawn" | "worker" => Capability::WorkerSpawn,
+        "env.read" => Capability::EnvRead,
+        "ffi.load" => Capability::FfiLoad,
+        _ => return false,
+    };
+    match capability {
+        Capability::FsRead | Capability::FsWrite => {
+            let Some(reference) = reference else {
+                return false;
+            };
+            let Ok(resolved) = permit.resolve_create(Path::new(reference), "access") else {
+                return false;
+            };
+            permit.allows(&Request::Path {
+                capability,
+                resolved: &resolved,
+            })
+        }
+        Capability::NetResolve => reference.is_some_and(|host| {
+            // A literal address needs no grant, matching the lookup gate.
+            host.parse::<std::net::IpAddr>().is_ok() || permit.allows(&Request::Host { host })
+        }),
+        Capability::NetConnect | Capability::NetListen => {
+            reference.is_some_and(|reference| endpoint_has(permit, capability, reference))
+        }
+        Capability::ChildSpawn => reference.is_some_and(|path| {
+            // The gate matches the resolved executable; resolve the same way here so a relative
+            // or symlinked spelling answers like the gate would.
+            let resolved = permit
+                .resolve_read(Path::new(path), "access")
+                .unwrap_or_else(|_| Path::new(path).to_path_buf());
+            permit.allows(&Request::Executable {
+                resolved: &resolved,
+            })
+        }),
+        Capability::EnvRead => reference.is_some_and(|name| permit.allows(&Request::Env { name })),
+        Capability::WorkerSpawn | Capability::FfiLoad => {
+            permit.allows(&Request::Toggle { capability })
+        }
+    }
+}
+
+fn endpoint_has(permit: &ln_io::Permit, capability: Capability, reference: &str) -> bool {
+    // A literal endpoint is matched as an address; a name as a name. A missing port is `0`, which
+    // only a rule with no port constraint matches.
+    if let Ok(address) = reference.parse::<std::net::SocketAddr>() {
+        return permit.allows(&Request::Endpoint {
+            capability,
+            host: None,
+            port: address.port(),
+            address: Some(&address),
+        });
+    }
+    let (host, port) = match reference.rsplit_once(':') {
+        Some((host, port))
+            if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            let Ok(port) = port.parse::<u16>() else {
+                return false;
+            };
+            (host, port)
+        }
+        Some(_) => return false,
+        None => (reference, 0),
+    };
+    let host = if host.is_empty() { None } else { Some(host) };
+    permit.allows(&Request::Endpoint {
+        capability,
+        host,
+        port,
+        address: None,
+    })
+}
+
+/// The loader's two read functions: `Source` needs no grant, `Data` checks `fs.read` at the
+/// resolved path. Both throw the Node-shaped error the module loader would have thrown.
+fn loader_read<'js>(
+    ctx: &js::Ctx<'js>,
+    permit: ln_io::Permit,
+    class: crate::modules::Class,
+) -> js::Result<js::Function<'js>> {
+    js::Function::new(
+        ctx.clone(),
+        move |ctx: js::Ctx<'js>, path: String| -> js::Result<String> {
+            crate::modules::read_class(Path::new(&path), class, &permit)
+                .map_err(|error| throw_node_error_value(&ctx, &error))
+        },
+    )
 }
 
 /// Copy a JS argument array out so the command/op builders can index it like any other slice.

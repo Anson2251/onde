@@ -24,6 +24,7 @@ v1.0 ships when all of the following hold:
 | 7 | 600+ Node conformance tests green; zero known ordering divergences in the scheduler corpus |
 | 8 | macOS + Linux x86_64/aarch64 first-class; Windows best-effort |
 | 9 | Publishable binaries + install script; docs for every supported module |
+| 10 | Opt-in permissions: `--permission` with a policy file and `--allow-*`; allow-lists over fs/net/child_process/env/worker/ffi; `ERR_ACCESS_DENIED`; `process.permission` |
 
 Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 `Intl` (beyond what we can afford), `WebAssembly`, `fetch` (candidate for 1.1).
@@ -42,12 +43,12 @@ Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 | M5 | Processes & threads | `child_process`, `worker_threads`, shared memory | 4 | M3 |
 | M6 | **Engine patch + async context** ★ | host-owned job queue, `async_hooks`, ALS everywhere | 4 | M1, M2 |
 | M7 | Performance & diagnostics | bytecode snapshot, profiling, memory caps, async stacks | 4 | M4, M6 |
-| M8 | 1.0 hardening | compat sweep, docs, packaging, release | 2.5 | all |
-| M9 | Permissions model | deny-by-default `--allow-*` for fs/net/child_process/env, and the gate FFI uses | 1.5 | M8 |
-| M10 | Native interop (FFI) | `onde:ffi`: `dlopen`, `libffi`, structs, callbacks, JSON codecs | 4 | M8, M9 |
+| M8 | Permissions model | opt-in `--permission` + `--permission-file` + `--allow-*`, allow-lists over fs/net/child_process/env/worker/ffi (ADR-0011) | 4.8 | M7 |
+| M9 | 1.0 hardening | compat sweep, docs, packaging, release | 2.5 | all |
+| M10 | Native interop (FFI) | `onde:ffi`: `dlopen`, `libffi`, structs, callbacks, JSON codecs | 4 | M9 |
 
-Total for 1.0 ≈ **34 eng-weeks**. One engineer: ~8 months. Three engineers: ~4 months wall-clock
-with the parallelization in §4. The 1.1 milestones, M9–M10, add ~5.5 eng-weeks after the release.
+Total for 1.0 ≈ **39 eng-weeks**. One engineer: ~9 months. Three engineers: ~5 months wall-clock
+with the parallelization in §4. The 1.1 milestone, M10, adds ~4 eng-weeks after the release.
 
 ---
 
@@ -240,7 +241,7 @@ Deviations from the plan, all deliberate:
 - **`--check` parses the entry only**, like `node --check`; imported files are not read.
 - **`test/smoke` uses generated packages, not npm downloads.** The set is offline,
   deterministic, and covers the same resolution/interop shapes; real-package validation is a
-  compat-sweep task (M8), where failures are expected to be API gaps rather than loader gaps.
+  compat-sweep task (M9), where failures are expected to be API gaps rather than loader gaps.
 
 **Build**
 
@@ -494,7 +495,7 @@ M1 corpus against it. That de-risks M6 without pulling it forward.
 Working contract: [m7-plan.md](m7-plan.md) (accepted 2026-11-24). It fixes the shape of the
 snapshot — a compiled *global script*, because a context cannot be serialized (§3.1) — keeps the
 stdlib modules on source (§3.2), re-specifies M4's half-open bound against its own measured
-raw-TCP floor (§6.1), and defers the 0.18 upgrade with dynamic `import()` to M8 (§3.6).
+raw-TCP floor (§6.1), and defers the 0.18 upgrade with dynamic `import()` to M9 (§3.6).
 
 **Closed 2026-11-24.** Five of six numeric criteria met: cold start 12.34/18.76 ms (delta 6.42),
 `fs.readFile` 1.17x, TCP echo 0.96x, binary 5.28 MB, and the diagnostics and `node:test` gates
@@ -540,32 +541,65 @@ what the remaining 1.5 KB per connection is. Full account in [m7-plan §12](m7-p
 
 ---
 
-## M8 — 1.0 hardening (2.5 w)
+## M8 — Permissions (≈4.8 w)
+
+**Complete 2026-11-25.** The opt-in model of [ADR-0011](adr/0011-permissions.md), delivered by
+[permissions-plan.md](permissions-plan.md) (its §12 is the outcome). `--permission` selects a deny-all base;
+`--permission-file=FILE` supplies a reviewed allow-list policy and the repeatable `--allow-*` flags
+supply ad-hoc grants. The two channels are mutually exclusive. It is off by default: `onde app.js`
+is unchanged, and the only cost is one `enforced` test on gated calls.
+
+Nine capability ids: `fs.read`, `fs.write`, `net.connect`, `net.listen`, `net.resolve`,
+`child.spawn`, `worker.spawn`, `env.read`, `ffi.load`. Enforcement is below the JS stdlib, in Rust,
+because `__ln_host` is reachable from a script: thirteen sites, including the ESM/CJS JSON loader,
+stdio, signals and sqlite's extension loader.
+
+The work is ordered refactors first: `ln-perm` and its matcher; one `read_source(path, Class)`
+chokepoint; a privileged loader object installed before `__ln_host` is frozen; policy and fd-table
+plumbing; then the fs, net/dns, spawn/kill, worker, env, sqlite and stdio gates; the denial payload
+and `process.permission`; the CLI; and the tests that make the inventory a guarantee — a source scan
+for I/O primitives, a `deny_all` corpus, and the loader, race and inheritance cases.
+
+**Exit criteria**
+
+- The acceptance list in [permissions-plan.md](permissions-plan.md) §10 is green on macOS and Linux.
+- Cold start without a policy stays inside the M7 envelope.
+- The ADR is accepted and the plan's Outcome section records what shipped.
+
+M8 lands whole. An earlier draft moved the classification and the gate call sites into the hardening
+milestone as a dormant seam; review rejected that, because gates that ship switched off are dead
+code that can rot before anyone exercises them. Compiled apps are deferred: a `ondec` binary has no
+argv position for a runtime flag, and the build-time mechanism in ADR-0011 §11 is designed but not
+scheduled.
+
+---
+
+## M9 — 1.0 hardening (2.5 w)
 
 - Full compat sweep against [compat.md](compat.md); every "partial" either finished or
   documented as a divergence with a test asserting the divergence.
 - Install: `curl | sh`, Homebrew tap, npm wrapper package (`onde` with prebuilt binaries).
 - Docs: module reference generated from the JS stdlib, error-code index, migration notes
-  ("coming from Node").
-- Release checklist: reproducible builds, SBOM, license audit, security notes on permissions.
+  ("coming from Node"), and the permission flags/error code from M8.
+- Release checklist: reproducible builds, SBOM, license audit, security notes (1.0 ships
+  `--permission`, off by default; child processes and compiled apps are outside it).
 
 **Exit criteria**
 
-- The 9 v1.0 criteria in §0 all green on a clean machine with no dev toolchain.
+- The 10 v1.0 criteria in §0 all green on a clean machine with no dev toolchain.
 - A stranger can install and run a script from the README in under 2 minutes.
 
 ---
 
-## M9–M10 — 1.1: permissions and native interop (5.5 w)
+## M10 — 1.1: native interop (4 w)
 
-Post-1.0. **M9** is the deferred deny-by-default permissions model; **M10** is `dlopen` FFI
-([ffi-plan.md](ffi-plan.md), [ADR-0010](adr/0010-ffi-dlopen.md)), which is its first consumer.
-Ordering matters: with the model first, `--allow-ffi` is one entry in a uniform policy rather than a
-one-off flag, and `fs`/`net`/`child_process`/`env` are gated by the same mechanism.
+Post-1.0. `onde:ffi` ([ffi-plan.md](ffi-plan.md), [ADR-0010](adr/0010-ffi-dlopen.md)) is the first
+consumer of M8's `ffi.load`: `process.dlopen` is another route to that grant rather than a bespoke
+`--allow-ffi` switch, and the sqlite extension loader already exercises it in 1.0.
 
-FFI is not in 1.0. The `ffi` feature is off in release builds through M8 and turns on for M10; a
+FFI is not in 1.0. The `ffi` feature is off in release builds through M9 and turns on for M10; a
 build without it has no `onde:ffi` module at all. WP0 can start behind the non-default feature
-during M8, as standalone builds landed ahead of M7, without moving the milestone.
+during M9, as standalone builds landed ahead of M7, without moving the milestone.
 
 ---
 
@@ -573,12 +607,13 @@ during M8, as standalone builds landed ahead of M7, without moving the milestone
 
 ```
 M0 ── M1 ── M2 ── M3 ─┬─ M4 ──┐
-                      └─ M5 ──┴─ M7 ── M8
+                      └─ M5 ──┴─ M7 ── M8 ── M9
                 └─ M6 spike at end of M1, integration after M3
 ```
 
 Critical path: **M1 → M2 → M3 → M4**. M5 and M6 are parallelizable against M4 once the op
-bridge (M3) is stable. M7 needs M4 and M6.
+bridge (M3) is stable. M7 needs M4 and M6. M8 (permissions) needs M7 and must land before M9
+(hardening), because the release docs and the compat sweep have to describe the model 1.0 ships.
 
 ## 3. First six weeks (concrete)
 
@@ -598,9 +633,9 @@ running with output identical to Node.
 
 | Engineers | Shape | Wall clock |
 |---|---|---|
-| 1 | sequential M0→M8 | ~8 months |
-| 2 | one on M1→M2→M3, one on M3/M4 net+http after week 6 | ~5.5 months |
-| 3 | + one on M5/M6 (workers, engine patch, async context) | ~4 months |
+| 1 | sequential M0→M9 | ~9 months |
+| 2 | one on M1→M2→M3, one on M3/M4 net+http after week 6 | ~6.5 months |
+| 3 | + one on M5/M6 (workers, engine patch, async context) | ~5 months |
 
 The engine patch (M6) should be owned by whoever owns `ln-engine`, not by a separate person:
 it is 150 LOC of C plus binding regeneration, and the cost is in the rebase discipline.
@@ -632,8 +667,8 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | [0007](adr/0007-http-codec.md) | HTTP/1.1 as a sans-io `httparse`-based state machine, outbound heads authored in JS | accepted |
 | [0008](adr/0008-processes-and-threads.md) | Threads and processes: nested isolate per worker, engine-serialized messages with a SAB table, proc/worker handle families, cooperative termination | accepted (M5) |
 | [0009](adr/0009-async-context.md) | Async context: host-owned job queue, per-job tags, engine hooks | accepted (M6) |
-| — | Permissions model (deny-by-default `--allow-*`) | M9 (1.1); no ADR number assigned |
 | [0010](adr/0010-ffi-dlopen.md) | `dlopen` FFI: `libffi`, optional declarations, decoded structs; gated; M10 | proposed (M10) |
+| [0011](adr/0011-permissions.md) | Permissions: opt-in policy file and `--allow-*` flags, allow-lists only, enforced at the host boundary; 1.0 ships it off by default | accepted (M8) |
 
 ## 7. What we are explicitly not doing
 

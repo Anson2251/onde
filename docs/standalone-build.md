@@ -1220,7 +1220,7 @@ sources — in practice it starts much faster — and it must not be slower once
 shared the emitter and the loader. The reasoning below is kept as the record of why that window and
 not another.
 
-**Recommended window: M7, immediately after M6; promoted to default in M8.** Not before M6, not
+**Recommended window: M7, immediately after M6; promoted to default in M9.** Not before M6, not
 deferred past 1.0.
 
 ### 14.1 Why not now
@@ -1248,10 +1248,10 @@ deferred past 1.0.
 
 ### 14.3 Why not after 1.0
 
-M8 is "compatibility sweep, docs, packaging, release". A standalone build is a packaging story; if
+M9 is "compatibility sweep, docs, packaging, release". A standalone build is a packaging story; if
 it arrives after 1.0, the first release ships without the deployment mode most likely to attract
 users, and the SDK matrix competes with 1.1 work. Ship it behind a flag in M7, make it the default
-in M8.
+in M9.
 
 ### 14.4 Cheap now, regardless of timing (1–3 days)
 

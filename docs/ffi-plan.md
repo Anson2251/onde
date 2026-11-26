@@ -3,7 +3,7 @@
 This is the working contract for `dlopen`-based FFI: where it lives, what the public surface is,
 what the inference rules are, and what is deliberately left out. The decision record is
 [ADR-0010](adr/0010-ffi-dlopen.md). [roadmap.md](roadmap.md) keeps N-API and native addons out of
-1.0; this work is M10 (1.1), after the M9 permissions model, and does not sit on the M0–M8
+1.0; this work is M10 (1.1), after the M8 permissions model, and does not sit on the M0–M9
 critical path.
 
 Status: **design, 2026-11-24. Not implemented. Target: M10.** No `ln-ffi` crate, module or CLI
@@ -597,9 +597,10 @@ separate from `BUILTINS` (so bare `ffi` cannot resolve), a source arm, the ESM p
 test mirroring the existing one. `node:ffi` is not an option: it would claim a Node namespace we do
 not implement.
 
-`--allow-ffi` is the first deny-by-default `--allow-*` flag. The permissions model itself is
-deferred (roadmap decision log, unnumbered row); when it lands, FFI should become one permission
-rather than a standalone switch.
+FFI is one capability in the permissions model rather than a standalone switch: [ADR-0011](adr/0011-permissions.md)
+gives it the id `ffi.load`, granted from the same policy file as `fs` and `net` (and spelled
+`--allow-ffi` on the command line). Until that model
+lands, a build without the `ffi` feature has no `onde:ffi` module at all, which is the narrower gate.
 
 ## 11. Testing
 

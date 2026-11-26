@@ -22,6 +22,7 @@ ln-http = { path = "../ln-http", optional = true }
 # Default features off: `net`/`tls` here are driven by `node-net`/`node-tls`, so disabling a
 # runtime flag actually removes the code (and rustls) instead of leaving ln-io's defaults on.
 ln-io = { path = "../ln-io", default-features = false }
+ln-perm = { path = "../ln-perm" }
 ln-sched = { path = "../ln-sched" }
 ln-modules = { path = "../ln-modules" }
 # Two independent consumers: `node:zlib` (host/zlib.rs) and the inflater for a `--compress zlib`
@@ -86,6 +87,7 @@ libc = "0.2"
 # The payload tests build a zlib-compressed image themselves, independent of which runtime features
 # are selected.
 ln-zlib = { path = "../ln-zlib" }
+tempfile = "3"
 
 [build-dependencies]
 # WP2: the bootstrap is compiled to bytecode at build time by the same engine the runtime links

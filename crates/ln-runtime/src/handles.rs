@@ -242,7 +242,12 @@ impl HandleBridge {
             let pool = self.ops.pool()?;
             let ids = self.ids.clone();
             let source: HandleIdSource = Arc::new(move || ids.allocate());
-            Ok(NetService::new(pool, self.sink.clone(), source))
+            Ok(NetService::new(
+                pool,
+                self.sink.clone(),
+                source,
+                self.ops.permit().clone(),
+            ))
         });
         result.as_ref().map_err(|error| error.clone())
     }

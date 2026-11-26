@@ -28,3 +28,4 @@ zlib-payload = ["ln-runtime/zlib-payload"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ln-runtime = { path = "../ln-runtime", default-features = false }
+ln-perm = { path = "../ln-perm" }

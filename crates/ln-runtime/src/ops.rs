@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ln_engine::js;
 use ln_error::NodeError;
-use ln_io::{DirEntry, FileKind, Op, OpDone, OpValue, Pool, RequestId, Sink, Stat, StatFs};
+use ln_io::{DirEntry, FileKind, Op, OpDone, OpValue, Permit, Pool, RequestId, Sink, Stat, StatFs};
 use ln_sched::{Completion, CompletionSender, Driver};
 
 /// The single [`RequestId`] sequence of one isolate (ADR-0006 §2.1).
@@ -115,6 +115,8 @@ pub(crate) struct OpBridge {
     pending: Cell<usize>,
     /// The closure the pool calls. Built here because it must capture the table and the sender.
     sink: Sink,
+    /// The isolate's policy. The pool is built with it, so every op on a pool thread carries it.
+    permit: Permit,
 }
 
 impl OpBridge {
@@ -123,6 +125,7 @@ impl OpBridge {
         sender: CompletionSender,
         io_threads: usize,
         ids: Arc<RequestIdAllocator>,
+        permit: Permit,
     ) -> Self {
         let results: Arc<Mutex<HashMap<RequestId, OpDone>>> = Arc::new(Mutex::new(HashMap::new()));
         let sink_results = results.clone();
@@ -151,6 +154,7 @@ impl OpBridge {
             io_threads,
             pending: Cell::new(0),
             sink,
+            permit,
         }
     }
 
@@ -164,6 +168,11 @@ impl OpBridge {
         &self.ids
     }
 
+    /// The isolate's policy, for bridges that start their own tasks (proc, handles).
+    pub(crate) fn permit(&self) -> &Permit {
+        &self.permit
+    }
+
     /// The process-wide pool, created on first use and never at boot.
     ///
     /// `NetService` is built on top of it so ops and handles share one tokio runtime
@@ -171,7 +180,7 @@ impl OpBridge {
     pub(crate) fn pool(&self) -> Result<Arc<Pool>, NodeError> {
         match self
             .pool
-            .get_or_init(|| Pool::new(self.io_threads).map(Arc::new))
+            .get_or_init(|| Pool::with_permit(self.io_threads, self.permit.clone()).map(Arc::new))
         {
             Ok(pool) => Ok(pool.clone()),
             Err(error) => Err(pool_error(error)),
@@ -818,7 +827,7 @@ mod tests {
         let driver = Rc::new(RefCell::new(Driver::new()));
         let (mut reactor, sender) = ChannelReactor::new();
         let ids = Arc::new(RequestIdAllocator::new());
-        let bridge = OpBridge::new(driver.clone(), sender, 2, ids);
+        let bridge = OpBridge::new(driver.clone(), sender, 2, ids, Permit::unconfined());
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
 
         bridge.submit(7, Op::ReadFile { path });

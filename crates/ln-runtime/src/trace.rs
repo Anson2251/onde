@@ -311,6 +311,9 @@ pub struct DiagnosticsConfig {
     pub timing: bool,
     /// Report sampled collections.
     pub trace_gc: bool,
+    /// Time the CLI spent parsing the permission policy, before the isolate existed. Reported as a
+    /// `permissions` row under `--timing` (ADR-0011 §7); `None` when no policy was parsed.
+    pub setup_micros: Option<u64>,
 }
 
 impl Default for DiagnosticsConfig {
@@ -320,6 +323,7 @@ impl Default for DiagnosticsConfig {
             trace_buffer_mb: DEFAULT_BUFFER_LIMIT / (1024 * 1024),
             timing: false,
             trace_gc: false,
+            setup_micros: None,
         }
     }
 }
@@ -338,11 +342,15 @@ impl Diagnostics {
             )?),
             None => None,
         };
-        Ok(Some(Diagnostics {
+        let mut diagnostics = Diagnostics {
             trace,
             timing: config.timing.then(Timing::default),
             gc: config.trace_gc.then(GcTracker::new),
-        }))
+        };
+        if let (Some(timing), Some(micros)) = (&mut diagnostics.timing, config.setup_micros) {
+            timing.record("permissions", Duration::from_micros(micros));
+        }
+        Ok(Some(diagnostics))
     }
 
     /// True when a heap sample is needed, so the caller can skip `JS_ComputeMemoryUsage`, which

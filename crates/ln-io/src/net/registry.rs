@@ -22,6 +22,8 @@ use super::{Command, Event, EventSink, HandleId, HandleIdSource};
 
 use super::connection::Connection;
 
+use crate::Permit;
+
 pub(crate) struct Shared {
     /// The runtime to spawn tasks on. A `Handle` rather than the `Pool` itself: see
     /// `Pool::handle`.
@@ -32,6 +34,8 @@ pub(crate) struct Shared {
     /// Serializes `emit` against `shutdown`; see the module docs.
     barrier: Mutex<()>,
     open: AtomicBool,
+    /// The isolate's policy; listen/connect tasks check each candidate endpoint (ADR-0011 §5.3).
+    permit: Permit,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -43,7 +47,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shared {
-    pub(crate) fn new(runtime: Handle, sink: EventSink, ids: HandleIdSource) -> Self {
+    pub(crate) fn new(
+        runtime: Handle,
+        sink: EventSink,
+        ids: HandleIdSource,
+        permit: Permit,
+    ) -> Self {
         Shared {
             runtime,
             sink,
@@ -51,7 +60,12 @@ impl Shared {
             tasks: Mutex::new(HashMap::new()),
             barrier: Mutex::new(()),
             open: AtomicBool::new(true),
+            permit,
         }
+    }
+
+    pub(crate) fn permit(&self) -> &Permit {
+        &self.permit
     }
 
     /// Spawn a task on the shared runtime. `None` means the runtime is gone, which can only
@@ -159,9 +173,9 @@ mod tests {
     use crate::Pool;
 
     fn shared(sink: EventSink) -> (Arc<Pool>, Arc<Shared>) {
-        let pool = Arc::new(Pool::new(1).expect("pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("pool"));
         let ids: HandleIdSource = Arc::new(|| 1);
-        let shared = Arc::new(Shared::new(pool.handle(), sink, ids));
+        let shared = Arc::new(Shared::new(pool.handle(), sink, ids, Permit::unconfined()));
         (pool, shared)
     }
 

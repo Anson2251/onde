@@ -48,12 +48,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use ln_error::NodeError;
+use ln_perm::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command as TokioCommand};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::Pool;
+use crate::{FdNeed, Permit, Pool};
 
 /// Identifies one live child for its lifetime. Same id space as [`crate::net::HandleId`]: the
 /// runtime mints it and one allocator backs every family (`docs/m5-plan.md` §3).
@@ -199,14 +200,18 @@ pub enum Command {
 pub struct ChildService {
     shared: Arc<Shared>,
     _pool: Arc<Pool>,
+    /// The isolate's policy: `child.spawn` and `StdioMode::Fd` are checked before the task starts
+    /// (ADR-0011 §5.4, rows 7 and 13).
+    permit: Permit,
 }
 
 impl ChildService {
     /// `pool` must be the process-wide pool (ADR-0003: one tokio runtime for ops and handles).
-    pub fn new(pool: Arc<Pool>, sink: EventSink, ids: ChildIdSource) -> Self {
+    pub fn new(pool: Arc<Pool>, sink: EventSink, ids: ChildIdSource, permit: Permit) -> Self {
         ChildService {
             shared: Arc::new(Shared::new(pool.handle(), sink, ids)),
             _pool: pool,
+            permit,
         }
     }
 
@@ -242,7 +247,7 @@ impl ChildService {
     pub fn spawn_with_ipc_child(
         &self,
         id: ChildId,
-        options: SpawnOptions,
+        mut options: SpawnOptions,
         ipc: Option<IpcChannel>,
         ipc_child: Option<OwnedFd>,
     ) -> Result<(), NodeError> {
@@ -265,6 +270,21 @@ impl ChildService {
                         "is invalid",
                     ));
                 }
+                // A descriptor handed to a child is authority; it must be one the isolate already
+                // owns (ADR-0011 §5.6).
+                if self.permit.enforced() {
+                    self.permit.check_fd(fd, FdNeed::Any)?;
+                }
+            }
+        }
+        if self.permit.enforced() {
+            // Match the grant against what will be executed, not the spelling: a bare name is
+            // resolved through PATH; a path is canonicalised. A program that cannot be found is
+            // left alone so the OS reports its usual ENOENT (not a denial).
+            if let Ok(program) = resolve_program(&options.program) {
+                self.permit
+                    .check(&Request::Executable { resolved: &program })?;
+                options.program = program;
             }
         }
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -324,6 +344,38 @@ impl Drop for ChildService {
         // A dropped service must not keep delivering into a sink whose isolate is gone.
         self.shared.shutdown();
     }
+}
+
+/// Resolve the executable a `child.spawn` grant is matched against.
+///
+/// A program containing a separator is canonicalised as given; a bare name is searched in `PATH`
+/// and only a regular, executable file counts. `None`/`Err` is "not found": the caller keeps the
+/// original spelling so the task reports `ENOENT`, which is not a policy answer.
+#[cfg(unix)]
+fn resolve_program(program: &Path) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let text = program.as_os_str().to_string_lossy();
+    let has_separator = text.contains('/') || text.contains('\\');
+    if has_separator {
+        return std::fs::canonicalize(program);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join(program);
+        if std::fs::metadata(&candidate)
+            .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+        {
+            return std::fs::canonicalize(candidate);
+        }
+    }
+    Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+}
+
+#[cfg(not(unix))]
+fn resolve_program(program: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(program)
 }
 
 // ---------------------------------------------------------------------------

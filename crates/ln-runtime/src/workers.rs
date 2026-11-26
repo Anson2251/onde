@@ -35,10 +35,10 @@ use std::time::{Duration, Instant};
 
 use ln_engine::{deserialize, js, Serialized};
 use ln_error::NodeError;
-use ln_sched::{Budget, ChannelReactor, Completion, CompletionSender, Driver};
+use ln_sched::{ChannelReactor, Completion, CompletionSender, Driver};
 
 use crate::ops::RequestIdAllocator;
-use crate::{Config, Isolate, Role, WorkerEntry, WorkerRole};
+use crate::{Inheritable, Isolate, Role, WorkerEntry, WorkerRole};
 
 /// Stack for a worker thread. QuickJS checks the native stack while evaluating, and a Rust std
 /// thread defaults to 2 MiB; the main thread usually has 8 MiB.
@@ -139,11 +139,8 @@ pub(crate) struct WorkerBridge {
     gate: Arc<Gate>,
     sender: CompletionSender,
     argv: Vec<String>,
-    io_threads: usize,
-    budget: Budget,
-    /// The parent's `--max-old-space-size`, inherited by every worker unless `resourceLimits`
-    /// overrides it (m7-plan §3.3).
-    memory_limit: Option<u64>,
+    /// The parent's inheritable set: budget, pool size, heap cap and permissions (ADR-0011 §5.8).
+    inheritable: Inheritable,
     live: RefCell<HashSet<u64>>,
     refs: RefCell<HashSet<u64>>,
     threads: RefCell<HashMap<u64, WorkerThread>>,
@@ -155,9 +152,7 @@ impl WorkerBridge {
         sender: CompletionSender,
         ids: Arc<RequestIdAllocator>,
         argv: Vec<String>,
-        io_threads: usize,
-        budget: Budget,
-        memory_limit: Option<u64>,
+        inheritable: Inheritable,
     ) -> Self {
         WorkerBridge {
             ids,
@@ -166,9 +161,7 @@ impl WorkerBridge {
             gate: Arc::new(Gate::new()),
             sender,
             argv,
-            io_threads,
-            budget,
-            memory_limit,
+            inheritable,
             live: RefCell::new(HashSet::new()),
             refs: RefCell::new(HashSet::new()),
             threads: RefCell::new(HashMap::new()),
@@ -235,13 +228,15 @@ impl WorkerBridge {
             self_ref: std::cell::Cell::new(false),
         };
 
-        let mut config = Config::new(argv.unwrap_or_else(|| self.argv.clone()));
-        config.io_threads = self.io_threads;
-        config.budget = self.budget;
+        let mut config = self
+            .inheritable
+            .clone()
+            .into_config(argv.unwrap_or_else(|| self.argv.clone()));
         config.expose_require = eval_entry;
         // A worker's limit is its own runtime's, never the parent's: the two are separate heaps
         // (m7-plan §3.3, D53), which is why this is a per-worker value and not shared state.
-        config.max_old_space_size = memory_limit.or(self.memory_limit);
+        config.inheritable.max_old_space_size =
+            memory_limit.or(config.inheritable.max_old_space_size);
 
         let thread_name = format!("onde-worker-{thread_id}");
         let handle = std::thread::Builder::new()
@@ -520,6 +515,53 @@ worker.on("exit", (code) => process.exit(code === 0 ? 0 : 21));
         assert_eq!(code, 0);
         assert_eq!(refs, 0);
         assert_eq!(live, 0);
+    }
+
+    /// A confined parent's worker inherits the policy and cannot widen it: its JSON read is
+    /// denied even though the parent never passed `--permission` to the worker explicitly.
+    #[test]
+    fn a_worker_inherits_the_permission_policy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let data = dir.path().join("data.json");
+        std::fs::write(&data, r#"{"secret":true}"#).expect("data");
+        let worker_js = dir.path().join("worker.js");
+        std::fs::write(
+            &worker_js,
+            format!(
+                r#"
+try {{
+  require({data:?});
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}}
+process.exit(3);
+"#,
+                data = data.display().to_string(),
+            ),
+        )
+        .expect("worker");
+
+        let source = format!(
+            r#"
+const {{ Worker }} = require("worker_threads");
+const worker = new Worker({worker:?});
+worker.on("exit", (code) => process.exit(code === 0 ? 0 : 22));
+"#,
+            worker = worker_js.display().to_string(),
+        );
+
+        let mut parent_policy = ln_perm::Policy::deny_all();
+        parent_policy.grant(
+            ln_perm::Capability::WorkerSpawn,
+            ln_perm::Rule::Any,
+            ln_perm::Origin::CommandLine,
+        );
+        let mut config = Config::new(vec!["onde".to_owned()]);
+        config.expose_require = true;
+        config.inheritable.permissions = Some(parent_policy);
+        let mut isolate = Isolate::new(config).expect("isolate");
+        let outcome = isolate.run(&source, "[eval]").expect("run");
+        assert_eq!(outcome.exit_code, 0);
     }
 
     /// `terminate()` interrupts a tight JS loop at the next bytecode safepoint (D48's supported

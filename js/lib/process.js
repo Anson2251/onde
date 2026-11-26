@@ -163,6 +163,28 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
       this.env = host.env();
       // The IPC descriptor is an implementation detail of `fork`; Node does not expose it.
       delete this.env.ONDE_IPC_FD;
+      // Read-only introspection: the matcher is in Rust, next to the gates it describes. The
+      // object is present whether or not a policy is active, and `has` answers `true` when
+      // nothing is enforced (ADR-0011 §5.9).
+      this.permission = Object.freeze({
+        has(scope, reference) {
+          if (typeof scope !== "string") {
+            const error = new TypeError(
+              `The "scope" argument must be of type string. Received ${typeof scope}`,
+            );
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          if (reference !== undefined && typeof reference !== "string") {
+            const error = new TypeError(
+              `The "reference" argument must be of type string. Received ${typeof reference}`,
+            );
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          return host.permissionHas(scope, reference);
+        },
+      });
       // Signal name -> number for every signal this process currently listens to.
       this._signals = new Map();
       this.platform = host.platform;

@@ -5,6 +5,7 @@ use std::io::{self, IsTerminal, Write};
 
 use ln_engine::js;
 use ln_error::NodeError;
+use ln_io::FdNeed;
 
 use crate::args;
 use crate::host_error::throw_node_error_value;
@@ -14,7 +15,7 @@ use super::HostState;
 pub(super) fn install<'js>(
     ctx: &js::Ctx<'js>,
     host: &js::Object<'js>,
-    _state: &HostState,
+    state: &HostState,
 ) -> js::Result<()> {
     host.set(
         "write",
@@ -33,19 +34,30 @@ pub(super) fn install<'js>(
         )?,
     )?;
 
-    host.set(
-        "writeFd",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, fd: js::Value<'js>, data: js::Value<'js>| -> js::Result<u64> {
-                let fd = args::i32_value(Some(&fd), "fd")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let bytes = args::bytes(Some(&data), "data")
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                write_fd(fd, &bytes).map_err(|error| throw_node_error_value(&ctx, &error))
-            },
-        )?,
-    )?;
+    {
+        let permit = state.permit.clone();
+        host.set(
+            "writeFd",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>,
+                      fd: js::Value<'js>,
+                      data: js::Value<'js>|
+                      -> js::Result<u64> {
+                    let fd = args::i32_value(Some(&fd), "fd")
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    // The same descriptor table as `Op::Read`/`Write`: a number the isolate did
+                    // not get from a granted `open` is not authority (ADR-0011 §5.6).
+                    permit
+                        .check_fd(fd, FdNeed::Write)
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    let bytes = args::bytes(Some(&data), "data")
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    write_fd(fd, &bytes).map_err(|error| throw_node_error_value(&ctx, &error))
+                },
+            )?,
+        )?;
+    }
 
     host.set(
         "isTTY",

@@ -15,8 +15,12 @@
 
   const g = globalThis;
   const host = g.__ln_host;
+  const privileged = g.__ln_loader;
   if (host === undefined || host === null) {
     throw new Error("onde: host primitives are missing");
+  }
+  if (privileged === undefined || privileged === null) {
+    throw new Error("onde: loader primitives are missing");
   }
 
   // --- internal handle registry (M4) ----------------------------------------------------------
@@ -95,7 +99,7 @@
   // --- internal module evaluation -------------------------------------------------------------
 
   function evalInternal(name) {
-    const source = host.builtinSource(name);
+    const source = privileged.builtinSource(name);
     if (source === null || source === undefined) {
       throw new Error("onde: missing internal module " + name);
     }
@@ -106,7 +110,7 @@
       children: [],
       parent: null,
     };
-    host.evalCjs(
+    privileged.evalCjs(
       module.filename,
       source,
       module.exports,
@@ -119,9 +123,14 @@
     return module.exports;
   }
 
+  // The loader is the only consumer of `__ln_loader`. It captures the object, then the global is
+  // deleted, so a script that runs afterwards cannot read a file around the policy (ADR-0011
+  // §5.4.1). Freezing `__ln_host` first is still required: the privileged functions were never
+  // properties of it.
   Object.freeze(host);
   const loader = evalInternal("internal/loader");
-  loader.install(host);
+  loader.install(privileged);
+  delete g.__ln_loader;
 
   // --- timers and callback dispatch -----------------------------------------------------------
 
@@ -737,7 +746,7 @@
   }
 
   function metaResolve(specifier, base) {
-    return host.metaResolve(specifier, base);
+    return privileged.metaResolve(specifier, base);
   }
 
   function runCjsEntry(filename) {
@@ -755,7 +764,7 @@
   }
 
   function exposeRequire(directory) {
-    const separator = host.platform === "win32" ? "\\" : "/";
+    const separator = privileged.platform === "win32" ? "\\" : "/";
     const root = String(directory).replace(/[\\/]+$/, "");
     const filename = root + separator + "[eval]";
     const require = loader.createRequire(filename);

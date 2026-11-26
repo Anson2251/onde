@@ -27,6 +27,9 @@ pub mod net;
 pub mod proc;
 pub mod signal;
 
+mod perm;
+pub use perm::{FdMode, FdNeed, Permit};
+
 pub use addr::{Addr, IpFamily};
 
 use std::ffi::CString;
@@ -387,25 +390,56 @@ impl Op {
 
     /// Execute on the current thread. This is the sync `fs` path and the body of the pool work.
     ///
-    /// Implementations must re-check `abort` before and after the syscall when they can leave a
-    /// resource behind (an fd): aborting an `open` closes the fd before returning `Aborted`.
-    pub fn execute(self, abort: &AtomicBool) -> Result<OpValue, NodeError> {
+    /// The policy check runs first: [`Permit::resolve_op`] resolves and checks every path (and fd)
+    /// and returns the op rewritten to the resolved paths, which is what the executor opens. A
+    /// denial is returned before any syscall. With no policy the op is executed untouched, which is
+    /// the one branch default runs pay.
+    pub(crate) fn execute(self, abort: &AtomicBool, permit: &Permit) -> Result<OpValue, NodeError> {
+        let nofollow = permit.enforced();
+        let open_flags = match &self {
+            Op::Open { flags, .. } => Some(*flags),
+            _ => None,
+        };
+        let closing = match &self {
+            Op::Close { fd } => Some(*fd),
+            _ => None,
+        };
+        let result = match permit.resolve_op(&self)? {
+            Some(op) => op.execute_inner(abort, nofollow),
+            None => self.execute_inner(abort, nofollow),
+        };
+        // The fd table tracks what a granted `open` handed out and what `close` took back. Both
+        // only matter while a policy is active; `note_*` returns immediately otherwise.
+        if let (Some(flags), Ok(OpValue::Fd(fd))) = (open_flags, &result) {
+            permit.note_open(*fd, flags);
+        }
+        if let (Some(fd), Ok(_)) = (closing, &result) {
+            permit.note_close(fd);
+        }
+        result
+    }
+
+    /// The syscall body. Implementations must re-check `abort` before and after the syscall when
+    /// they can leave a resource behind (an fd): aborting an `open` closes the fd before returning
+    /// `Aborted`. `nofollow` is true exactly when a policy is active, so the default path keeps
+    /// Node's symlink semantics.
+    fn execute_inner(self, abort: &AtomicBool, nofollow: bool) -> Result<OpValue, NodeError> {
         check_abort(abort)?;
         match self {
-            Op::ReadFile { path } => read_file(&path, abort),
+            Op::ReadFile { path } => read_file(&path, abort, nofollow),
             Op::WriteFile {
                 path,
                 data,
                 mode,
                 flags,
-            } => write_file(&path, &data, mode, flags, abort),
+            } => write_file(&path, &data, mode, flags, abort, nofollow),
             Op::AppendFile {
                 path,
                 data,
                 mode,
                 flags,
-            } => write_file(&path, &data, mode, flags, abort),
-            Op::CopyFile { src, dst, flags } => copy_file(&src, &dst, flags),
+            } => write_file(&path, &data, mode, flags, abort, nofollow),
+            Op::CopyFile { src, dst, flags } => copy_file(&src, &dst, flags, nofollow, abort),
             Op::Mkdir {
                 path,
                 mode,
@@ -436,7 +470,7 @@ impl Op {
                 gid,
                 follow,
             } => chown(&path, uid, gid, follow),
-            Op::Truncate { path, len } => truncate(&path, len),
+            Op::Truncate { path, len } => truncate(&path, len, nofollow),
             Op::Ftruncate { fd, len } => ftruncate(fd, len),
             Op::Readlink { path } => readlink(&path),
             Op::Symlink { target, path } => symlink(&target, &path),
@@ -448,7 +482,7 @@ impl Op {
                 mtime_ms,
                 follow,
             } => utimes(&path, atime_ms, mtime_ms, follow),
-            Op::Open { path, flags, mode } => open(&path, flags, mode, abort),
+            Op::Open { path, flags, mode } => open(&path, flags, mode, abort, nofollow),
             Op::Close { fd } => close(fd),
             Op::Read {
                 fd,
@@ -488,10 +522,18 @@ pub type Sink = Arc<dyn Fn(OpDone) + Send + Sync>;
 /// `max_blocking_threads` (`--io-threads`).
 pub struct Pool {
     _runtime: tokio::runtime::Runtime,
+    /// The policy every op on this pool is checked against. One pool per isolate, one policy.
+    permit: Permit,
 }
 
 impl Pool {
-    pub fn new(io_threads: usize) -> io::Result<Self> {
+    /// An unconfined pool: tests and a build with no policy. Production goes through
+    /// [`Pool::with_permit`], which carries the isolate's policy.
+    pub fn new_unconfined(io_threads: usize) -> io::Result<Self> {
+        Self::with_permit(io_threads, Permit::unconfined())
+    }
+
+    pub fn with_permit(io_threads: usize, permit: Permit) -> io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .max_blocking_threads(io_threads.max(1))
@@ -500,17 +542,22 @@ impl Pool {
             // but there is one runtime for both modes (ADR-0006 §5).
             .enable_io()
             .build()?;
-        Ok(Self { _runtime: runtime })
+        Ok(Self {
+            _runtime: runtime,
+            permit,
+        })
     }
 
     /// Run `op` on the blocking pool. The sink is called exactly once, on a pool thread.
     pub fn submit(&self, id: RequestId, op: Op, abort: Arc<AtomicBool>, sink: Sink) {
         let syscall = op.syscall();
+        let permit = self.permit.clone();
         self._runtime.spawn_blocking(move || {
             // A panic anywhere in the op body (including a bug in `std`/`libc` glue) must still
             // settle the request exactly once; Node surfaces such failures as EIO.
-            let outcome =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| op.execute(&abort)));
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                op.execute(&abort, &permit)
+            }));
             let done = match outcome {
                 _ if abort.load(Ordering::SeqCst) => OpDone::Aborted { id },
                 Ok(Ok(value)) => OpDone::Ok { id, value },
@@ -550,8 +597,8 @@ impl Pool {
 }
 
 /// The sync entry point, used by the `fs` sync forms on the isolate thread.
-pub fn execute(op: Op, abort: &AtomicBool) -> Result<OpValue, NodeError> {
-    op.execute(abort)
+pub fn execute(op: Op, abort: &AtomicBool, permit: &Permit) -> Result<OpValue, NodeError> {
+    op.execute(abort, permit)
 }
 
 // ---------------------------------------------------------------------------
@@ -705,8 +752,22 @@ fn stat_from_metadata(metadata: &fs::Metadata) -> Stat {
     }
 }
 
-fn open_path(path: &Path, flags: i32, mode: u32, syscall: &'static str) -> Result<i32, NodeError> {
+fn open_path(
+    path: &Path,
+    flags: i32,
+    mode: u32,
+    syscall: &'static str,
+    nofollow: bool,
+) -> Result<i32, NodeError> {
     let c_path = cpath(path, syscall)?;
+    // Only while a policy is active: the gate checked this exact resolved path, and O_NOFOLLOW
+    // keeps the final component from becoming a symlink between the check and the open. Default
+    // runs keep Node's symlink semantics.
+    let flags = if nofollow {
+        flags | libc::O_NOFOLLOW
+    } else {
+        flags
+    };
     let fd = unsafe {
         libc::open(
             c_path.as_ptr(),
@@ -721,8 +782,8 @@ fn open_path(path: &Path, flags: i32, mode: u32, syscall: &'static str) -> Resul
     }
 }
 
-fn read_file(path: &Path, abort: &AtomicBool) -> Result<OpValue, NodeError> {
-    let fd = open_path(path, libc::O_RDONLY, 0, "open")?;
+fn read_file(path: &Path, abort: &AtomicBool, nofollow: bool) -> Result<OpValue, NodeError> {
+    let fd = open_path(path, libc::O_RDONLY, 0, "open", nofollow)?;
     let result = (|| {
         let mut out = Vec::new();
         let mut buffer = [0u8; 64 * 1024];
@@ -753,8 +814,9 @@ fn write_file(
     mode: u32,
     flags: i32,
     abort: &AtomicBool,
+    nofollow: bool,
 ) -> Result<OpValue, NodeError> {
-    let fd = open_path(path, flags, mode, "open")?;
+    let fd = open_path(path, flags, mode, "open", nofollow)?;
     let result = (|| {
         let mut written = 0usize;
         while written < data.len() {
@@ -783,8 +845,14 @@ fn write_file(
     result
 }
 
-fn copy_file(src: &Path, dst: &Path, flags: u32) -> Result<OpValue, NodeError> {
-    // `COPYFILE_EXCL` is 1; the clone flags are ignored (std::fs::copy is a byte copy).
+fn copy_file(
+    src: &Path,
+    dst: &Path,
+    flags: u32,
+    nofollow: bool,
+    abort: &AtomicBool,
+) -> Result<OpValue, NodeError> {
+    // `COPYFILE_EXCL` is 1; the clone flags are ignored (this is a byte copy).
     if flags & 1 != 0 && fs::symlink_metadata(dst).is_ok() {
         return Err(two_path_error(
             &io::Error::from_raw_os_error(libc::EEXIST),
@@ -793,9 +861,83 @@ fn copy_file(src: &Path, dst: &Path, flags: u32) -> Result<OpValue, NodeError> {
             dst,
         ));
     }
-    fs::copy(src, dst)
-        .map(|_| OpValue::Unit)
-        .map_err(|error| two_path_error(&error, "copyfile", src, dst))
+    let src_fd = open_path(src, libc::O_RDONLY, 0, "copyfile", nofollow)?;
+    let dst_fd = match open_path(
+        dst,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+        0o666,
+        "copyfile",
+        nofollow,
+    ) {
+        Ok(fd) => fd,
+        Err(error) => {
+            close_fd(src_fd);
+            return Err(error);
+        }
+    };
+    let result = (|| {
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            check_abort(abort)?;
+            let read = unsafe {
+                libc::read(
+                    src_fd,
+                    buffer.as_mut_ptr().cast::<libc::c_void>(),
+                    buffer.len(),
+                )
+            };
+            if read < 0 {
+                if last_errno() == libc::EINTR {
+                    continue;
+                }
+                return Err(two_path_error(
+                    &io::Error::last_os_error(),
+                    "copyfile",
+                    src,
+                    dst,
+                ));
+            }
+            if read == 0 {
+                break;
+            }
+            let mut written = 0usize;
+            while written < read as usize {
+                let count = unsafe {
+                    libc::write(
+                        dst_fd,
+                        buffer[written..read as usize]
+                            .as_ptr()
+                            .cast::<libc::c_void>(),
+                        read as usize - written,
+                    )
+                };
+                if count < 0 {
+                    if last_errno() == libc::EINTR {
+                        continue;
+                    }
+                    return Err(two_path_error(
+                        &io::Error::last_os_error(),
+                        "copyfile",
+                        src,
+                        dst,
+                    ));
+                }
+                if count == 0 {
+                    return Err(two_path_error(
+                        &io::Error::from_raw_os_error(libc::EIO),
+                        "copyfile",
+                        src,
+                        dst,
+                    ));
+                }
+                written += count as usize;
+            }
+        }
+        Ok(OpValue::Unit)
+    })();
+    close_fd(src_fd);
+    close_fd(dst_fd);
+    result
 }
 
 fn mkdir(
@@ -1174,13 +1316,16 @@ fn chown(path: &Path, uid: u32, gid: u32, follow: bool) -> Result<OpValue, NodeE
     }
 }
 
-fn truncate(path: &Path, len: u64) -> Result<OpValue, NodeError> {
-    let c_path = cpath(path, "truncate")?;
-    let result = unsafe { libc::truncate(c_path.as_ptr(), len as libc::off_t) };
-    if result == 0 {
-        Ok(OpValue::Unit)
-    } else {
-        Err(errno_error("truncate", Some(path)))
+fn truncate(path: &Path, len: u64, nofollow: bool) -> Result<OpValue, NodeError> {
+    // `truncate(2)` takes a path and would follow a symlink swapped in after the check. Open the
+    // checked, resolved path with O_NOFOLLOW and truncate the descriptor instead (ADR-0011 §4.7).
+    let fd = open_path(path, libc::O_WRONLY, 0, "open", nofollow)?;
+    let result = unsafe { libc::ftruncate(fd, len as libc::off_t) };
+    let failure = (result != 0).then(last_errno);
+    close_fd(fd);
+    match failure {
+        None => Ok(OpValue::Unit),
+        Some(errno) => Err(NodeError::from_errno(errno, "truncate", Some(path))),
     }
 }
 
@@ -1231,8 +1376,14 @@ fn utimes(path: &Path, atime_ms: f64, mtime_ms: f64, follow: bool) -> Result<OpV
     }
 }
 
-fn open(path: &Path, flags: i32, mode: u32, abort: &AtomicBool) -> Result<OpValue, NodeError> {
-    let fd = open_path(path, flags, mode, "open")?;
+fn open(
+    path: &Path,
+    flags: i32,
+    mode: u32,
+    abort: &AtomicBool,
+    nofollow: bool,
+) -> Result<OpValue, NodeError> {
+    let fd = open_path(path, flags, mode, "open", nofollow)?;
     // Post-syscall abort: the fd is the only resource this op can leave behind, and ADR-0005
     // requires it to be closed before reporting the op as aborted.
     if abort.load(Ordering::SeqCst) {
@@ -1383,11 +1534,12 @@ fn no_abort() -> AtomicBool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ln_perm::{Capability, Origin, PathRule, Policy, Rule};
     use std::sync::mpsc;
     use tempfile::tempdir;
 
     fn run(op: Op) -> Result<OpValue, NodeError> {
-        execute(op, &no_abort())
+        execute(op, &no_abort(), &Permit::unconfined())
     }
 
     fn write(path: &Path, bytes: &[u8]) {
@@ -1403,6 +1555,7 @@ mod tests {
                 path: dir.path().to_path_buf(),
             },
             &abort,
+            &Permit::unconfined(),
         )
         .expect("statfs")
         {
@@ -2079,6 +2232,244 @@ mod tests {
         run(Op::Close { fd }).unwrap();
     }
 
+    fn run_with(op: Op, permit: &Permit) -> Result<OpValue, NodeError> {
+        execute(op, &no_abort(), permit)
+    }
+
+    fn permit_for(capability: Capability, root: &Path) -> Permit {
+        let mut policy = Policy::deny_all();
+        policy.grant(
+            capability,
+            Rule::Path(PathRule::new(root.to_path_buf())),
+            Origin::CommandLine,
+        );
+        Permit::new(policy)
+    }
+
+    #[test]
+    fn a_deny_all_policy_denies_an_existing_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("data");
+        write(&path, b"x");
+        let error = run_with(
+            Op::ReadFile { path: path.clone() },
+            &Permit::new(Policy::deny_all()),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+        assert!(error.message.contains("fs.read"), "{}", error.message);
+        assert!(run_with(Op::ReadFile { path }, &Permit::new(Policy::any())).is_ok());
+    }
+
+    #[test]
+    fn a_missing_path_is_enoent_before_a_denial() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing");
+        let error = run_with(Op::ReadFile { path }, &Permit::new(Policy::deny_all())).unwrap_err();
+        assert_eq!(error.code, "ENOENT");
+    }
+
+    #[test]
+    fn path_grants_are_component_and_case_exact() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let inside = root.join("a");
+        write(&inside, b"x");
+        let permit = permit_for(Capability::FsRead, &root);
+        assert!(run_with(Op::ReadFile { path: inside }, &permit).is_ok());
+
+        // The sibling prefix `/database` must not be treated as `/data`. The matcher-level case
+        // check lives in `ln-perm`; on a case-insensitive volume `realpath` returns the on-disk
+        // spelling, so asserting a case variant here would test the filesystem, not the policy.
+        let sibling = root.parent().unwrap().join("database");
+        write(&sibling, b"x");
+        let error = run_with(
+            Op::ReadFile {
+                path: sibling.clone(),
+            },
+            &permit,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+        let _ = fs::remove_file(sibling);
+    }
+
+    #[test]
+    fn write_does_not_imply_read() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("f");
+        write(&path, b"x");
+        let permit = permit_for(Capability::FsWrite, &root);
+        assert!(run_with(
+            Op::WriteFile {
+                path: path.clone(),
+                data: b"y".to_vec(),
+                mode: 0o666,
+                flags: libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+            },
+            &permit
+        )
+        .is_ok());
+        let error = run_with(Op::ReadFile { path }, &permit).unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+    }
+
+    #[test]
+    fn a_create_open_needs_write_even_with_a_read_only_access_mode() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("new");
+        let permit = permit_for(Capability::FsRead, &root);
+        let error = run_with(
+            Op::Open {
+                path,
+                flags: libc::O_RDONLY | libc::O_CREAT,
+                mode: 0o666,
+            },
+            &permit,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+        assert!(error.message.contains("fs.write"), "{}", error.message);
+    }
+
+    #[test]
+    fn copy_needs_read_on_the_source_and_write_on_the_destination() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let src = root.join("src");
+        let dst = root.join("dst");
+        write(&src, b"payload");
+        let read_only = permit_for(Capability::FsRead, &root);
+        assert!(run_with(
+            Op::CopyFile {
+                src: src.clone(),
+                dst: dst.clone(),
+                flags: 0,
+            },
+            &read_only
+        )
+        .is_err());
+
+        let both = {
+            let mut policy = Policy::deny_all();
+            for capability in [Capability::FsRead, Capability::FsWrite] {
+                policy.grant(
+                    capability,
+                    Rule::Path(PathRule::new(root.clone())),
+                    Origin::CommandLine,
+                );
+            }
+            Permit::new(policy)
+        };
+        assert!(run_with(
+            Op::CopyFile {
+                src,
+                dst: dst.clone(),
+                flags: 0,
+            },
+            &both
+        )
+        .is_ok());
+        assert_eq!(fs::read(dst).unwrap(), b"payload");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_a_granted_directory_is_denied_and_lstat_is_not() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let outside = tempdir().unwrap();
+        let secret = std::fs::canonicalize(outside.path())
+            .unwrap()
+            .join("secret");
+        write(&secret, b"secret");
+        let link = root.join("link");
+        symlink(&secret, &link).unwrap();
+        let permit = permit_for(Capability::FsRead, &root);
+
+        // Following the link leaves the grant and is denied.
+        let error = run_with(Op::ReadFile { path: link.clone() }, &permit).unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+
+        // The link itself is inside the grant, so `lstat` is allowed.
+        assert!(run_with(
+            Op::Stat {
+                path: link,
+                follow: false,
+            },
+            &permit
+        )
+        .is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_refused_for_a_create() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let link = root.join("dangling");
+        symlink(root.join("missing"), &link).unwrap();
+        let permit = permit_for(Capability::FsWrite, &root);
+        let error = run_with(
+            Op::WriteFile {
+                path: link,
+                data: b"x".to_vec(),
+                mode: 0o666,
+                flags: libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+            },
+            &permit,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+    }
+
+    #[test]
+    fn a_granted_open_records_the_fd_and_close_forgets_it() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("f");
+        write(&path, b"hello");
+        let permit = permit_for(Capability::FsRead, &root);
+
+        let fd = match run_with(
+            Op::Open {
+                path,
+                flags: libc::O_RDONLY,
+                mode: 0,
+            },
+            &permit,
+        )
+        .unwrap()
+        {
+            OpValue::Fd(fd) => fd,
+            other => panic!("unexpected {other:?}"),
+        };
+        assert!(run_with(
+            Op::Read {
+                fd,
+                length: 5,
+                position: -1,
+            },
+            &permit
+        )
+        .is_ok());
+        assert!(run_with(Op::Close { fd }, &permit).is_ok());
+        let error = run_with(
+            Op::Read {
+                fd,
+                length: 1,
+                position: -1,
+            },
+            &permit,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+    }
+
     #[test]
     fn missing_file_error_has_the_node_shape() {
         let dir = tempdir().unwrap();
@@ -2106,6 +2497,7 @@ mod tests {
                 path: "/definitely/not/removed".into(),
             },
             &abort,
+            &Permit::unconfined(),
         )
         .unwrap_err();
         assert!(error.is_aborted());
@@ -2121,7 +2513,7 @@ mod tests {
         write(&first, b"one");
         write(&second, b"two");
 
-        let pool = Pool::new(2).unwrap();
+        let pool = Pool::new_unconfined(2).unwrap();
         let (sender, receiver) = mpsc::channel();
         let sender = std::sync::Mutex::new(sender);
         let sink: Sink = Arc::new(move |done| {
@@ -2169,7 +2561,7 @@ mod tests {
 
     #[test]
     fn pool_reports_aborted_for_a_pre_set_flag() {
-        let pool = Pool::new(1).unwrap();
+        let pool = Pool::new_unconfined(1).unwrap();
         let (sender, receiver) = mpsc::channel();
         let sink: Sink = Arc::new(move |done| {
             sender.send(done).unwrap();

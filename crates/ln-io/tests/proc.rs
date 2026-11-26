@@ -17,7 +17,7 @@ use ln_io::proc::{
     encode_frame, ipc_pair, ChildId, ChildIdSource, ChildService, Command, Event, EventSink,
     FrameDecoder, SpawnOptions, StdioMode, Stream, MAX_FRAME_SIZE,
 };
-use ln_io::Pool;
+use ln_io::{Permit, Pool};
 
 /// Every positive wait fails the test after five seconds instead of hanging.
 const WAIT: Duration = Duration::from_secs(5);
@@ -37,7 +37,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let pool = Arc::new(Pool::new(1).expect("pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("pool"));
         let (sender, events) = mpsc::channel();
         let sink: EventSink = Arc::new(move |id, event| {
             // A closed receiver only happens while the test (and its runtime) is tearing down.
@@ -46,7 +46,7 @@ impl Harness {
         let next = Arc::new(AtomicU64::new(1));
         let ids: ChildIdSource = Arc::new(move || next.fetch_add(1, Ordering::SeqCst));
         Harness {
-            service: ChildService::new(pool.clone(), sink, ids),
+            service: ChildService::new(pool.clone(), sink, ids, Permit::unconfined()),
             events,
             _pool: pool,
         }

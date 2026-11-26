@@ -23,7 +23,7 @@ use ln_io::net::{
     Addr, Command, ConnectOptions, ConnectTarget, Event, EventSink, HandleId, HandleIdSource,
     IpFamily, ListenOptions, ListenTarget, NetService,
 };
-use ln_io::{execute, Op, OpValue, Pool};
+use ln_io::{execute, Op, OpValue, Permit, Pool};
 
 /// Every positive wait fails the test after five seconds instead of hanging.
 const WAIT: Duration = Duration::from_secs(5);
@@ -121,7 +121,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let pool = Arc::new(Pool::new(1).expect("tokio pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("tokio pool"));
         let (tx, rx) = mpsc::channel();
         let sink: EventSink = Arc::new(move |id, event| {
             // The receiver is the test; a send failure means the test already failed.
@@ -133,7 +133,7 @@ impl Harness {
             Arc::new(move || next_id.fetch_add(1, Ordering::SeqCst))
         };
         Harness {
-            service: NetService::new(pool.clone(), sink, ids),
+            service: NetService::new(pool.clone(), sink, ids, Permit::unconfined()),
             events: Events {
                 rx,
                 pending: HashMap::new(),
@@ -566,6 +566,7 @@ fn lookup(host: &str, family: IpFamily, all: bool) -> Result<OpValue, ln_error::
             all,
         },
         &abort,
+        &Permit::unconfined(),
     )
 }
 

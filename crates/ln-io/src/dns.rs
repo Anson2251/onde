@@ -64,6 +64,7 @@ fn gai_error(host: &str, code: &'static str, errno: i32) -> NodeError {
         syscall: Some("getaddrinfo"),
         path: None,
         errno: Some(errno),
+        denial: None,
         cause: None,
     }
 }

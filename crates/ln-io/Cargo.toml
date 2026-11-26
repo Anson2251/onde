@@ -16,6 +16,7 @@ tls = ["net", "dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:rustls-
 
 [dependencies]
 ln-error = { path = "../ln-error" }
+ln-perm = { path = "../ln-perm" }
 # The HTTP/1.1 codec under the sockets: only the `net` feature needs it.
 ln-http = { path = "../ln-http", optional = true }
 getrandom = "0.2"

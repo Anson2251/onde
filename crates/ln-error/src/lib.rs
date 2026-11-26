@@ -13,6 +13,18 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// The permission-denial properties `ERR_ACCESS_DENIED` carries (ADR-0011 §5.7). Kept beside the
+/// error rather than encoded in the message because the JS object exposes them as fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DenialPayload {
+    /// The capability id: `fs.read`, `net.connect`, `child.spawn`, ...
+    pub capability: &'static str,
+    /// The resolved path, endpoint, name or `*` for a boolean capability.
+    pub resource: String,
+    /// The policy file and line, or `<command line>`.
+    pub policy: String,
+}
+
 /// A Node-shaped error, ready to be turned into a JS error on the isolate thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeError {
@@ -27,6 +39,8 @@ pub struct NodeError {
     /// Raw OS errno when the error came from a syscall.
     pub errno: Option<i32>,
     pub cause: Option<Box<NodeError>>,
+    /// Present only for `ERR_ACCESS_DENIED`; set by [`NodeError::access_denied`].
+    pub denial: Option<Box<DenialPayload>>,
 }
 
 impl NodeError {
@@ -40,6 +54,52 @@ impl NodeError {
             path: None,
             errno: None,
             cause: None,
+            denial: None,
+        }
+    }
+
+    /// `ERR_ACCESS_DENIED` for one resource: the message names the capability, the resource and
+    /// the policy origin, and the three properties travel with the error (ADR-0011 §5.7).
+    pub fn access_denied(
+        capability: &'static str,
+        resource: impl Into<String>,
+        policy: impl Into<String>,
+    ) -> Self {
+        let resource = resource.into();
+        let policy = policy.into();
+        Self {
+            code: "ERR_ACCESS_DENIED",
+            name: "Error",
+            message: format!("{capability} is denied for '{resource}' by {policy}"),
+            syscall: None,
+            path: None,
+            errno: None,
+            cause: None,
+            denial: Some(Box::new(DenialPayload {
+                capability,
+                resource,
+                policy,
+            })),
+        }
+    }
+
+    /// `ERR_ACCESS_DENIED` for a boolean capability (`worker.spawn`, `ffi.load`), which has no
+    /// resource to name.
+    pub fn access_denied_any(capability: &'static str, policy: impl Into<String>) -> Self {
+        let policy = policy.into();
+        Self {
+            code: "ERR_ACCESS_DENIED",
+            name: "Error",
+            message: format!("{capability} is denied by {policy}"),
+            syscall: None,
+            path: None,
+            errno: None,
+            cause: None,
+            denial: Some(Box::new(DenialPayload {
+                capability,
+                resource: "*".to_owned(),
+                policy,
+            })),
         }
     }
 
@@ -92,6 +152,7 @@ impl NodeError {
             path: path.map(Path::to_path_buf),
             errno,
             cause: None,
+            denial: None,
         }
     }
 
@@ -175,6 +236,7 @@ impl NodeError {
             path: None,
             errno: None,
             cause: None,
+            denial: None,
         }
     }
 
@@ -187,6 +249,7 @@ impl NodeError {
             path: None,
             errno: None,
             cause: None,
+            denial: None,
         }
     }
 

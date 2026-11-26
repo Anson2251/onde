@@ -56,55 +56,66 @@ pub(super) fn install<'js>(
         })?,
     )?;
 
-    host.set(
-        "kill",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>, pid: i32, signal: js::Value<'js>| -> js::Result<bool> {
-                let number = if signal.is_undefined() {
-                    libc::SIGTERM
-                } else if let Some(text) = signal.as_string() {
-                    let text = text.to_string().unwrap_or_default();
-                    signal_number(&text)
-                        .filter(|number| *number > 0)
-                        .ok_or_else(|| {
-                            throw_node_error_value(
-                                &ctx,
-                                &NodeError::invalid_arg_value(
-                                    "signal",
-                                    &text,
-                                    "is not a valid signal",
-                                ),
-                            )
-                        })?
-                } else if let Some(number) = signal.as_int() {
-                    number
-                } else {
-                    return Err(throw_node_error_value(
-                        &ctx,
-                        &NodeError::invalid_arg_type(
-                            "signal",
-                            "string or number",
-                            crate::args::type_name(&signal),
-                        ),
-                    ));
-                };
+    {
+        let permit = state.permit.clone();
+        host.set(
+            "kill",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>, pid: i32, signal: js::Value<'js>| -> js::Result<bool> {
+                    let number = if signal.is_undefined() {
+                        libc::SIGTERM
+                    } else if let Some(text) = signal.as_string() {
+                        let text = text.to_string().unwrap_or_default();
+                        signal_number(&text)
+                            .filter(|number| *number > 0)
+                            .ok_or_else(|| {
+                                throw_node_error_value(
+                                    &ctx,
+                                    &NodeError::invalid_arg_value(
+                                        "signal",
+                                        &text,
+                                        "is not a valid signal",
+                                    ),
+                                )
+                            })?
+                    } else if let Some(number) = signal.as_int() {
+                        number
+                    } else {
+                        return Err(throw_node_error_value(
+                            &ctx,
+                            &NodeError::invalid_arg_type(
+                                "signal",
+                                "string or number",
+                                crate::args::type_name(&signal),
+                            ),
+                        ));
+                    };
 
-                // SAFETY: `kill` takes plain integers and has no memory preconditions.
-                let result = unsafe { libc::kill(pid, number) };
-                if result == 0 {
-                    return Ok(true);
-                }
-                // Node throws ESRCH/EPERM from `process.kill`; it never returns a boolean failure
-                // (the boolean is `child.kill`, which is a separate JS wrapper).
-                let error = std::io::Error::last_os_error();
-                Err(throw_node_error_value(
-                    &ctx,
-                    &NodeError::system(&error, "kill", std::path::Path::new("")),
-                ))
-            },
-        )?,
-    )?;
+                    // `process.kill` never passes through `host.proc`, so it has its own check. It has
+                    // no executable to match: any `child.spawn` grant covers signal authority
+                    // (ADR-0011 §5.3).
+                    permit
+                        .check(&ln_perm::Request::AnyGrant {
+                            capability: ln_perm::Capability::ChildSpawn,
+                        })
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    // SAFETY: `kill` takes plain integers and has no memory preconditions.
+                    let result = unsafe { libc::kill(pid, number) };
+                    if result == 0 {
+                        return Ok(true);
+                    }
+                    // Node throws ESRCH/EPERM from `process.kill`; it never returns a boolean failure
+                    // (the boolean is `child.kill`, which is a separate JS wrapper).
+                    let error = std::io::Error::last_os_error();
+                    Err(throw_node_error_value(
+                        &ctx,
+                        &NodeError::system(&error, "kill", std::path::Path::new("")),
+                    ))
+                },
+            )?,
+        )?;
+    }
 
     host.set(
         "cpuUsage",

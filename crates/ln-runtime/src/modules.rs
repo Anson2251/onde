@@ -12,14 +12,17 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ln_engine::{js, Engine};
+use ln_error::NodeError;
 use ln_modules::url as file_url;
 use ln_modules::{Format, Kind, Resolution, Resolver};
+use ln_perm::{Capability, Request};
 
-use crate::host_error::throw_node_error;
+use crate::host_error::{throw_node_error, throw_node_error_value};
 
 /// The embedded JavaScript sources.
 ///
@@ -128,6 +131,8 @@ pub(crate) struct ModuleRuntime {
     resolved: RefCell<HashMap<String, Resolution>>,
     /// Set when the process was linked with a payload: modules come from here, never from disk.
     payload: RefCell<Option<Rc<PayloadImage>>>,
+    /// The policy the `Data` read class checks against (ADR-0011 §5.4.1).
+    permit: ln_io::Permit,
 }
 
 /// A payload, parsed and checked against the linked engine.
@@ -144,12 +149,18 @@ pub(crate) enum PayloadFailure {
 }
 
 impl ModuleRuntime {
-    pub fn new(cwd: impl Into<PathBuf>) -> Rc<Self> {
+    pub fn new(cwd: impl Into<PathBuf>, permit: ln_io::Permit) -> Rc<Self> {
         Rc::new(ModuleRuntime {
             resolver: Resolver::new(cwd),
             resolved: RefCell::new(HashMap::new()),
             payload: RefCell::new(None),
+            permit,
         })
+    }
+
+    /// The isolate's policy, for the read chokepoint.
+    pub(crate) fn permit(&self) -> &ln_io::Permit {
+        &self.permit
     }
 
     /// Switch this runtime into compiled mode: modules come from `bytes`, never from disk.
@@ -291,9 +302,9 @@ impl js::loader::Loader for EsmLoader {
             return match resolution {
                 Resolution::Builtin(builtin) => load_builtin(ctx, name, builtin),
                 Resolution::File { path, format } => match format {
-                    Format::CommonJs => load_cjs_facade(ctx, name, &path),
-                    Format::Json => load_json_module(ctx, name, &path),
-                    Format::Module => load_esm_module(ctx, name, &path),
+                    Format::CommonJs => load_cjs_facade(ctx, name, &path, self.state.permit()),
+                    Format::Json => load_json_module(ctx, name, &path, self.state.permit()),
+                    Format::Module => load_esm_module(ctx, name, &path, self.state.permit()),
                     Format::Native => Err(throw_node_error(
                         ctx,
                         "ERR_DLOPEN_FAILED",
@@ -314,7 +325,7 @@ impl js::loader::Loader for EsmLoader {
         }
         let path = file_url::file_url_to_path(name)
             .map_err(|message| throw_node_error(ctx, "ERR_INVALID_FILE_URL_PATH", &message))?;
-        load_esm_module(ctx, name, &path)
+        load_esm_module(ctx, name, &path, self.state.permit())
     }
 }
 
@@ -566,8 +577,9 @@ fn load_cjs_facade<'js>(
     ctx: &js::Ctx<'js>,
     canonical: &str,
     path: &Path,
+    permit: &ln_io::Permit,
 ) -> js::Result<js::Module<'js, js::module::Declared>> {
-    let source = read_source(ctx, path)?;
+    let source = read_source(ctx, path, Class::Source, permit)?;
     let mut lines = String::new();
     for name in ln_modules::scan_named_exports(&source) {
         lines.push_str(&format!("export const {name} = ns.{name};\n"));
@@ -587,9 +599,10 @@ fn load_json_module<'js>(
     ctx: &js::Ctx<'js>,
     canonical: &str,
     path: &Path,
+    permit: &ln_io::Permit,
 ) -> js::Result<js::Module<'js, js::module::Declared>> {
     // Node's JSON loader tolerates a UTF-8 BOM; `JSON.parse` does not.
-    let text = read_source(ctx, path)?;
+    let text = read_source(ctx, path, Class::Data, permit)?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let literal = js_string_literal(text);
     let source = format!("const data = JSON.parse({literal});\nexport default data;\n");
@@ -602,8 +615,9 @@ fn load_esm_module<'js>(
     ctx: &js::Ctx<'js>,
     canonical: &str,
     path: &Path,
+    permit: &ln_io::Permit,
 ) -> js::Result<js::Module<'js, js::module::Declared>> {
-    let source = read_source(ctx, path)?;
+    let source = read_source(ctx, path, Class::Source, permit)?;
     let module = js::Module::declare(ctx.clone(), canonical, source)?;
     meta(ctx, &module, canonical, Some(path))?;
     Ok(module)
@@ -629,15 +643,76 @@ fn meta<'js>(
     Ok(())
 }
 
-fn read_source<'js>(ctx: &js::Ctx<'js>, path: &Path) -> js::Result<String> {
-    fs::read_to_string(path).map_err(|error| {
-        let code = crate::host_error::io_error_code(&error);
-        throw_node_error(
-            ctx,
-            code,
-            &crate::host_error::io_error_message(code, "open", path, &error),
-        )
-    })
+/// How a read is classified (ADR-0011 §5.4.1).
+///
+/// `Source` is code the interpreter must load — CJS, ESM, builtins, the entry — and is exempt from
+/// `fs.read` because the result is executed, not returned. `Data` is returned to the program (JSON
+/// and other data modules) and requires the grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Class {
+    Source,
+    Data,
+}
+
+/// The only place the runtime reads a file outside an `Op`.
+///
+/// `Source` reads the path as given (the entry may legitimately be a symlink). `Data` resolves the
+/// path first, checks `fs.read` against the resolved path, and opens *that* path with `O_NOFOLLOW`,
+/// so what was checked is what is read.
+pub(crate) fn read_class(
+    path: &Path,
+    class: Class,
+    permit: &ln_io::Permit,
+) -> Result<String, NodeError> {
+    let target = match class {
+        Class::Source => path.to_path_buf(),
+        Class::Data => {
+            let resolved = fs::canonicalize(path).map_err(|error| read_error(&error, path))?;
+            permit.check(&Request::Path {
+                capability: Capability::FsRead,
+                resolved: &resolved,
+            })?;
+            resolved
+        }
+    };
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if class == Class::Data {
+            // The check above validated this exact resolved path; O_NOFOLLOW stops the final
+            // component from becoming a symlink between the check and the open.
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+    }
+    let mut file = options
+        .open(&target)
+        .map_err(|error| read_error(&error, &target))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|error| read_error(&error, &target))?;
+    Ok(text)
+}
+
+fn read_error(error: &std::io::Error, path: &Path) -> NodeError {
+    match error.raw_os_error() {
+        Some(errno) => NodeError::from_errno(errno, "open", Some(path)),
+        // A non-UTF-8 module is Node's `EINVAL` reading, not an unknown OS failure.
+        None => NodeError::new(
+            "EINVAL",
+            format!("EINVAL: invalid UTF-8, open '{}'", path.display()),
+        ),
+    }
+}
+
+fn read_source<'js>(
+    ctx: &js::Ctx<'js>,
+    path: &Path,
+    class: Class,
+    permit: &ln_io::Permit,
+) -> js::Result<String> {
+    read_class(path, class, permit).map_err(|error| throw_node_error_value(ctx, &error))
 }
 
 fn call_global<'js, A, R>(ctx: &js::Ctx<'js>, name: &str, args: A) -> js::Result<R>
@@ -714,6 +789,28 @@ mod tests {
         assert!(message.contains("not enabled in this build"));
         assert!(message.contains("--features node-sqlite"));
         assert!(message.contains("--no-default-features"));
+    }
+
+    #[test]
+    fn data_reads_are_gated_and_source_reads_are_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let data = dir.path().join("secret.json");
+        std::fs::write(&data, "{}").expect("write");
+        let source = dir.path().join("module.js");
+        std::fs::write(&source, "module.exports = 1;").expect("write");
+
+        let denied = ln_io::Permit::new(ln_perm::Policy::deny_all());
+        let error = read_class(&data, Class::Data, &denied).expect_err("denied");
+        assert_eq!(error.code, "ERR_ACCESS_DENIED");
+        assert!(read_class(&source, Class::Source, &denied).is_ok());
+
+        let allowed = ln_io::Permit::new(ln_perm::Policy::any());
+        assert!(read_class(&data, Class::Data, &allowed).is_ok());
+
+        // A missing file is ENOENT, not a denial: the check runs after resolution.
+        let missing = dir.path().join("missing.json");
+        let error = read_class(&missing, Class::Data, &denied).expect_err("missing");
+        assert_eq!(error.code, "ENOENT");
     }
 
     #[test]

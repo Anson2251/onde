@@ -233,7 +233,12 @@ impl ProcBridge {
             let pool = self.ops.pool()?;
             let ids = self.ids.clone();
             let source: ln_io::proc::ChildIdSource = Arc::new(move || ids.allocate());
-            Ok(ChildService::new(pool, self.sink.clone(), source))
+            Ok(ChildService::new(
+                pool,
+                self.sink.clone(),
+                source,
+                self.ops.permit().clone(),
+            ))
         });
         result.as_ref().map_err(|error| error.clone())
     }

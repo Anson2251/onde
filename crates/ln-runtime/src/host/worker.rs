@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use ln_engine::{detach_buffer, js, serialize, Serialized};
 use ln_error::NodeError;
+use ln_perm::{Capability, Request};
 
 use super::{collect_args, HostState};
 use crate::args;
@@ -31,6 +32,7 @@ pub(super) fn install<'js>(
 
     let bridge = state.workers.clone();
     let role = state.worker.clone();
+    let permit = state.permit.clone();
     host.set(
         "worker",
         js::Function::new(
@@ -48,6 +50,11 @@ pub(super) fn install<'js>(
 
                 match name.as_str() {
                     "spawn" => {
+                        permit
+                            .check(&Request::Toggle {
+                                capability: Capability::WorkerSpawn,
+                            })
+                            .map_err(|error| throw_node_error_value(&ctx, &error))?;
                         let (entry, worker_data, argv, transfers, memory_limit) =
                             spawn_arguments(&ctx, &arguments)
                                 .map_err(|error| throw_node_error_value(&ctx, &error))?;

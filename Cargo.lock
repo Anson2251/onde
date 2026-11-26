@@ -1087,6 +1087,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_comments"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dbbfed4e59ba9750e15ba154fdfd9329cee16ff3df539c2666b70f58cc32105"
+
+[[package]]
 name = "lazy-regex"
 version = "3.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,6 +1170,7 @@ name = "ln-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "ln-perm",
  "ln-runtime",
 ]
 
@@ -1222,6 +1229,7 @@ dependencies = [
  "libc",
  "ln-error",
  "ln-http",
+ "ln-perm",
  "rustls",
  "rustls-pemfile",
  "socket2",
@@ -1246,6 +1254,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ln-perm"
+version = "0.1.0"
+dependencies = [
+ "json_comments",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ln-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1258,6 +1276,7 @@ dependencies = [
  "ln-io",
  "ln-modules",
  "ln-payload",
+ "ln-perm",
  "ln-sched",
  "ln-sqlite",
  "ln-zlib",
@@ -1268,6 +1287,7 @@ dependencies = [
  "oxc_parser 0.48.2",
  "oxc_span 0.48.2",
  "serde_json",
+ "tempfile",
  "zstd",
 ]
 

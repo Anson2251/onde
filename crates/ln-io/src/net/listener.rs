@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ln_error::NodeError;
+use ln_perm::{Capability, Request};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::{lookup_host, TcpListener, UnixListener};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -30,6 +31,7 @@ use crate::dns::{not_found, resolve_error};
 use super::tls::{self, ServerTls};
 use super::transport::Transport;
 use super::{Addr, Command, Event, HandleId, ListenOptions, ListenTarget};
+use crate::{perm, Permit};
 
 /// How long the accept loop sleeps after `EMFILE`/`ENFILE` before trying again. Long enough not to
 /// spin on a full fd table (m4-plan §4), short enough that a freed fd is picked up promptly.
@@ -95,7 +97,7 @@ pub(crate) async fn run(
         }
     };
 
-    let bound = match bind(&target).await {
+    let bound = match bind(&target, shared.permit()).await {
         Ok(bound) => bound,
         Err(error) => {
             // A listen failure is an event on the server, never a throw (m4-plan §4).
@@ -241,18 +243,30 @@ fn tls_config(target: &ListenTarget) -> Result<Option<ServerTls>, NodeError> {
     }
 }
 
-async fn bind(target: &ListenTarget) -> Result<Bound, NodeError> {
+async fn bind(target: &ListenTarget, permit: &Permit) -> Result<Bound, NodeError> {
     match target {
         ListenTarget::Tcp {
             host,
             port,
             options,
-        } => bind_tcp(host, *port, options).await,
+        } => bind_tcp(host, *port, options, permit).await,
         ListenTarget::Unix { path, options } => {
             // `ipv6Only`/`exclusive`/`backlog` have no meaning on a Unix socket; Node ignores them.
             let _ = options;
-            let listener = std::os::unix::net::UnixListener::bind(path)
-                .map_err(|error| from_io_at(&error, "listen", path))?;
+            // With no policy the path is used as given (Node's behaviour and the reported
+            // `path`); under enforcement it is resolved and checked first.
+            let resolved = if permit.enforced() {
+                let resolved = perm::resolve_create(path, "listen")?;
+                permit.check(&Request::Unix {
+                    capability: Capability::NetListen,
+                    resolved: &resolved,
+                })?;
+                resolved
+            } else {
+                path.clone()
+            };
+            let listener = std::os::unix::net::UnixListener::bind(&resolved)
+                .map_err(|error| from_io_at(&error, "listen", &resolved))?;
             listener
                 .set_nonblocking(true)
                 .map_err(|error| from_io(&error, "listen"))?;
@@ -260,14 +274,25 @@ async fn bind(target: &ListenTarget) -> Result<Bound, NodeError> {
                 UnixListener::from_std(listener).map_err(|error| from_io(&error, "listen"))?;
             Ok(Bound::Unix {
                 listener,
-                path: path.clone(),
+                path: resolved,
             })
         }
     }
 }
 
-async fn bind_tcp(host: &str, port: u16, options: &ListenOptions) -> Result<Bound, NodeError> {
+async fn bind_tcp(
+    host: &str,
+    port: u16,
+    options: &ListenOptions,
+    permit: &Permit,
+) -> Result<Bound, NodeError> {
+    if permit.enforced() && !host.is_empty() && host.parse::<std::net::IpAddr>().is_err() {
+        permit.check(&Request::Host { host })?;
+    }
     let candidates = listen_addresses(host, port, options).await?;
+    let host_name = if host.is_empty() { None } else { Some(host) };
+    let candidates =
+        perm::allowed_endpoints(permit, Capability::NetListen, host_name, port, candidates)?;
     let mut last_error = None;
     for address in candidates {
         match bind_tcp_socket(address, options) {

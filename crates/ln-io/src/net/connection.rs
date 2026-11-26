@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use ln_error::NodeError;
 use ln_http::{Conn, Event as HttpEvent, ProtocolError, Role};
+use ln_perm::{Capability, Request};
 use tokio::net::{lookup_host, TcpSocket, TcpStream, UnixStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -29,6 +30,7 @@ use super::error::{from_io, from_io_at, from_io_detail};
 use super::registry::Shared;
 // The resolver errors moved with `dns.lookup`, which is an op and no longer lives under `net`.
 use crate::dns::{not_found, resolve_error};
+use crate::{perm, Permit};
 // TLS is rustls-only: without the feature there is no handshake to perform or name.
 #[cfg(feature = "tls")]
 use super::tls::{self, ServerTls};
@@ -143,7 +145,7 @@ impl Connection {
         target: ConnectTarget,
         commands: UnboundedReceiver<Command>,
     ) {
-        match establish(&target).await {
+        match establish(&target, shared.permit()).await {
             Ok(established) => {
                 shared.emit(
                     id,
@@ -875,14 +877,14 @@ struct Established {
 }
 
 /// Resolve, connect and, when the options ask for it, hand the TCP socket to rustls.
-async fn establish(target: &ConnectTarget) -> Result<Established, NodeError> {
+async fn establish(target: &ConnectTarget, permit: &Permit) -> Result<Established, NodeError> {
     match target {
         ConnectTarget::Tcp {
             host,
             port,
             options,
         } => {
-            let (stream, local, remote) = connect_tcp(host, *port, options).await?;
+            let (stream, local, remote) = connect_tcp(host, *port, options, permit).await?;
             // Without the `tls` feature `ConnectOptions` has no `tls` field, and JS cannot ask
             // for TLS without `node:tls`, so every connect is plaintext.
             #[cfg(feature = "tls")]
@@ -915,7 +917,17 @@ async fn establish(target: &ConnectTarget) -> Result<Established, NodeError> {
                     "TLS over a Unix socket is not supported",
                 ));
             }
-            let (stream, local, remote) = connect_unix(path, options).await?;
+            let resolved = if permit.enforced() {
+                let resolved = perm::resolve_read(path, "connect", true)?;
+                permit.check(&Request::Unix {
+                    capability: Capability::NetConnect,
+                    resolved: &resolved,
+                })?;
+                resolved
+            } else {
+                path.clone()
+            };
+            let (stream, local, remote) = connect_unix(&resolved, options).await?;
             Ok(Established {
                 transport: Transport::Unix(stream),
                 local,
@@ -931,8 +943,17 @@ async fn connect_tcp(
     host: &str,
     port: u16,
     options: &ConnectOptions,
+    permit: &Permit,
 ) -> Result<(TcpStream, Addr, Addr), NodeError> {
+    // `net.resolve` before the resolver: a name is authority the policy must grant (a connect or
+    // listen grant for that name implies it). Doing this after resolution would let a deny-all
+    // policy still issue the DNS query (ADR-0011 §5.4 row 6, D7 in the plan).
+    if permit.enforced() && host.parse::<std::net::IpAddr>().is_err() {
+        permit.check(&Request::Host { host })?;
+    }
     let addresses = resolve_connect(host, port, options.family).await?;
+    let addresses =
+        perm::allowed_endpoints(permit, Capability::NetConnect, Some(host), port, addresses)?;
     let mut last_error = None;
     for address in addresses {
         match connect_one(address, options).await {

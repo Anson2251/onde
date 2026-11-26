@@ -11,6 +11,9 @@ payload that shares M7's emitter and stamp.
 Status: **accepted 2026-11-24. WP0 has not started.** §12 stays empty until the milestone closes,
 the way §12 of the M5 and M6 plans was written afterwards.
 
+> Written before permissions was inserted as M8 (2026-11-25). Where this plan says "M8" it means
+the hardening milestone now numbered M9; the work it defers there is unchanged.
+
 M7 is the first milestone whose work is mostly *not* new surface. Nothing here adds a module or a
 semantic; the milestone exists because three numbers miss their targets and because the runtime
 cannot yet answer "where did the time go". The three numbers, all measured before M7

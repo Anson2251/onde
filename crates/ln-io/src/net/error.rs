@@ -94,6 +94,7 @@ pub(crate) fn from_errno(
         syscall: Some(syscall),
         path: path.map(Path::to_path_buf),
         errno: Some(errno),
+        denial: None,
         cause: None,
     }
 }

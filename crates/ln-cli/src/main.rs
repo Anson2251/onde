@@ -10,9 +10,10 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
+use ln_perm::{GrantArgs, Policy};
 use ln_runtime::{Budget, Config, DiagnosticsConfig, Failure, Isolate};
 
 #[derive(Debug, Parser)]
@@ -80,6 +81,50 @@ struct Cli {
     #[arg(long = "test")]
     test: bool,
 
+    /// Opt into the permission model: deny-all unless a policy file or --allow-* flags follow
+    #[arg(long = "permission")]
+    permission: bool,
+
+    /// A reviewed policy file (JSON with // and /* */ comments); mutually exclusive with --allow-*
+    #[arg(long = "permission-file", value_name = "FILE")]
+    permission_file: Option<PathBuf>,
+
+    /// Grant read access to a path prefix (repeatable)
+    #[arg(long = "allow-fs-read", value_name = "PATH")]
+    allow_fs_read: Vec<String>,
+
+    /// Grant write access to a path prefix (repeatable)
+    #[arg(long = "allow-fs-write", value_name = "PATH")]
+    allow_fs_write: Vec<String>,
+
+    /// Grant outbound connections to HOST, HOST:PORT, an address, or a Unix socket path
+    #[arg(long = "allow-net-connect", value_name = "ENDPOINT")]
+    allow_net_connect: Vec<String>,
+
+    /// Grant listening on HOST:PORT or :PORT (repeatable)
+    #[arg(long = "allow-net-listen", value_name = "ENDPOINT")]
+    allow_net_listen: Vec<String>,
+
+    /// Grant name resolution for HOST (repeatable)
+    #[arg(long = "allow-net-resolve", value_name = "HOST")]
+    allow_net_resolve: Vec<String>,
+
+    /// Grant spawning an executable, by bare name or by resolved path (repeatable)
+    #[arg(long = "allow-child-process", value_name = "COMMAND")]
+    allow_child_process: Vec<String>,
+
+    /// Grant reading an environment variable by name (repeatable)
+    #[arg(long = "allow-env", value_name = "NAME")]
+    allow_env: Vec<String>,
+
+    /// Grant spawning worker threads
+    #[arg(long = "allow-worker")]
+    allow_worker: bool,
+
+    /// Grant loading native code (sqlite extensions today, process.dlopen in M10)
+    #[arg(long = "allow-ffi")]
+    allow_ffi: bool,
+
     /// Arguments exposed through process.argv after the script name
     #[arg(
         value_name = "ARGS",
@@ -110,6 +155,58 @@ impl Cli {
             .map(|mb| mb.saturating_mul(1024 * 1024))
     }
 
+    /// Build the permission policy from the two grant channels, or `None` when the model is off.
+    ///
+    /// The file and the flags are mutually exclusive because both come from the caller and a
+    /// union lets a wrapper widen a reviewed file by appending an argument (ADR-0011 §4.3).
+    fn permissions(&self) -> Result<Option<Policy>, String> {
+        let any_flag = !self.allow_fs_read.is_empty()
+            || !self.allow_fs_write.is_empty()
+            || !self.allow_net_connect.is_empty()
+            || !self.allow_net_listen.is_empty()
+            || !self.allow_net_resolve.is_empty()
+            || !self.allow_child_process.is_empty()
+            || !self.allow_env.is_empty()
+            || self.allow_worker
+            || self.allow_ffi;
+
+        if !self.permission {
+            if self.permission_file.is_some() || any_flag {
+                return Err(
+                    "--permission is required with --permission-file or --allow-*".to_owned(),
+                );
+            }
+            return Ok(None);
+        }
+
+        if let Some(file) = &self.permission_file {
+            if any_flag {
+                return Err(
+                    "--permission-file and --allow-* cannot be combined; use one grant channel"
+                        .to_owned(),
+                );
+            }
+            return Policy::from_file(file)
+                .map(Some)
+                .map_err(|error| format!("permissions: {error}"));
+        }
+
+        let cwd = env::current_dir().map_err(|error| format!("cannot read the cwd: {error}"))?;
+        let mut args = GrantArgs::new(cwd);
+        args.fs_read = self.allow_fs_read.clone();
+        args.fs_write = self.allow_fs_write.clone();
+        args.net_connect = self.allow_net_connect.clone();
+        args.net_listen = self.allow_net_listen.clone();
+        args.net_resolve = self.allow_net_resolve.clone();
+        args.child_spawn = self.allow_child_process.clone();
+        args.env_read = self.allow_env.clone();
+        args.worker = self.allow_worker;
+        args.ffi = self.allow_ffi;
+        Policy::from_args(&args)
+            .map(Some)
+            .map_err(|error| format!("permissions: {error}"))
+    }
+
     /// What the three diagnostic flags asked for; all-empty when none was passed.
     fn diagnostics(&self) -> DiagnosticsConfig {
         DiagnosticsConfig {
@@ -117,6 +214,8 @@ impl Cli {
             trace_buffer_mb: self.trace_buffer_mb.clamp(1, 512),
             timing: self.timing,
             trace_gc: self.trace_gc,
+            // Filled in by `real_main` after the policy is parsed.
+            setup_micros: None,
         }
     }
 }
@@ -136,7 +235,7 @@ fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
     /// Options that consume the next token, so the token after them is not the script path.
     /// Every value-taking flag must be listed: a missing one makes its value look like the script,
     /// and the terminator is inserted before it (which is how `--trace-events FILE` first failed).
-    const VALUED: [&str; 8] = [
+    const VALUED: [&str; 16] = [
         "-e",
         "--eval",
         "--max-microtasks",
@@ -145,6 +244,14 @@ fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
         "--max-old-space-size",
         "--trace-events",
         "--trace-buffer-mb",
+        "--permission-file",
+        "--allow-fs-read",
+        "--allow-fs-write",
+        "--allow-net-connect",
+        "--allow-net-listen",
+        "--allow-net-resolve",
+        "--allow-child-process",
+        "--allow-env",
     ];
 
     let mut argv = argv;
@@ -171,6 +278,17 @@ fn with_script_terminator(argv: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStri
     argv
 }
 
+/// The isolate knobs the entry points share. One struct so the file, eval and test entry points do
+/// not grow a parameter per flag.
+struct RunOptions {
+    budget: Budget,
+    io_threads: usize,
+    async_stack_traces: bool,
+    max_old_space_size: Option<u64>,
+    diagnostics: DiagnosticsConfig,
+    permissions: Option<Policy>,
+}
+
 fn real_main() -> i32 {
     let cli = match Cli::try_parse_from(with_script_terminator(env::args_os().collect())) {
         Ok(cli) => cli,
@@ -181,18 +299,34 @@ fn real_main() -> i32 {
     let io_threads = cli.io_threads();
     let async_stack_traces = cli.async_stack_traces;
     let max_old_space_size = cli.max_old_space_size();
-    let diagnostics = cli.diagnostics();
+    let mut diagnostics = cli.diagnostics();
+    let permissions_start = Instant::now();
+    let permissions = match cli.permissions() {
+        Ok(permissions) => permissions,
+        Err(message) => {
+            eprintln!("onde: {message}");
+            return 1;
+        }
+    };
+    if permissions.is_some() {
+        diagnostics.setup_micros = Some(
+            permissions_start
+                .elapsed()
+                .as_micros()
+                .min(u128::from(u64::MAX)) as u64,
+        );
+    }
+    let options = RunOptions {
+        budget,
+        io_threads,
+        async_stack_traces,
+        max_old_space_size,
+        diagnostics,
+        permissions,
+    };
 
     if cli.test {
-        return run_tests(
-            &cli,
-            &exe,
-            budget,
-            io_threads,
-            async_stack_traces,
-            max_old_space_size,
-            diagnostics.clone(),
-        );
+        return run_tests(&cli, &exe, &options);
     }
 
     if let Some(expression) = cli.eval {
@@ -203,15 +337,7 @@ fn real_main() -> i32 {
             argv.push(file.display().to_string());
         }
         argv.extend(cli.args);
-        return run_eval(
-            &expression,
-            argv,
-            budget,
-            io_threads,
-            async_stack_traces,
-            max_old_space_size,
-            diagnostics.clone(),
-        );
+        return run_eval(&expression, argv, &options);
     }
 
     let Some(file) = cli.file else {
@@ -237,11 +363,12 @@ fn real_main() -> i32 {
     let mut argv = vec![exe, filename];
     argv.extend(cli.args);
     let mut config = Config::new(argv);
-    config.budget = budget;
-    config.io_threads = io_threads;
-    config.async_stack_traces = async_stack_traces;
-    config.max_old_space_size = max_old_space_size;
-    config.diagnostics = diagnostics;
+    config.inheritable.budget = options.budget;
+    config.inheritable.io_threads = options.io_threads;
+    config.async_stack_traces = options.async_stack_traces;
+    config.inheritable.max_old_space_size = options.max_old_space_size;
+    config.inheritable.permissions = options.permissions.clone();
+    config.diagnostics = options.diagnostics.clone();
     let mut isolate = match Isolate::new(config) {
         Ok(isolate) => isolate,
         Err(failure) => return report_failure(failure),
@@ -266,15 +393,7 @@ fn real_main() -> i32 {
 /// already carry every path: with the `--` terminator in place, the first path lands in `file` and
 /// the rest in `args`, so `--test` does not need its own `Vec<PathBuf>` and the CLI keeps its
 /// single-script shape.
-fn run_tests(
-    cli: &Cli,
-    exe: &str,
-    budget: Budget,
-    io_threads: usize,
-    async_stack_traces: bool,
-    max_old_space_size: Option<u64>,
-    diagnostics: DiagnosticsConfig,
-) -> i32 {
+fn run_tests(cli: &Cli, exe: &str, options: &RunOptions) -> i32 {
     if cli.eval.is_some() {
         eprintln!("onde: --test cannot be combined with -e EXPR");
         return 1;
@@ -310,11 +429,12 @@ fn run_tests(
     argv.extend(paths.iter().cloned());
 
     let mut config = Config::new(argv);
-    config.budget = budget;
-    config.io_threads = io_threads;
-    config.async_stack_traces = async_stack_traces;
-    config.max_old_space_size = max_old_space_size;
-    config.diagnostics = diagnostics;
+    config.inheritable.budget = options.budget;
+    config.inheritable.io_threads = options.io_threads;
+    config.async_stack_traces = options.async_stack_traces;
+    config.inheritable.max_old_space_size = options.max_old_space_size;
+    config.inheritable.permissions = options.permissions.clone();
+    config.diagnostics = options.diagnostics.clone();
     config.test_files = Some(paths);
 
     let mut isolate = match Isolate::new(config) {
@@ -402,21 +522,14 @@ fn is_test_file_name(path: &Path) -> bool {
         .is_some_and(|name| name.ends_with(".test.js"))
 }
 
-fn run_eval(
-    expression: &str,
-    argv: Vec<String>,
-    budget: Budget,
-    io_threads: usize,
-    async_stack_traces: bool,
-    max_old_space_size: Option<u64>,
-    diagnostics: DiagnosticsConfig,
-) -> i32 {
+fn run_eval(expression: &str, argv: Vec<String>, options: &RunOptions) -> i32 {
     let mut config = Config::new(argv);
-    config.budget = budget;
-    config.io_threads = io_threads;
-    config.async_stack_traces = async_stack_traces;
-    config.max_old_space_size = max_old_space_size;
-    config.diagnostics = diagnostics;
+    config.inheritable.budget = options.budget;
+    config.inheritable.io_threads = options.io_threads;
+    config.async_stack_traces = options.async_stack_traces;
+    config.inheritable.max_old_space_size = options.max_old_space_size;
+    config.inheritable.permissions = options.permissions.clone();
+    config.diagnostics = options.diagnostics.clone();
     // Node's `-e` evaluates as CommonJS with `require` in scope; keep the completion-value
     // printing, which is onde's documented convenience.
     config.expose_require = true;

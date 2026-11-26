@@ -68,18 +68,10 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `chdir` | `(path: string) => void` | throws a Node-shaped error with `code` |
 | `hrtimeNs` | `() => bigint` | monotonic |
 | `memoryUsage` | `() => { rss, heapTotal, heapUsed, external, arrayBuffers }` | bytes; cached between JS calls (the engine cannot re-enter itself) |
+| `builtinUnavailable` | `(name) => string \| null` | why a builtin compiled out of this build cannot load; `constants.js` asks before requiring the optional `crypto` module |
 | `osInfo` | `() => { platform, arch, type, release, endianness, homedir, tmpdir, hostname, shell, username, uid, gid, cpus, totalmem, freemem, uptime }` | `cpus` is a count |
 | `isTTY` | `(fd: 0 \| 1 \| 2) => boolean` | |
 | `columns` | `(fd: 0 \| 1 \| 2) => number` | 0 when not a TTY |
-| `resolve` | `(specifier, fromFile, kind) => Resolved` | `kind` is `"require"` or `"import"`; throws Node-shaped errors |
-| `readFile` | `(path) => string` | UTF-8; throws Node-shaped errors |
-| `realpath` | `(path) => string` | |
-| `statKind` | `(path) => "file" \| "dir" \| "other" \| null` | `null` when missing |
-| `builtinSource` | `(name) => string \| null` | embedded stdlib source, including `internal/*` modules |
-| `builtinNames` | `() => string[]` | |
-| `evalCjs` | `(filename, source, exports, require, module, dirname) => void` | compiles the CJS wrapper with the real filename (stack traces) and calls it with `this === exports` |
-| `cjsNamespace` | `(path) => any` | load a CJS file and return `module.exports` (ESM interop) |
-| `builtinExports` | `(name) => any` | load a builtin and return its exports (ESM interop) |
 | `detachBuffer` | `(buffer) => void` | `JS_DetachArrayBuffer`, for `transferList` |
 | `workers` | registry object | `register(id, sink)` / `release(id)`, filled by `bootstrap.js` |
 | `workerInfo` | `null \| { id, threadId, workerData }` | `null` on the main isolate; workerData is deserialized on the worker thread |
@@ -98,16 +90,40 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `buffer.decodeHex` | `(text) => Uint8Array` | fresh array; stops at the first non-hex pair and drops an odd trailing digit |
 | `text.decodeStream` | `(data, start, end, pending, fatal) => { text, pending } \| null` | UTF-8 streaming split for `StringDecoder`; `null` means the prefix was invalid under `fatal` |
 | `sqlite` | object of primitives | `node:sqlite` handles: `open`, `close`, `exec`, `prepare`, `finalize`, `bind`, `run`, `all`, `first`, `begin`, `next`, `finish`, `columns`, `stat`, `resetStats`, `sourceSQL`, `expandedSQL`, `isOpen`, `isTransaction`, `location`, `serialize`, `deserialize`, `limit`, `setLimit`, `enableDefensive`, `backupInit`/`backupStep`/`backupFinish`, `version`, and the callback/session/extension entry points (`createFunction`, `createAggregate`, `setAuthorizer`, `createSession`, `sessionChangeset`, `sessionPatchset`, `sessionClose`, `applyChangeset`, `createModule`, `enableLoadExtension`, `loadExtension`); installed only when the `node-sqlite` feature is on |
-| `nodeOnlyBuiltins` | `() => string[]` | builtin names reachable only as `node:<name>` (`sqlite`), so `isBuiltin` and `builtinModules` match Node |
-| `builtinUnavailable` | `(name: string) => string \| null` | why a builtin compiled out of this build (any of `node-net`, `node-tls`, `node-crypto`, `node-sqlite`, `node-zlib` off) cannot load; the loader turns it into a readable `ERR_UNKNOWN_BUILTIN_MODULE` |
 
 `buffer` and `text` are nested members (`__ln_host.buffer.*`, `__ln_host.text.*`), installed only
 when the runtime provides the native codec; `internal/bytes.js` and `textcodec.js` fall back to
 their JavaScript loops when they are absent (the Node oracle does exactly that).
 
+## Privileged loader contract (`globalThis.__ln_loader`)
+
+The loader's file reads and compilation primitives are **not** on `__ln_host`. `ln-runtime` installs
+a second global, `__ln_loader`, before the bootstrap; `bootstrap.js` captures it, freezes
+`__ln_host`, evaluates `internal/loader`, calls `install(privileged)`, and then deletes the global.
+A user script cannot reach it, so a confined run cannot read a file around the policy through
+`__ln_host` (ADR-0011 §5.4.1). The object is internal, like `__ln_host`.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `readSource` | `(path) => string` | module code, the entry, CJS/ESM/builtins; no grant |
+| `readData` | `(path) => string` | JSON and other data modules; requires `fs.read` at the resolved path |
+| `platform` | `"darwin" \| "linux" \| "win32"` | the loader must know the separator before `path` loads |
+| `resolve` | `(specifier, fromFile, kind) => Resolved` | `kind` is `"require"` or `"import"`; throws Node-shaped errors |
+| `metaResolve` | `(specifier, base) => string` | `import.meta.resolve` |
+| `builtinSource` | `(name) => string \| null` | embedded stdlib source, including `internal/*` modules |
+| `builtinNames` | `() => string[]` | |
+| `builtinUnavailable` | `(name) => string \| null` | why a builtin compiled out of this build cannot load |
+| `nodeOnlyBuiltins` | `() => string[]` | names reachable only as `node:<name>` (`sqlite`) |
+| `evalCjs` | `(filename, source, exports, require, module, dirname) => void` | compiles the CJS wrapper with the real filename and calls it with `this === exports` |
+
 `Resolved` is one of `{ type: "builtin", name }`, `{ type: "file", path }`,
 `{ type: "json", path }`, `{ type: "esm", path }`, `{ type: "addon", path }`. `"file"` always
 means CommonJS; `"esm"` is what makes `require()` throw `ERR_REQUIRE_ESM`.
+
+The loader also installs non-enumerable `__ln_*` globals (`__ln_cjs_namespace`,
+`__ln_builtin_exports`, `__ln_builtin_export_names`, `__ln_meta_resolve`, `__ln_run_cjs`,
+`__ln_format_result`, `__ln_expose_require`). They are loader plumbing and load only `Source`-class
+modules; the permission inventory classifies them, and none of them returns a data file.
 
 Internal modules (not part of the public builtin list) are addressed as `internal/loader`,
 `internal/process`, `internal/globals`, `internal/textcodec`, `internal/net`, `internal/pipe` and

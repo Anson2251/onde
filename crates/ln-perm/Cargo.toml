@@ -1,0 +1,18 @@
+[package]
+name = "ln-perm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "The opt-in permission policy for onde: capabilities, allow-list rules and the matcher"
+publish = false
+
+[dependencies]
+# The policy file is JSON with // and /* */ comments. The stripper replaces comments with spaces,
+# so serde_json's line and column stay true for parse errors and for denial origins.
+json_comments = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

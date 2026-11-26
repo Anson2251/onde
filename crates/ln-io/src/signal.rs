@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn uncatchable_signals_are_rejected() {
-        let pool = Arc::new(Pool::new(1).expect("pool"));
+        let pool = Arc::new(Pool::new_unconfined(1).expect("pool"));
         let service = SignalService::new(pool, Arc::new(|_| {}));
         let error = service.subscribe(libc::SIGKILL).expect_err("SIGKILL");
         assert_eq!(error.code, "ERR_UNSUPPORTED_SIGNAL");

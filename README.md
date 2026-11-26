@@ -8,9 +8,9 @@ the plugin layer inside another tool. It speaks Node's module system (`require`,
 `dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and installs as a
 7.6 MB binary (3.7 MB with every optional module compiled out).
 
-Status: M0–M7 are done; M8, the 1.0 compatibility sweep, packaging and publish, is next.
+Status: M0–M8 are done; M9, the 1.0 compatibility sweep, packaging and publish, is next.
 
-Contents: [Quick start](#quick-start) · [Building](#building) ·
+Contents: [Quick start](#quick-start) · [Permissions](#permissions-opt-in) · [Building](#building) ·
 [What's in the box](#whats-in-the-box) · [Footprint](#footprint) ·
 [Performance](#performance) · [One executable](#one-executable) ·
 [Milestones](#milestones) · [Compatibility](#compatibility) · [Tuckbox](#tuckbox) ·
@@ -45,6 +45,85 @@ db.exec("CREATE TABLE t(v)");
 db.prepare("INSERT INTO t VALUES (?)").run("hello");
 console.log(db.prepare("SELECT v FROM t").get()); // [Object: null prototype] { v: 'hello' }
 ```
+
+## Permissions (opt-in)
+
+By default `onde` runs a script with the same authority as the user who started it, exactly like
+`node`. When the code is not fully trusted — a plugin, a downloaded build script, an extension
+inside another tool — `--permission` confines it to the files, hosts, programs and variables you
+name. `--permission` on its own denies everything; each grant opens one door.
+
+```sh
+# ad-hoc grants on the command line
+onde --permission \
+     --allow-fs-read=./data \
+     --allow-fs-write=./cache \
+     --allow-net-connect=api.example.com:443 \
+     --allow-env=PORT \
+     plugin.js
+
+# or a reviewed policy file
+onde --permission --permission-file=./permissions.json plugin.js
+```
+
+A policy file is JSON with comments, and relative paths resolve against the file's directory:
+
+```jsonc
+{
+  // plugin.js may read this project's data and its cache
+  "fs": {
+    "read":  ["./data", "/usr/share/zoneinfo"],
+    "write": ["./cache"]
+  },
+  "net": {
+    "connect": ["api.example.com:443"],
+    "listen":  [":8080"],
+    "resolve": ["api.example.com"]
+  },
+  "child_process": { "spawn": ["git"] },
+  "worker": { "spawn": true },
+  "env": { "read": ["PORT"] }
+}
+```
+
+The file and the `--allow-*` flags are mutually exclusive: a reviewed policy cannot be widened by a
+wrapper appending an argument. A policy file must be a regular file, no larger than 1 MiB, and not
+group- or world-writable; onde refuses to start rather than fall back to allow-all. The nine capabilities are `fs.read`, `fs.write`, `net.connect`,
+`net.listen`, `net.resolve`, `child.spawn`, `worker.spawn`, `env.read` and `ffi.load` (native-code
+loading, including SQLite extensions).
+
+A denied call throws an ordinary `Error` with `code: "ERR_ACCESS_DENIED"`, naming the capability,
+the resource and the rule that denied it:
+
+```text
+Error: fs.read is denied for '/etc/passwd' by ./permissions.json:4
+```
+
+Scripts that want to adapt can ask before trying:
+
+```js
+if (process.permission.has("fs.read", "/data/report.csv")) {
+  // read it
+}
+```
+
+### What it covers, and what it does not
+
+Covered: `fs` and JSON/data-module reads; TCP and Unix sockets and DNS; child processes and
+`process.kill`; worker threads; `process.env`; SQLite databases and native extensions.
+
+Not covered:
+
+- Once `child.spawn` is granted, the child process is not confined. That grant is arbitrary
+  execution; granting a shell or `exec` is the same authority.
+- Compiled single-file apps (`ondec`) cannot take a runtime policy yet.
+- This is not an OS sandbox. A symlink or a directory rename can still race a path check, so for
+  hostile code run it in a container or VM as well.
+- Worker threads inherit the policy and cannot widen it; nothing else inherits it.
+
+The full grammar, every flag and all limits are in
+[docs/permissions-plan.md](docs/permissions-plan.md); the decision record is
+[ADR-0011](docs/adr/0011-permissions.md).
 
 ## Building
 
@@ -97,7 +176,7 @@ the release cost of each flag; the numbers are in [Footprint](#footprint).
 | M6 async context | `async_hooks`, `AsyncLocalStorage`, `AsyncResource`, `--async-stack-traces` |
 | M7 diagnostics | bootstrap snapshot, `--trace-events`/`--timing`/`--trace-gc`, `--max-old-space-size`, `node:test` |
 | storage (after M7) | `sqlite`/`node:sqlite`: bundled SQLite 3.53.2, `Database`, `Statement`, `Session`/changesets, `SQLTagStore`, user-defined functions/aggregates, authorizer, virtual tables, extensions, `backup`, limits, serialize/deserialize |
-| next | compatibility sweep and packaging (M8) |
+| next | compatibility sweep and packaging (M9) |
 
 Per-module detail and all 77 deliberate divergences are in [docs/compat.md](docs/compat.md). The
 full inventory, repo layout and every harness are in [docs/internals.md](docs/internals.md).
@@ -258,6 +337,8 @@ The payload format, the cell matrix and the parts still open are in
   virtual tables and extension loading, over a bundled SQLite 3.53.2. The one Node surface left out
   is `diagnostics_channel`'s `'sqlite.db.query'` events.
   [docs/sqlite-plan.md](docs/sqlite-plan.md) has the contract and the gap.
+- M8 added an opt-in sandbox for code you do not fully trust, off unless `--permission` is asked
+  for. See [Permissions](#permissions-opt-in).
 - One measured gap is recorded rather than closed: HTTP throughput is 0.45x of Node in a single
   isolate. The tail and the single-isolate ceiling are 1.1 work; see [Performance](#performance)
   and [docs/m4-plan.md](docs/m4-plan.md) §8.
@@ -272,7 +353,8 @@ The payload format, the cell matrix and the parts still open are in
 | M5, done | `child_process`, `worker_threads` with shared memory and `Atomics`, `readline`, signals |
 | M6, done | `async_hooks`/`AsyncLocalStorage` on a host-owned job queue; the engine is vendored |
 | M7, done | bootstrap snapshot, diagnostics flags, heap limits, `node:test`, the idle-socket fix |
-| M8, next | compatibility sweep, packaging, publish (1.0) |
+| M8, done | opt-in sandbox ([Permissions](#permissions-opt-in)) |
+| M9 | compatibility sweep, packaging, publish (1.0) |
 
 Exit criteria and sequencing for every milestone are in [docs/roadmap.md](docs/roadmap.md).
 

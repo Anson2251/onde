@@ -12,12 +12,13 @@
 //! `INTEGER` → `number` unless the statement asked for BigInts.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ln_engine::js;
 use ln_engine::js::IntoJs;
 use ln_error::NodeError;
+use ln_perm::{Capability, Request};
 use ln_sqlite::{
     Backup, BackupStep, BindOptions, Database, Generation, Limit, OpenOptions, Params, SessionId,
     Stat, StmtId, Value,
@@ -395,6 +396,92 @@ fn read_options(options: &js::Object<'_>) -> js::Result<OpenOptions> {
     Ok(settings)
 }
 
+/// The database file's authority (ADR-0011 §5.3, §5.4 row 11).
+///
+/// Opening needs `fs.read` on the path, plus `fs.write` unless the open is `readOnly`. A write
+/// grant on the database implicitly covers exactly its three side files, so they are not checked
+/// against the policy; because SQLite opens them itself, a symlink beside the database is refused
+/// instead. `:memory:` has no path and is exempt.
+fn check_open(
+    ctx: &js::Ctx<'_>,
+    permit: &ln_io::Permit,
+    path: &str,
+    settings: &OpenOptions,
+) -> js::Result<Option<PathBuf>> {
+    if !permit.enforced() || path == ":memory:" || path.is_empty() {
+        return Ok(None);
+    }
+    if is_file_uri(path) {
+        // SQLite parses a `file:` URI itself, so the checked string and the opened string would
+        // differ. Under a policy the URI form is refused: a plain path is the only spelling whose
+        // resolution the gate can vouch for.
+        return Err(throw_node_error_value(
+            ctx,
+            &NodeError::access_denied(
+                if settings.read_only {
+                    "fs.read"
+                } else {
+                    "fs.write"
+                },
+                path.to_owned(),
+                "file: URIs are not supported under a policy",
+            ),
+        ));
+    }
+    let resolved = if settings.read_only {
+        permit.resolve_read(Path::new(path), "open")
+    } else {
+        permit.resolve_create(Path::new(path), "open")
+    }
+    .map_err(|error| throw_node_error_value(ctx, &error))?;
+    permit
+        .check(&Request::Path {
+            capability: Capability::FsRead,
+            resolved: &resolved,
+        })
+        .map_err(|error| throw_node_error_value(ctx, &error))?;
+    if !settings.read_only {
+        permit
+            .check(&Request::Path {
+                capability: Capability::FsWrite,
+                resolved: &resolved,
+            })
+            .map_err(|error| throw_node_error_value(ctx, &error))?;
+    }
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut side = resolved.as_os_str().to_os_string();
+        side.push(suffix);
+        let side = PathBuf::from(side);
+        if std::fs::symlink_metadata(&side)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(throw_node_error_value(
+                ctx,
+                &NodeError::access_denied(
+                    "fs.write",
+                    side.display().to_string(),
+                    "a symlink sits beside a granted database",
+                ),
+            ));
+        }
+    }
+    if settings.allow_extension {
+        permit
+            .check(&Request::Toggle {
+                capability: Capability::FfiLoad,
+            })
+            .map_err(|error| throw_node_error_value(ctx, &error))?;
+    }
+    Ok(Some(resolved))
+}
+
+/// SQLite's `file:` URI prefix, which `SQLITE_OPEN_URI` parses after the gate has seen the string.
+fn is_file_uri(path: &str) -> bool {
+    path.get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+}
+
 pub(super) fn install<'js>(
     ctx: &js::Ctx<'js>,
     host: &js::Object<'js>,
@@ -403,6 +490,7 @@ pub(super) fn install<'js>(
     let sqlite = js::Object::new(ctx.clone())?;
 
     {
+        let permit = state.permit.clone();
         let state = state.sqlite.clone();
         sqlite.set(
             "open",
@@ -413,7 +501,9 @@ pub(super) fn install<'js>(
                       options: js::Object<'js>|
                       -> js::Result<f64> {
                     let settings = read_options(&options)?;
-                    let database = Database::open(Path::new(&path), &settings)
+                    let resolved = check_open(&ctx, &permit, &path, &settings)?;
+                    let target = resolved.as_deref().unwrap_or_else(|| Path::new(&path));
+                    let database = Database::open(target, &settings)
                         .map_err(|error| throw_sqlite(&ctx, &error))?;
                     Ok(f64::from(state.add_connection(database)))
                 },
@@ -1001,6 +1091,7 @@ pub(super) fn install<'js>(
     }
 
     {
+        let permit = state.permit.clone();
         let state = state.sqlite.clone();
         sqlite.set(
             "backupInit",
@@ -1015,13 +1106,36 @@ pub(super) fn install<'js>(
                     let source = state
                         .connection(source_id)
                         .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                    let backup = Backup::start(
-                        &source.borrow(),
-                        Path::new(&path),
-                        &source_name,
-                        &target_name,
-                    )
-                    .map_err(|error| throw_sqlite(&ctx, &error))?;
+                    // A backup writes a new database: the target needs `fs.write`, resolved as a
+                    // create because the file usually does not exist yet. The resolved path is
+                    // what `Backup::start` opens, so check and open cannot disagree.
+                    let target = if permit.enforced() {
+                        if is_file_uri(&path) {
+                            return Err(throw_node_error_value(
+                                &ctx,
+                                &NodeError::access_denied(
+                                    "fs.write",
+                                    path.clone(),
+                                    "file: URIs are not supported under a policy",
+                                ),
+                            ));
+                        }
+                        let resolved = permit
+                            .resolve_create(Path::new(&path), "open")
+                            .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                        permit
+                            .check(&Request::Path {
+                                capability: Capability::FsWrite,
+                                resolved: &resolved,
+                            })
+                            .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                        resolved
+                    } else {
+                        PathBuf::from(&path)
+                    };
+                    let backup =
+                        Backup::start(&source.borrow(), &target, &source_name, &target_name)
+                            .map_err(|error| throw_sqlite(&ctx, &error))?;
                     Ok(f64::from(state.add_backup(BackupEntry {
                         _source: source,
                         backup: RefCell::new(backup),

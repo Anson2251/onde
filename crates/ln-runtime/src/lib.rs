@@ -21,7 +21,6 @@
 //! fatal-unwind path. Modules are M2; `fs` and I/O are M3+.
 
 use std::cell::{Cell, RefCell};
-use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -31,6 +30,7 @@ use std::time::Instant;
 pub use ln_engine::js;
 pub use ln_engine::{CaughtError, Completion, Engine, PumpOutcome};
 use ln_modules::Format;
+use ln_perm::Policy;
 pub use ln_sched::Budget;
 use ln_sched::{
     ChannelReactor, Checkpoint, CompletionSender, Driver, ErrorInfo, Event, HandleOutcome, Origin,
@@ -72,20 +72,36 @@ const KIND_TIMER: u8 = 0;
 const KIND_IMMEDIATE: u8 = 1;
 const KIND_TICK: u8 = 2;
 
+/// The fields a worker inherits from its parent (ADR-0011 §5.8).
+///
+/// They live in one struct so `Config::child_of` copies them with one `clone`: a field added here is
+/// inherited by construction, and a field outside it is per-isolate by construction. A field-by-field
+/// copy plus a test cannot see a new field.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Inheritable {
+    /// Bounds on one checkpoint. Defaults to unbounded (Node has no equivalent); the CLI wires
+    /// `--max-microtasks` and `--microtask-timeout` into this.
+    pub budget: Budget,
+    /// Blocking pool size for async ops (`--io-threads`). The pool is created on the first
+    /// async op, never at boot.
+    pub io_threads: usize,
+    /// Hard cap on the engine heap, in bytes (`--max-old-space-size`).
+    pub max_old_space_size: Option<u64>,
+    /// The opt-in permission policy (ADR-0011). `None` is the default: every check is skipped.
+    /// `Some(Policy::deny_all())` is `--permission` with no grants.
+    pub permissions: Option<Policy>,
+}
+
 /// Isolate configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Values exposed as `process.argv`. `argv[0]` is the program name, as in Node.
     pub argv: Vec<String>,
-    /// Bounds on one checkpoint. Defaults to unbounded (Node has no equivalent); the CLI wires
-    /// `--max-microtasks` and `--microtask-timeout` into this.
-    pub budget: Budget,
+    /// What a worker inherits from this config; see [`Config::child_of`].
+    pub inheritable: Inheritable,
     /// Expose a CommonJS `require` bound to the working directory as a global. Node's `-e`
     /// does this; a file entry point gets `require` through the module wrapper instead.
     pub expose_require: bool,
-    /// Blocking pool size for async ops (`--io-threads`). The pool is created on the first
-    /// async op, never at boot.
-    pub io_threads: usize,
     /// Append async ancestry to every Error stack (`--async-stack-traces`). Off by default:
     /// recording a creation site per promise is measurable, and M6 ships it opt-in.
     pub async_stack_traces: bool,
@@ -100,12 +116,6 @@ pub struct Config {
     /// Kept as the raw request so the runtime decides when the file is opened and flushed; see
     /// [`DiagnosticsConfig`] and m7-plan §3.4.
     pub diagnostics: DiagnosticsConfig,
-    /// Hard cap on the engine heap, in bytes (`--max-old-space-size`).
-    ///
-    /// QuickJS has one heap and one limit, so this is not Node's old-space split: exceeding it is a
-    /// fatal engine OOM (m7-plan §3.3, D67/D68). Workers inherit it unless `resourceLimits` says
-    /// otherwise.
-    pub max_old_space_size: Option<u64>,
     /// Test files discovered by `onde --test`.
     ///
     /// `None` runs a script; `Some` makes [`Isolate::run_tests`] the entry point. Discovery lives
@@ -132,15 +142,29 @@ impl Config {
     pub fn new(argv: Vec<String>) -> Self {
         Config {
             argv,
-            budget: Budget::UNBOUNDED,
+            inheritable: Inheritable::default(),
             expose_require: false,
-            io_threads: 4,
             async_stack_traces: false,
             payload: None,
             diagnostics: DiagnosticsConfig::default(),
-            max_old_space_size: None,
             test_files: None,
         }
+    }
+
+    /// The config for a worker or other child isolate: the inheritable set from `self`, the
+    /// per-isolate defaults from `Config::new`, and the caller's `argv`.
+    pub fn child_of(&self, argv: Vec<String>) -> Config {
+        self.inheritable.clone().into_config(argv)
+    }
+}
+
+impl Inheritable {
+    /// A fresh per-isolate `Config` with this inheritable set. Used by `Config::child_of` and by
+    /// the worker bridge, which stores the set rather than a whole parent config.
+    pub fn into_config(self, argv: Vec<String>) -> Config {
+        let mut config = Config::new(argv);
+        config.inheritable = self;
+        config
     }
 }
 
@@ -418,6 +442,8 @@ pub struct Isolate {
     modules: Rc<ModuleRuntime>,
     /// The async-op bridge: pool, result slots and abort flags.
     ops: Rc<OpBridge>,
+    /// The policy every gate asks (ADR-0011). Cloned into the pool and host state.
+    permit: ln_io::Permit,
     /// The handle bridge: network tasks, parked events and loop refs (ADR-0006). Only the
     /// `node-net` feature compiles it; without sockets there is nothing to own.
     #[cfg(feature = "node-net")]
@@ -486,19 +512,27 @@ impl Isolate {
         );
         // The limit applies to this runtime before the bootstrap, so a bootstrap that allocates
         // past it fails at boot rather than an hour later (m7-plan §4.4).
-        if let Some(limit) = config.max_old_space_size {
+        if let Some(limit) = config.inheritable.max_old_space_size {
             engine.set_memory_limit(limit);
         }
         let mut sched = Scheduler::new();
-        sched.set_budget(config.budget);
+        sched.set_budget(config.inheritable.budget);
 
         let driver = Rc::new(RefCell::new(Driver::new()));
         let bridge = Rc::new(RefCell::new(Bridge::default()));
         let exit = Rc::new(ExitState::default());
         let state = Rc::new(RuntimeState::default());
         let stop = sched.stop_handle();
-        let modules =
-            ModuleRuntime::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // One permit per isolate. `None` stays one branch on the gated paths; it never becomes a
+        // second policy value.
+        let permit = match config.inheritable.permissions.clone() {
+            Some(policy) => ln_io::Permit::new(policy),
+            None => ln_io::Permit::unconfined(),
+        };
+        let modules = ModuleRuntime::new(
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            permit.clone(),
+        );
         // Compiled mode is decided here, before any module can load: the loader reads this flag
         // on every resolution, and a payload that fails the engine check must stop the process
         // before the bootstrap (or anything else) can ask for a module.
@@ -518,8 +552,9 @@ impl Isolate {
         let ops = Rc::new(OpBridge::new(
             driver.clone(),
             sender.clone(),
-            config.io_threads,
+            config.inheritable.io_threads,
             ids.clone(),
+            permit.clone(),
         ));
         #[cfg(feature = "node-net")]
         let handles = Rc::new(HandleBridge::new(
@@ -549,6 +584,14 @@ impl Isolate {
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .filter(|fd| *fd > 0)
         };
+        // The descriptors every isolate owns before any script runs (ADR-0011 §5.6). A worker has
+        // no IPC fd; a forked child's is the channel it was given.
+        permit.seed_fd(0, ln_io::FdMode::READ);
+        permit.seed_fd(1, ln_io::FdMode::WRITE);
+        permit.seed_fd(2, ln_io::FdMode::WRITE);
+        if let Some(fd) = ipc_fd {
+            permit.seed_fd(fd, ln_io::FdMode::READ_WRITE);
+        }
         #[cfg(feature = "node-sqlite")]
         let sqlite = Rc::new(host::sqlite::SqliteState::new());
         let async_hooks = AsyncTracker::new();
@@ -564,9 +607,7 @@ impl Isolate {
             sender,
             ids.clone(),
             config.argv.clone(),
-            config.io_threads,
-            config.budget,
-            config.max_old_space_size,
+            config.inheritable.clone(),
         ));
         let worker = role.map(Rc::new);
 
@@ -584,6 +625,7 @@ impl Isolate {
             dispatcher: None,
             modules,
             ops,
+            permit: permit.clone(),
             #[cfg(feature = "node-net")]
             handles,
             workers,
@@ -644,6 +686,7 @@ impl Isolate {
             memory: self.memory.clone(),
             memory_requested: self.memory_requested.clone(),
             ops: self.ops.clone(),
+            permit: self.permit.clone(),
             ids: self.ops.ids().clone(),
             #[cfg(feature = "node-net")]
             handles: self.handles.clone(),
@@ -954,14 +997,13 @@ impl Isolate {
     }
 
     fn read_entry(&mut self, path: &Path) -> Option<String> {
-        match fs::read_to_string(path) {
+        // Entry source is `Source`-class: the interpreter must load code, so `fs.read` does not
+        // gate it. Routing through `read_class` is what keeps the runtime to one read site
+        // outside an `Op` (ADR-0011 §5.4.1).
+        match modules::read_class(path, modules::Class::Source, self.modules.permit()) {
             Ok(source) => Some(source),
             Err(error) => {
-                let code = host_error::io_error_code(&error);
-                self.report_entry_error(
-                    code,
-                    &host_error::io_error_message(code, "open", path, &error),
-                );
+                self.report_entry_error(error.code, &error.message);
                 None
             }
         }
@@ -2043,9 +2085,683 @@ mod tests {
     #[test]
     fn default_budget_is_unbounded_like_node() {
         assert_eq!(
-            Config::new(vec!["onde".to_owned()]).budget,
+            Config::new(vec!["onde".to_owned()]).inheritable.budget,
             Budget::UNBOUNDED
         );
+    }
+
+    /// Run `source` as a file entry with `permissions` installed; return its exit code.
+    fn run_script(
+        dir: &tempfile::TempDir,
+        name: &str,
+        source: &str,
+        permissions: Option<Policy>,
+    ) -> i32 {
+        let path = dir.path().join(name);
+        std::fs::write(&path, source).expect("write script");
+        let mut config = Config::new(vec!["onde".to_owned(), path.display().to_string()]);
+        config.inheritable.permissions = permissions;
+        let mut isolate = Isolate::new(config).expect("isolate");
+        isolate.run_file(&path).expect("run").exit_code
+    }
+
+    #[test]
+    fn a_confined_isolate_denies_json_data_but_loads_module_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("data.json"), r#"{"x":1}"#).expect("data");
+        std::fs::write(dir.path().join("mod.js"), "module.exports = 5;").expect("module");
+        // Exit 0 only when the data read was denied and the source read still worked.
+        let script = r#"
+try {
+  require("./data.json");
+} catch (error) {
+  if (error.code === "ERR_ACCESS_DENIED") {
+    if (require("./mod.js") !== 5) throw new Error("source read failed");
+    process.exit(0);
+  }
+  throw error;
+}
+process.exit(3);
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(Policy::deny_all())),
+            0
+        );
+        assert_eq!(run_script(&dir, "main.js", script, Some(Policy::any())), 3);
+        assert_eq!(run_script(&dir, "main.js", script, None), 3);
+    }
+
+    #[test]
+    fn a_confined_isolate_denies_a_dynamic_json_import() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("data.json"), r#"{"x":1}"#).expect("data");
+        let script = r#"
+import("./data.json").then(
+  () => process.exit(3),
+  (error) => {
+    if (error.code === "ERR_ACCESS_DENIED") process.exit(0);
+    throw error;
+  },
+);
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(Policy::deny_all())),
+            0
+        );
+        assert_eq!(run_script(&dir, "main.js", script, Some(Policy::any())), 3);
+    }
+
+    #[test]
+    fn a_fs_read_grant_on_the_directory_allows_a_json_require() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("data.json"), r#"{"x":1}"#).expect("data");
+        let script = r#"
+const data = require("./data.json");
+process.exit(data.x === 1 ? 0 : 4);
+"#;
+        let mut policy = Policy::deny_all();
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        policy.grant(
+            ln_perm::Capability::FsRead,
+            ln_perm::Rule::Path(ln_perm::PathRule::new(root)),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", script, Some(policy)), 0);
+    }
+
+    fn fs_policy(root: &std::path::Path, capabilities: &[ln_perm::Capability]) -> Policy {
+        let mut policy = ln_perm::Policy::deny_all();
+        for capability in capabilities {
+            policy.grant(
+                *capability,
+                ln_perm::Rule::Path(ln_perm::PathRule::new(root.to_path_buf())),
+                ln_perm::Origin::CommandLine,
+            );
+        }
+        policy
+    }
+
+    fn js_string(value: &str) -> String {
+        serde_json::to_string(value).expect("json string")
+    }
+
+    #[test]
+    fn the_denial_properties_survive_all_three_forms() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = js_string("/etc/passwd");
+        let script = format!(
+            r#"
+const fs = require("fs");
+let pending = 3;
+function done(error) {{
+  if (error.code !== "ERR_ACCESS_DENIED") process.exit(5);
+  if (error.capability !== "fs.read") process.exit(6);
+  if (typeof error.resource !== "string" || !error.resource.endsWith("/etc/passwd")) process.exit(7);
+  if (typeof error.policy !== "string") process.exit(8);
+  if (--pending === 0) process.exit(0);
+}}
+try {{
+  fs.readFileSync({path});
+  process.exit(9);
+}} catch (error) {{
+  done(error);
+}}
+fs.readFile({path}, (error) => done(error));
+require("fs/promises").readFile({path}).then(() => process.exit(10), (error) => done(error));
+"#,
+            path = path,
+        );
+        assert_eq!(
+            run_script(&dir, "main.js", &script, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+    }
+
+    #[test]
+    fn process_permission_has_answers_like_the_gates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        let data = root.join("data.json");
+        std::fs::write(&data, "{}").expect("data");
+        let script = format!(
+            r#"
+const data = {data};
+const ok =
+  process.permission.has("fs.read", data) === true &&
+  process.permission.has("fs.read", "/etc/passwd") === false &&
+  process.permission.has("nope", "x") === false &&
+  process.permission.has("worker.spawn") === false &&
+  process.permission.has("net.resolve", "127.0.0.1") === true &&
+  process.permission.has("net.resolve", "example.com") === false;
+try {{
+  process.permission.has(1, "x");
+}} catch (error) {{
+  process.exit(ok && error.code === "ERR_INVALID_ARG_TYPE" ? 0 : 5);
+}}
+process.exit(6);
+"#,
+            data = js_string(&data.display().to_string()),
+        );
+        let policy = fs_policy(&root, &[ln_perm::Capability::FsRead]);
+        assert_eq!(run_script(&dir, "main.js", &script, Some(policy)), 0);
+
+        // With no policy every known scope answers true, including the two Node aliases.
+        let unenforced = r#"
+const ok =
+  process.permission.has("fs.read", "/etc/passwd") === true &&
+  process.permission.has("fs.write", "/etc/passwd") === true &&
+  process.permission.has("child", "/bin/sh") === true &&
+  process.permission.has("worker") === true;
+process.exit(ok ? 0 : 5);
+"#;
+        assert_eq!(run_script(&dir, "main.js", unenforced, None), 0);
+    }
+
+    #[test]
+    fn sqlite_memory_is_exempt_and_a_file_needs_fs_grants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        let memory = r#"
+const { DatabaseSync } = require("node:sqlite");
+try {
+  const db = new DatabaseSync(":memory:");
+  db.close();
+  process.exit(0);
+} catch (error) {
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6);
+}
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", memory, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+
+        let path = root.join("app.db");
+        let file = format!(
+            r#"
+const {{ DatabaseSync }} = require("node:sqlite");
+try {{
+  const db = new DatabaseSync({path});
+  db.exec("CREATE TABLE t(x)");
+  db.close();
+  process.exit(0);
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6);
+}}
+"#,
+            path = js_string(&path.display().to_string()),
+        );
+        assert_eq!(
+            run_script(&dir, "main.js", &file, Some(ln_perm::Policy::deny_all())),
+            5
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &file,
+                Some(fs_policy(
+                    &root,
+                    &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite]
+                ))
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn sqlite_read_only_needs_read_and_read_write_needs_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        let path = root.join("app.db");
+        // Create the database first, with both grants.
+        let create = format!(
+            r#"const {{ DatabaseSync }} = require("node:sqlite");
+const db = new DatabaseSync({path});
+db.exec("CREATE TABLE t(x)");
+db.close();
+"#,
+            path = js_string(&path.display().to_string()),
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "create.js",
+                &create,
+                Some(fs_policy(
+                    &root,
+                    &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite]
+                ))
+            ),
+            0
+        );
+
+        let read_only = format!(
+            r#"
+const {{ DatabaseSync }} = require("node:sqlite");
+try {{
+  const db = new DatabaseSync({path}, {{ readOnly: true }});
+  db.close();
+  process.exit(0);
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6);
+}}
+"#,
+            path = js_string(&path.display().to_string()),
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &read_only,
+                Some(fs_policy(&root, &[ln_perm::Capability::FsRead]))
+            ),
+            0
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &read_only,
+                Some(fs_policy(&root, &[ln_perm::Capability::FsWrite]))
+            ),
+            5
+        );
+    }
+
+    #[test]
+    fn sqlite_extension_loading_needs_ffi_load() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        let path = root.join("app.db");
+        let script = format!(
+            r#"
+const {{ DatabaseSync }} = require("node:sqlite");
+try {{
+  const db = new DatabaseSync({path}, {{ allowExtension: true }});
+  db.close();
+  process.exit(0);
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6);
+}}
+"#,
+            path = js_string(&path.display().to_string()),
+        );
+        let fs_only = fs_policy(
+            &root,
+            &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite],
+        );
+        assert_eq!(run_script(&dir, "main.js", &script, Some(fs_only)), 5);
+
+        let mut with_ffi = fs_policy(
+            &root,
+            &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite],
+        );
+        with_ffi.grant(
+            ln_perm::Capability::FfiLoad,
+            ln_perm::Rule::Any,
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", &script, Some(with_ffi)), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_refuses_a_symlinked_side_file() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        symlink(root.join("elsewhere"), root.join("app.db-wal")).expect("symlink");
+        let path = root.join("app.db");
+        let script = format!(
+            r#"
+const {{ DatabaseSync }} = require("node:sqlite");
+try {{
+  const db = new DatabaseSync({path});
+  db.close();
+  process.exit(3);
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}}
+"#,
+            path = js_string(&path.display().to_string()),
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &script,
+                Some(fs_policy(
+                    &root,
+                    &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite]
+                ))
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn dns_resolution_needs_a_grant_but_a_literal_address_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let denied = r#"
+const dns = require("dns");
+dns.lookup("localhost", (error) => {
+  process.exit(error && error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+});
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", denied, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+
+        let mut policy = ln_perm::Policy::deny_all();
+        policy.grant(
+            ln_perm::Capability::NetResolve,
+            ln_perm::Rule::Host(ln_perm::HostPattern::parse("localhost", false).unwrap()),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", denied, Some(policy)), 5);
+
+        let literal = r#"
+const dns = require("dns");
+dns.lookup("127.0.0.1", (error, address) => {
+  process.exit(!error && address === "127.0.0.1" ? 0 : 5);
+});
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", literal, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+    }
+
+    #[test]
+    fn net_listen_and_connect_are_gated_at_the_candidate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let denied = r#"
+const net = require("net");
+const server = net.createServer();
+server.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5));
+server.listen(0, "127.0.0.1", () => process.exit(3));
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", denied, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+
+        // A literal-address grant covers both directions, and a name that resolves to it is
+        // governed by the same grant (D7).
+        let allowed = r#"
+const net = require("net");
+const server = net.createServer((socket) => socket.end("ok"));
+server.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6));
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  const client = net.connect({ host: "localhost", port });
+  client.on("connect", () => {
+    client.destroy();
+    server.close(() => process.exit(0));
+  });
+  client.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 7 : 8));
+});
+"#;
+        let mut policy = ln_perm::Policy::deny_all();
+        for capability in [
+            ln_perm::Capability::NetListen,
+            ln_perm::Capability::NetConnect,
+        ] {
+            policy.grant(
+                capability,
+                ln_perm::Rule::Endpoint(ln_perm::EndpointRule::new(
+                    ln_perm::HostPattern::parse("127.0.0.1", false).unwrap(),
+                    None,
+                )),
+                ln_perm::Origin::CommandLine,
+            );
+        }
+        // Resolving `localhost` is its own capability; the address grant is what the candidate
+        // filter then matches.
+        policy.grant(
+            ln_perm::Capability::NetResolve,
+            ln_perm::Rule::Host(ln_perm::HostPattern::parse("localhost", false).unwrap()),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", allowed, Some(policy)), 0);
+    }
+
+    #[test]
+    fn a_name_is_not_resolved_without_a_resolve_grant() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = |expected: &str| {
+            format!(
+                r#"
+const net = require("net");
+const socket = net.connect({{ host: "no-such-host.invalid", port: 80 }});
+socket.on("error", (error) => process.exit(error.code === {expected} ? 0 : 5));
+socket.on("connect", () => process.exit(3));
+"#,
+                expected = js_string(expected),
+            )
+        };
+
+        // Deny-all refuses before the resolver runs: no DNS query escapes the policy.
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &script("ERR_ACCESS_DENIED"),
+                Some(ln_perm::Policy::deny_all())
+            ),
+            0
+        );
+
+        // With the name granted, the resolver runs and reports the ordinary lookup failure.
+        let mut policy = ln_perm::Policy::deny_all();
+        policy.grant(
+            ln_perm::Capability::NetResolve,
+            ln_perm::Rule::Host(
+                ln_perm::HostPattern::parse("no-such-host.invalid", false).unwrap(),
+            ),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(
+            run_script(&dir, "main.js", &script("ENOTFOUND"), Some(policy)),
+            0
+        );
+
+        let listen = r#"
+const net = require("net");
+const server = net.createServer();
+server.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5));
+server.listen(0, "no-such-host.invalid");
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", listen, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+    }
+
+    #[test]
+    fn sqlite_file_uris_cannot_escape_the_grant() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical");
+        let outside_dir = tempfile::tempdir().expect("outside");
+        let outside = std::fs::canonicalize(outside_dir.path())
+            .expect("canonical")
+            .join("secret.db");
+
+        let create = format!(
+            r#"
+const {{ DatabaseSync }} = require("node:sqlite");
+const db = new DatabaseSync({path});
+db.exec("CREATE TABLE t(x)");
+db.exec("INSERT INTO t VALUES (1)");
+db.close();
+"#,
+            path = js_string(&outside.display().to_string()),
+        );
+        assert_eq!(run_script(&dir, "create.js", &create, None), 0);
+
+        let script = format!(
+            r#"
+process.chdir({root});
+const {{ DatabaseSync }} = require("node:sqlite");
+try {{
+  const db = new DatabaseSync("file:" + {outside});
+  db.exec("INSERT INTO t VALUES (99)");
+  db.close();
+  process.exit(3);
+}} catch (error) {{
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}}
+"#,
+            root = js_string(&root.display().to_string()),
+            outside = js_string(&outside.display().to_string()),
+        );
+        assert_eq!(
+            run_script(
+                &dir,
+                "main.js",
+                &script,
+                Some(fs_policy(
+                    &root,
+                    &[ln_perm::Capability::FsRead, ln_perm::Capability::FsWrite]
+                ))
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn child_spawn_is_gated_on_the_resolved_program() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let denied = r#"
+const { spawn } = require("child_process");
+let child;
+try {
+  child = spawn("echo", ["hi"]);
+} catch (error) {
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}
+child.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 6));
+child.on("exit", () => process.exit(3));
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", denied, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+
+        let allowed = r#"
+const { spawn } = require("child_process");
+const child = spawn("echo", ["hi"]);
+child.on("error", (error) => process.exit(error.code === "ERR_ACCESS_DENIED" ? 5 : 6));
+child.on("exit", (code) => process.exit(code === 0 ? 0 : 4));
+"#;
+        let mut policy = ln_perm::Policy::deny_all();
+        policy.grant(
+            ln_perm::Capability::ChildSpawn,
+            ln_perm::Rule::Exec(ln_perm::ExecRule::Basename("echo".to_owned())),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", allowed, Some(policy)), 0);
+    }
+
+    #[test]
+    fn process_kill_needs_a_child_spawn_grant() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = r#"
+try {
+  process.kill(process.pid, 0);
+} catch (error) {
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}
+process.exit(3);
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+        let mut policy = ln_perm::Policy::deny_all();
+        policy.grant(
+            ln_perm::Capability::ChildSpawn,
+            ln_perm::Rule::Exec(ln_perm::ExecRule::Basename("true".to_owned())),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", script, Some(policy)), 3);
+    }
+
+    #[test]
+    fn env_read_filters_process_env_and_deny_all_hides_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = r#"
+if (process.env.PATH === undefined) process.exit(4);
+if (process.env.HOME !== undefined) process.exit(5);
+process.exit(0);
+"#;
+        let mut policy = ln_perm::Policy::deny_all();
+        policy.grant(
+            ln_perm::Capability::EnvRead,
+            ln_perm::Rule::Name("PATH".to_owned()),
+            ln_perm::Origin::CommandLine,
+        );
+        assert_eq!(run_script(&dir, "main.js", script, Some(policy)), 0);
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(ln_perm::Policy::deny_all())),
+            4
+        );
+    }
+
+    #[test]
+    fn worker_spawn_is_gated_and_deny_all_refuses_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = r#"
+const { Worker } = require("worker_threads");
+try {
+  new Worker("process.exit(0)", { eval: true });
+} catch (error) {
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}
+process.exit(3);
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+    }
+
+    #[test]
+    fn a_confined_write_fd_outside_the_table_is_denied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = r#"
+try {
+  __ln_host.writeFd(9, new Uint8Array([65]));
+} catch (error) {
+  process.exit(error.code === "ERR_ACCESS_DENIED" ? 0 : 5);
+}
+process.exit(3);
+"#;
+        assert_eq!(
+            run_script(&dir, "main.js", script, Some(ln_perm::Policy::deny_all())),
+            0
+        );
+    }
+
+    #[test]
+    fn child_of_copies_the_inheritable_set_and_nothing_else() {
+        let mut parent = Config::new(vec!["onde".to_owned()]);
+        parent.inheritable.budget = Budget::jobs(7);
+        parent.inheritable.io_threads = 9;
+        parent.inheritable.max_old_space_size = Some(64 << 20);
+        parent.inheritable.permissions = Some(Policy::deny_all());
+        parent.expose_require = true;
+        parent.async_stack_traces = true;
+        parent.test_files = Some(vec!["x".to_owned()]);
+
+        let child = parent.child_of(vec!["onde".to_owned(), "worker.js".to_owned()]);
+        assert_eq!(child.inheritable, parent.inheritable);
+        assert!(!child.expose_require);
+        assert!(!child.async_stack_traces);
+        assert_eq!(child.test_files, None);
+        assert_eq!(child.argv[1], "worker.js");
     }
 
     #[test]

@@ -19,25 +19,30 @@ pub(super) fn install<'js>(
     host: &js::Object<'js>,
     state: &HostState,
 ) -> js::Result<()> {
-    host.set(
-        "fsSync",
-        js::Function::new(
-            ctx.clone(),
-            |ctx: js::Ctx<'js>,
-             name: js::Value<'js>,
-             args_value: js::Value<'js>|
-             -> js::Result<js::Value<'js>> {
-                let op_name = parse_op_name(&ctx, &name)?;
-                let arguments = collect_args(&ctx, &args_value)?;
-                let op = build_op(&op_name, &arguments)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                let abort = AtomicBool::new(false);
-                let value = ln_io::execute(op, &abort)
-                    .map_err(|error| throw_node_error_value(&ctx, &error))?;
-                op_value_to_js(&ctx, &value)
-            },
-        )?,
-    )?;
+    {
+        // The sync path runs on the isolate thread; the permit is cloned so the closure does not
+        // borrow the host state.
+        let permit = state.permit.clone();
+        host.set(
+            "fsSync",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>,
+                      name: js::Value<'js>,
+                      args_value: js::Value<'js>|
+                      -> js::Result<js::Value<'js>> {
+                    let op_name = parse_op_name(&ctx, &name)?;
+                    let arguments = collect_args(&ctx, &args_value)?;
+                    let op = build_op(&op_name, &arguments)
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    let abort = AtomicBool::new(false);
+                    let value = ln_io::execute(op, &abort, &permit)
+                        .map_err(|error| throw_node_error_value(&ctx, &error))?;
+                    op_value_to_js(&ctx, &value)
+                },
+            )?,
+        )?;
+    }
 
     {
         let ops = state.ops.clone();

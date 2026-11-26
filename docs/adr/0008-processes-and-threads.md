@@ -6,8 +6,8 @@
 - Related: [0003 event loop](0003-event-loop.md), [0005 ops protocol](0005-ops-protocol.md),
   [0006 handles and events](0006-handles-and-events.md), [M5 plan](../m5-plan.md)
 
-> The permissions model that was pencilled in as ADR-0008 moves to 0009 (1.1), as the decision log
-> in [roadmap.md](../roadmap.md#6-decision-log) already allows for.
+> The permissions model that was pencilled in as ADR-0008 moves to [0011](0011-permissions.md)
+> (M8, in 1.0), as the decision log in [roadmap.md](../roadmap.md#6-decision-log) allows for.
 
 ## 1. Context
 

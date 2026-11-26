@@ -4,14 +4,14 @@
 //
 // This file is evaluated by `bootstrap.js` *before* any stdlib module, with no `require` in
 // scope: it is the thing that defines one. Everything it needs from the host arrives through
-// `install(host)`.
+// `install(privileged)`.
 //
 // Shape (architecture.md §6): resolution lives in Rust (`ln-modules`), compilation with the real
-// filename lives in the engine (`host.evalCjs`), and the module record, cache, `module` object
+// filename lives in the engine (`privileged.evalCjs`), and the module record, cache, `module` object
 // and `require` function live here. That split keeps `node_modules` semantics testable without
 // QuickJS and keeps stack traces pointing at user files.
 
-let host = null;
+let privileged = null;
 
 // filename -> Module. This object *is* `require.cache` (Node exposes a plain object there).
 const moduleCache = Object.create(null);
@@ -20,8 +20,8 @@ const builtinCache = Object.create(null);
 // The entry module, exposed as `require.main`.
 let mainModule = null;
 
-function install(hostObject) {
-  host = hostObject;
+function install(privilegedObject) {
+  privileged = privilegedObject;
   return module.exports;
 }
 
@@ -30,7 +30,7 @@ function install(hostObject) {
 // are separator-aware, not Unicode-aware: `path` itself is the public implementation.
 
 function isWindows() {
-  return host !== null && host.platform === "win32";
+  return privileged !== null && privileged.platform === "win32";
 }
 
 function dirname(filename) {
@@ -131,7 +131,7 @@ function createRequire(fromFile, parentModule) {
       const internal = resolveInternalSpecifier(specifier, fromFile);
       if (internal !== null) return requireBuiltin(internal);
     }
-    const resolution = host.resolve(specifier, fromFile, "require");
+    const resolution = privileged.resolve(specifier, fromFile, "require");
     switch (resolution.type) {
       case "builtin":
         return requireBuiltin(resolution.name);
@@ -154,7 +154,7 @@ function createRequire(fromFile, parentModule) {
     if (typeof specifier !== "string") {
       throw invalidArgType("request", "string", specifier);
     }
-    const resolution = host.resolve(specifier, fromFile, "require");
+    const resolution = privileged.resolve(specifier, fromFile, "require");
     if (resolution.type !== "builtin") return resolution.path;
     // Node preserves the spelling the caller used: `require.resolve("node:path")` is
     // "node:path", while `require.resolve("path")` is "path".
@@ -164,7 +164,7 @@ function createRequire(fromFile, parentModule) {
     if (typeof specifier !== "string") {
       throw invalidArgType("request", "string", specifier);
     }
-    const resolution = host.resolve(specifier, fromFile, "require");
+    const resolution = privileged.resolve(specifier, fromFile, "require");
     return resolution.type === "builtin" ? null : nodeModulePaths(dirname(fromFile));
   };
   require.cache = moduleCache;
@@ -216,7 +216,7 @@ function joinVirtualSpecifier(directory, specifier) {
 /// to the basename search for the shapes the flat registry does not mirror.
 function resolveInternalSpecifier(specifier, fromFile) {
   const name = canonicalBuiltin(specifier);
-  if (host.builtinSource(name) !== null && host.builtinSource(name) !== undefined) return name;
+  if (privileged.builtinSource(name) !== null && privileged.builtinSource(name) !== undefined) return name;
   if (!name.startsWith("./") && !name.startsWith("../")) return null;
 
   const base = name.slice(name.lastIndexOf("/") + 1).replace(/\.js$/, "");
@@ -232,7 +232,7 @@ function resolveInternalSpecifier(specifier, fromFile) {
   if (base.endsWith("-promises")) candidates.push(`${base.slice(0, -"-promises".length)}/promises`);
   for (const candidate of candidates) {
     if (candidate === "" || candidate === "internal/") continue;
-    const source = host.builtinSource(candidate);
+    const source = privileged.builtinSource(candidate);
     if (source !== null && source !== undefined) return candidate;
   }
   return null;
@@ -245,7 +245,7 @@ let nodeOnlyBuiltins = null;
 function nodeOnly() {
   if (nodeOnlyBuiltins === null) {
     const names =
-      typeof host.nodeOnlyBuiltins === "function" ? host.nodeOnlyBuiltins() : [];
+      typeof privileged.nodeOnlyBuiltins === "function" ? privileged.nodeOnlyBuiltins() : [];
     nodeOnlyBuiltins = new Set(names);
   }
   return nodeOnlyBuiltins;
@@ -255,7 +255,7 @@ function isBuiltin(specifier) {
   if (typeof specifier !== "string") return false;
   const name = canonicalBuiltin(specifier);
   if (name === "process") return true;
-  const source = host.builtinSource(name);
+  const source = privileged.builtinSource(name);
   if (source === null || source === undefined) return false;
   // `module.isBuiltin("sqlite")` is false in Node; only `"node:sqlite"` is a builtin.
   if (!specifier.startsWith("node:") && nodeOnly().has(name)) return false;
@@ -263,7 +263,7 @@ function isBuiltin(specifier) {
 }
 
 function builtinNames() {
-  const names = host.builtinNames();
+  const names = privileged.builtinNames();
   const only = nodeOnly();
   // `module.builtinModules` does not list node:-only modules.
   return only.size === 0 ? names : names.filter((name) => !only.has(name));
@@ -278,12 +278,12 @@ function requireBuiltin(specifier) {
   const cached = builtinCache[name];
   if (cached !== undefined) return cached.exports;
 
-  const source = host.builtinSource(name);
+  const source = privileged.builtinSource(name);
   if (source === null || source === undefined) {
     // A known builtin can be compiled out (`--no-default-features`); say which feature is
     // missing instead of reporting it as an unknown module.
     const unavailable =
-      typeof host.builtinUnavailable === "function" ? host.builtinUnavailable(name) : null;
+      typeof privileged.builtinUnavailable === "function" ? privileged.builtinUnavailable(name) : null;
     throw codedError(
       Error,
       "ERR_UNKNOWN_BUILTIN_MODULE",
@@ -296,7 +296,7 @@ function requireBuiltin(specifier) {
   module.id = name;
   builtinCache[name] = module;
   try {
-    host.evalCjs(filename, source, module.exports, module.require, module, "<onde>");
+    privileged.evalCjs(filename, source, module.exports, module.require, module, "<onde>");
   } catch (error) {
     delete builtinCache[name];
     throw error;
@@ -311,11 +311,11 @@ function loadCjsFile(filename, parent) {
   const cached = moduleCache[filename];
   if (cached !== undefined) return cached.exports;
 
-  const source = host.readFile(filename);
+  const source = privileged.readSource(filename);
   const module = makeModule(filename, parent);
   moduleCache[filename] = module;
   try {
-    host.evalCjs(
+    privileged.evalCjs(
       filename,
       source,
       module.exports,
@@ -341,7 +341,7 @@ function loadJsonFile(filename, parent) {
   if (cached !== undefined) return cached.exports;
 
   // Node's JSON loader tolerates a UTF-8 BOM; `JSON.parse` does not.
-  const source = host.readFile(filename).replace(/^\uFEFF/, "");
+  const source = privileged.readData(filename).replace(/^\uFEFF/, "");
   let parsed;
   try {
     parsed = JSON.parse(source);
@@ -367,9 +367,9 @@ function runMain(filename) {
     module.id = ".";
     mainModule = module;
     moduleCache[filename] = module;
-    const source = host.readFile(filename);
+    const source = privileged.readSource(filename);
     try {
-      host.evalCjs(
+      privileged.evalCjs(
         filename,
         source,
         module.exports,
