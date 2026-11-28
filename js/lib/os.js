@@ -40,30 +40,30 @@ function detectEndianness() {
 function fallbackInfo() {
   const proc = processObject();
   const env = proc && proc.env && typeof proc.env === "object" ? proc.env : {};
-  const platform = proc && typeof proc.platform === "string" ? proc.platform : "linux";
-  const arch = proc && typeof proc.arch === "string" ? proc.arch : "x64";
-  const isWindows = platform === "win32";
+  const platformName = proc && typeof proc.platform === "string" ? proc.platform : "linux";
+  const archName = proc && typeof proc.arch === "string" ? proc.arch : "x64";
+  const isWindows = platformName === "win32";
 
-  let type = "Linux";
-  if (isWindows) type = "Windows_NT";
-  else if (platform === "darwin") type = "Darwin";
-  else if (platform === "freebsd") type = "FreeBSD";
+  let osType = "Linux";
+  if (isWindows) osType = "Windows_NT";
+  else if (platformName === "darwin") osType = "Darwin";
+  else if (platformName === "freebsd") osType = "FreeBSD";
 
-  let homedir = "/";
-  if (isWindows) homedir = env.USERPROFILE || "C:\\";
-  else homedir = env.HOME || "/";
+  let homeDir = "/";
+  if (isWindows) homeDir = env.USERPROFILE || "C:\\";
+  else homeDir = env.HOME || "/";
 
-  let tmpdir = "/tmp";
-  if (isWindows) tmpdir = env.TEMP || env.TMP || "C:\\Windows\\Temp";
+  let tempDir = "/tmp";
+  if (isWindows) tempDir = env.TEMP || env.TMP || "C:\\Windows\\Temp";
 
   return {
-    platform,
-    arch,
-    type,
+    platform: platformName,
+    arch: archName,
+    type: osType,
     release: "0.0.0",
     endianness: detectEndianness(),
-    homedir,
-    tmpdir,
+    homedir: homeDir,
+    tmpdir: tempDir,
     hostname: env.HOSTNAME || env.HOST || "localhost",
     shell: env.SHELL || null,
     username: env.USER || env.USERNAME || "",
@@ -73,7 +73,7 @@ function fallbackInfo() {
     totalmem: 0,
     freemem: 0,
     uptime: 0,
-    machine: arch,
+    machine: archName,
   };
 }
 

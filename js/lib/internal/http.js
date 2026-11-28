@@ -24,8 +24,6 @@
 // `headersDistinct`, CONNECT tunnelling beyond the upgrade handover, and TLS (`https` surfaces
 // `ERR_FEATURE_UNAVAILABLE` until WP6).
 
-const host = globalThis.__ln_host;
-
 let BufferCtor = null;
 try {
   BufferCtor = require("buffer").Buffer;
@@ -337,12 +335,6 @@ function responseHasBody(method, status) {
 function byteLength(chunk, encoding) {
   if (typeof chunk === "string") return Buffer.byteLength(chunk, encoding || "utf8");
   return chunk.length;
-}
-
-function asBuffer(chunk, encoding) {
-  if (typeof chunk === "string") return Buffer.from(chunk, encoding || "utf8");
-  if (chunk instanceof Uint8Array) return Buffer.from(chunk);
-  return Buffer.from(String(chunk));
 }
 
 // --- IncomingMessage -------------------------------------------------------------------------
@@ -1327,7 +1319,6 @@ class Agent extends EventEmitter {
     this._dequeue(key);
 
     if (typeof socket.unref === "function") socket.unref();
-    const agent = this;
     socket._httpAgentKey = key;
     socket._httpFreeTimer = setTimeout(() => {
       if (free.indexOf(socket) !== -1) socket.destroy();

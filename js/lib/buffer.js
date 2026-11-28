@@ -455,10 +455,10 @@ class Buffer extends Uint8Array {
       throw invalidArgType("target", "an instance of Buffer or Uint8Array", target);
     }
 
-    let tStart = targetStart === undefined ? 0 : targetStart;
-    let tEnd = targetEnd === undefined ? target.length : targetEnd;
-    let sStart = sourceStart === undefined ? 0 : sourceStart;
-    let sEnd = sourceEnd === undefined ? this.length : sourceEnd;
+    const tStart = targetStart === undefined ? 0 : targetStart;
+    const tEnd = targetEnd === undefined ? target.length : targetEnd;
+    const sStart = sourceStart === undefined ? 0 : sourceStart;
+    const sEnd = sourceEnd === undefined ? this.length : sourceEnd;
 
     validateInteger(tStart, "targetStart", 0, MAX_LENGTH);
     validateInteger(tEnd, "targetEnd", 0, target.length);
@@ -476,12 +476,12 @@ class Buffer extends Uint8Array {
       throw invalidArgType("target", "an instance of Buffer or Uint8Array", target);
     }
 
-    let tStart = targetStart === undefined ? 0 : targetStart;
+    const tStart = targetStart === undefined ? 0 : targetStart;
     if (typeof tStart !== "number") throw invalidArgType("targetStart", "of type number", tStart);
     if (!Number.isInteger(tStart)) throw outOfRange("targetStart", "an integer", tStart);
     if (tStart < 0) throw outOfRange("targetStart", ">= 0", tStart);
 
-    let sStart = sourceStart === undefined ? 0 : sourceStart;
+    const sStart = sourceStart === undefined ? 0 : sourceStart;
     validateInteger(sStart, "sourceStart", 0, this.length);
 
     let sEnd = sourceEnd === undefined ? this.length : sourceEnd;
@@ -959,8 +959,8 @@ class Buffer extends Uint8Array {
   swap32() {
     if (this.length % 4 !== 0) throw invalidBufferSize(32);
     for (let i = 0; i < this.length; i += 4) {
-      let a = this[i];
-      let b = this[i + 1];
+      const a = this[i];
+      const b = this[i + 1];
       this[i] = this[i + 3];
       this[i + 1] = this[i + 2];
       this[i + 2] = b;
@@ -1166,7 +1166,7 @@ function lastIndexOfByte(buffer, value, offset) {
 function lastIndexOfBytes(buffer, needle, offset) {
   const length = buffer.length;
   if (needle.length === 0) return Math.min(Math.max(offset, 0), length);
-  let start = Math.min(offset, length - needle.length);
+  const start = Math.min(offset, length - needle.length);
   if (start < 0) return -1;
   if (hostBuffer !== undefined) return hostBuffer.lastIndexOf(buffer, needle, start);
   for (let i = start; i >= 0; i--) {

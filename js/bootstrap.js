@@ -825,24 +825,24 @@
     __ln_handle_event: handleEvent,
     __ln_worker_event: workerEvent,
     __ln_proc_event: procEvent,
-    __ln_ipc_event: (name, payload) => {
+    __ln_ipc_event: (eventName, payload) => {
       const target = g.process;
       if (target === undefined || target === null) return;
-      target._ipcEvent(name, payload);
+      target._ipcEvent(eventName, payload);
     },
-    __ln_parent_message: (value) => {
-      if (parentMessage !== null) parentMessage(value);
+    __ln_parent_message: (message) => {
+      if (parentMessage !== null) parentMessage(message);
     },
     __ln_parent_message_error: (message) => {
       if (parentMessageError !== null) parentMessageError(message);
     },
-    __ln_detach_buffer: (value) => host.detachBuffer(value),
+    __ln_detach_buffer: (bytes) => host.detachBuffer(bytes),
     __ln_signal: (number) => {
       const target = g.process;
       if (target === undefined || target === null) return;
-      const name = host.signalName(number);
-      if (name === null || name === undefined) return;
-      target.emit(name);
+      const signalName = host.signalName(number);
+      if (signalName === null || signalName === undefined) return;
+      target.emit(signalName);
     },
     __ln_cjs_namespace: requireCjsNamespace,
     __ln_builtin_exports: requireBuiltinExports,

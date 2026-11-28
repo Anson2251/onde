@@ -23,6 +23,7 @@
 //     that we do not have, and the stream is still useful (process stdin on a pipe).
 
 const { Readable, Writable } = require("stream");
+const { Buffer } = require("buffer");
 
 const kMinFd = 0;
 const kMaxFd = 255; // the host boundary types the fd as u8
@@ -159,7 +160,8 @@ function readChunk(stream, size) {
         stream.push(null);
         return;
       }
-      stream.push(chunk);
+      // Node delivers terminal input as Buffers; the host read resolves with a Uint8Array.
+      stream.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
       // See the matching note in js/lib/process.js: the current stream.js fast path emits
       // `data` without requesting the next chunk from a flowing stream.
       if (!stream.destroyed && stream.readableFlowing === true) stream.read(0);

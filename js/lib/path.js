@@ -19,13 +19,13 @@ const CHAR_COLON = 58;
 const CHAR_QUESTION_MARK = 63;
 
 // Windows reserved device names (Node rejects/normalizes these relative paths).
-const WINDOWS_RESERVED_NAMES = [
+const WINDOWS_RESERVED_NAMES = new Set([
   "CON", "PRN", "AUX", "NUL",
   "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
   "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
   "COM\u00b9", "COM\u00b2", "COM\u00b3",
   "LPT\u00b9", "LPT\u00b2", "LPT\u00b3",
-];
+]);
 
 const platform =
   typeof process !== "undefined" && process && typeof process.platform === "string"
@@ -52,7 +52,7 @@ function isWindowsDeviceRoot(code) {
 
 function isWindowsReservedName(path, colonIndex) {
   const devicePart = path.slice(0, colonIndex).toUpperCase();
-  return WINDOWS_RESERVED_NAMES.includes(devicePart);
+  return WINDOWS_RESERVED_NAMES.has(devicePart);
 }
 
 // ---------------------------------------------------------------------------

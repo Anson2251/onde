@@ -354,7 +354,7 @@ EventEmitter.prototype.emit = function emit(type, ...args) {
   const capture = Boolean(this[kCapture]);
 
   if (typeof handler === "function") {
-    const entries = this._pushFrame(type, [handler]);
+    this._pushFrame(type, [handler]);
     try {
       const result = handler.apply(this, args);
       if (capture) this._captureRejection(result, type, args);

@@ -56,7 +56,7 @@ function isBuiltin(name) {
 
 function install(moduleHooks) {
   hooks = moduleHooks;
-  Module.builtinModules = moduleHooks.builtinModules.slice().sort();
+  Module.builtinModules = moduleHooks.builtinModules.toSorted();
   Module._cache = moduleHooks.cache;
   Object.defineProperty(Module, "main", {
     enumerable: false,

@@ -185,10 +185,10 @@ class Hash {
     this[kFinalized] = false;
   }
 
-  update(data, inputEncoding) {
+  update(data, encoding) {
     if (this[kFinalized]) throw hashFinalizedError();
     // Validate/convert before touching the host so a bad argument cannot consume the state.
-    const bytes = hashInput(data, inputEncoding);
+    const bytes = hashInput(data, encoding);
     hostCrypto().hashUpdate(this[kHandle], bytes);
     return this;
   }
@@ -228,9 +228,9 @@ class Hmac {
     this[kFinalized] = false;
   }
 
-  update(data, inputEncoding) {
+  update(data, encoding) {
     if (this[kFinalized]) throw hashFinalizedError();
-    const bytes = hashInput(data, inputEncoding);
+    const bytes = hashInput(data, encoding);
     hostCrypto().hmacUpdate(this[kHandle], bytes);
     return this;
   }

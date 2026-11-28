@@ -14,7 +14,7 @@
 // through the `promises` getter only.
 
 const internal = require("./internal/fs.js");
-const { constants, Stats, Dirent, Dir, FileHandle } = internal;
+const { constants, Stats, Dirent, Dir } = internal;
 
 let BufferCtor = null;
 try {
@@ -83,11 +83,6 @@ function deliver(callback) {
   }
 }
 
-function decodeResult(value, encoding) {
-  if (typeof value === "string") return encoding === null ? Buffer.from(value) : value;
-  return internal.decodeBytes(value, encoding);
-}
-
 function mapCreated(value) {
   return value === "" || value === undefined || value === null ? undefined : value;
 }
@@ -130,14 +125,14 @@ function readFile(pathValue, options, callback) {
 function readFileWithFlags(target, parsed) {
   return internal.promise("open", [target, parsed.flags, 0o666], parsed.signal).then((fd) => {
     internal.trackOpen(fd);
-    const close = () =>
+    const closeFd = () =>
       internal.promise("close", [fd]).then(
         () => undefined,
         () => undefined,
       );
     return internal.readAllFromFd(fd, -1, parsed.signal).then(
-      (bytes) => close().then(() => internal.decodeBytes(bytes, parsed.encoding)),
-      (error) => close().then(() => { throw error; }),
+      (bytes) => closeFd().then(() => internal.decodeBytes(bytes, parsed.encoding)),
+      (error) => closeFd().then(() => { throw error; }),
     );
   });
 }
@@ -304,8 +299,8 @@ function existsSyncInternal(target) {
   }
 }
 
-function copyTimesSync(source, dest, stat) {
-  internal.sync("utimes", [dest, stat.atimeMs, stat.mtimeMs, true]);
+function copyTimesSync(source, dest, stats) {
+  internal.sync("utimes", [dest, stats.atimeMs, stats.mtimeMs, true]);
 }
 
 function ensureDirectorySync(dest) {
@@ -316,11 +311,11 @@ function ensureDirectorySync(dest) {
 
 function cpSyncImpl(src, dest, opts) {
   if (opts.filter !== undefined && !opts.filter(src, dest)) return;
-  let stat = internal.makeStats(internal.sync("lstat", [src]));
-  if (stat.isSymbolicLink() && opts.dereference) {
-    stat = internal.makeStats(internal.sync("stat", [src]));
+  let srcStat = internal.makeStats(internal.sync("lstat", [src]));
+  if (srcStat.isSymbolicLink() && opts.dereference) {
+    srcStat = internal.makeStats(internal.sync("stat", [src]));
   }
-  if (stat.isDirectory()) {
+  if (srcStat.isDirectory()) {
     if (!opts.recursive) throw eisdirError("cp", src);
     const created = ensureDirectorySync(dest);
     const entries = internal.sync("readdir", [src, true]);
@@ -328,17 +323,17 @@ function cpSyncImpl(src, dest, opts) {
       const entry = entries[index];
       cpSyncImpl(path().join(src, entry.name), path().join(dest, entry.name), opts);
     }
-    if (created && opts.preserveTimestamps) copyTimesSync(src, dest, stat);
+    if (created && opts.preserveTimestamps) copyTimesSync(src, dest, srcStat);
     return;
   }
-  if (stat.isSymbolicLink()) {
+  if (srcStat.isSymbolicLink()) {
     const target = internal.decodeBytes(internal.sync("readlink", [src]), "utf8");
-    const link = opts.verbatimSymlinks ? target : path().resolve(path().dirname(src), target);
+    const linkTarget = opts.verbatimSymlinks ? target : path().resolve(path().dirname(src), target);
     if (!opts.force && existsSyncInternal(dest)) {
       if (opts.errorOnExist) throw internal.systemError("EEXIST", "copyfile", dest);
       return;
     }
-    internal.sync("symlink", [link, dest]);
+    internal.sync("symlink", [linkTarget, dest]);
     return;
   }
   if (!opts.force && existsSyncInternal(dest)) {
@@ -346,7 +341,7 @@ function cpSyncImpl(src, dest, opts) {
     return;
   }
   internal.sync("copyFile", [src, dest, 0]);
-  if (opts.preserveTimestamps) copyTimesSync(src, dest, stat);
+  if (opts.preserveTimestamps) copyTimesSync(src, dest, srcStat);
 }
 
 function checkCpDistinct(from, to) {
@@ -391,12 +386,12 @@ function cpWithOptions(src, dest, opts) {
       const followed = original.isSymbolicLink() && opts.dereference
         ? internal.promise("stat", [from]).then((value) => internal.makeStats(value))
         : Promise.resolve(original);
-      return followed.then((stat) => copyEntry(from, to, stat, original));
+      return followed.then((entryStat) => copyEntry(from, to, entryStat, original));
     });
   }
 
-  function copyEntry(from, to, stat, original) {
-    if (stat.isDirectory()) {
+  function copyEntry(from, to, entryStat, original) {
+    if (entryStat.isDirectory()) {
       if (!opts.recursive) throw eisdirError("cp", from);
       return ensureDirectory(to).then((created) =>
         internal.promise("readdir", [from, true]).then((entries) => {
@@ -409,7 +404,7 @@ function cpWithOptions(src, dest, opts) {
           }
           return chain.then(() =>
             created && opts.preserveTimestamps
-              ? internal.promise("utimes", [to, stat.atimeMs, stat.mtimeMs, true])
+              ? internal.promise("utimes", [to, entryStat.atimeMs, entryStat.mtimeMs, true])
               : undefined,
           );
         }),
@@ -418,12 +413,12 @@ function cpWithOptions(src, dest, opts) {
     if (original.isSymbolicLink() && !opts.dereference) {
       return internal.promise("readlink", [from]).then((raw) => {
         const target = internal.decodeBytes(raw, "utf8");
-        const link = opts.verbatimSymlinks ? target : path().resolve(path().dirname(from), target);
+        const linkTarget = opts.verbatimSymlinks ? target : path().resolve(path().dirname(from), target);
         if (!opts.force && existsSyncInternal(to)) {
           if (opts.errorOnExist) throw internal.systemError("EEXIST", "copyfile", to);
           return undefined;
         }
-        return internal.promise("symlink", [link, to]);
+        return internal.promise("symlink", [linkTarget, to]);
       });
     }
     if (!opts.force && existsSyncInternal(to)) {
@@ -432,7 +427,7 @@ function cpWithOptions(src, dest, opts) {
     }
     return internal.promise("copyFile", [from, to, 0]).then(() =>
       opts.preserveTimestamps
-        ? internal.promise("utimes", [to, stat.atimeMs, stat.mtimeMs, true])
+        ? internal.promise("utimes", [to, entryStat.atimeMs, entryStat.mtimeMs, true])
         : undefined,
     );
   }
@@ -459,8 +454,8 @@ function cp(src, dest, options, callback) {
 // the existing entry and reports "nothing created", so the check happens here.
 function existingDirectory(target) {
   try {
-    const stat = internal.makeStats(internal.sync("lstat", [target]));
-    if (!stat.isDirectory()) throw internal.systemError("EEXIST", "mkdir", target);
+    const stats = internal.makeStats(internal.sync("lstat", [target]));
+    if (!stats.isDirectory()) throw internal.systemError("EEXIST", "mkdir", target);
     return true;
   } catch (error) {
     if (error !== null && typeof error === "object" && error.code === "ENOENT") return false;
@@ -540,14 +535,14 @@ function mkdtempSync(prefix, options) {
 }
 
 function mkdtempDisposableSync(prefix, options) {
-  const path = mkdtempSync(prefix, options);
+  const dirPath = mkdtempSync(prefix, options);
   let removed = false;
   return {
-    path,
+    path: dirPath,
     remove() {
       if (removed) return;
       removed = true;
-      rmSync(path, { recursive: true, force: true });
+      rmSync(dirPath, { recursive: true, force: true });
     },
     [Symbol.dispose]() {
       this.remove();
@@ -910,10 +905,10 @@ function symlink(target, pathValue, type, callback) {
   }
   checkCallback(callback);
   symlinkType(type);
-  const link = internal.toPath(pathValue);
-  internal.callAsync("symlink", [internal.toPath(target, "target"), link], {
+  const linkPath = internal.toPath(pathValue);
+  internal.callAsync("symlink", [internal.toPath(target, "target"), linkPath], {
     callback: (error) => {
-      if (error) internal.withDest(error, link);
+      if (error) internal.withDest(error, linkPath);
       callback(error);
     },
   });
@@ -921,31 +916,31 @@ function symlink(target, pathValue, type, callback) {
 
 function symlinkSync(target, pathValue, type) {
   symlinkType(type);
-  const link = internal.toPath(pathValue);
+  const linkPath = internal.toPath(pathValue);
   try {
-    internal.sync("symlink", [internal.toPath(target, "target"), link]);
+    internal.sync("symlink", [internal.toPath(target, "target"), linkPath]);
   } catch (error) {
-    throw internal.withDest(error, link);
+    throw internal.withDest(error, linkPath);
   }
 }
 
 function link(existingPath, newPath, callback) {
   checkCallback(callback);
-  const link = internal.toPath(newPath, "newPath");
-  internal.callAsync("link", [internal.toPath(existingPath, "existingPath"), link], {
+  const linkPath = internal.toPath(newPath, "newPath");
+  internal.callAsync("link", [internal.toPath(existingPath, "existingPath"), linkPath], {
     callback: (error) => {
-      if (error) internal.withDest(error, link);
+      if (error) internal.withDest(error, linkPath);
       callback(error);
     },
   });
 }
 
 function linkSync(existingPath, newPath) {
-  const link = internal.toPath(newPath, "newPath");
+  const linkPath = internal.toPath(newPath, "newPath");
   try {
-    internal.sync("link", [internal.toPath(existingPath, "existingPath"), link]);
+    internal.sync("link", [internal.toPath(existingPath, "existingPath"), linkPath]);
   } catch (error) {
-    throw internal.withDest(error, link);
+    throw internal.withDest(error, linkPath);
   }
 }
 
@@ -1281,11 +1276,11 @@ function writeSync(fd, data, arg3, arg4, arg5) {
 }
 
 function distributeRead(bytes, buffers) {
-  let read = 0;
-  for (let index = 0; index < buffers.length && read < bytes.length; index++) {
-    read += internal.copyInto(bytes.subarray(read), buffers[index], 0);
+  let bytesRead = 0;
+  for (let index = 0; index < buffers.length && bytesRead < bytes.length; index++) {
+    bytesRead += internal.copyInto(bytes.subarray(bytesRead), buffers[index], 0);
   }
-  return read;
+  return bytesRead;
 }
 
 function readv(fd, buffers, position, callback) {
@@ -1490,16 +1485,16 @@ function existsSync(pathValue) {
 
 const kWatchState = Symbol("onde.fs.watchState");
 
-function statSignature(stat) {
+function statSignature(stats) {
   return [
-    stat.mtimeMs,
-    stat.ctimeMs,
-    stat.size,
-    stat.mode,
-    stat.ino,
-    stat.nlink,
-    stat.uid,
-    stat.gid,
+    stats.mtimeMs,
+    stats.ctimeMs,
+    stats.size,
+    stats.mode,
+    stats.ino,
+    stats.nlink,
+    stats.uid,
+    stats.gid,
   ].join(":");
 }
 
@@ -1638,13 +1633,13 @@ function unwatchFile(filename, listener) {
 function snapshotOf(target, recursive) {
   const map = new Map();
   function add(absolute, relative) {
-    let stat;
+    let raw;
     try {
-      stat = internal.sync("lstat", [absolute]);
+      raw = internal.sync("lstat", [absolute]);
     } catch (_) {
       return false;
     }
-    map.set(relative, statSignature(statFrom(stat)) + ":" + kindOf(stat));
+    map.set(relative, statSignature(statFrom(raw)) + ":" + kindOf(raw));
     return true;
   }
   function walk(directory, relative) {
@@ -1675,8 +1670,8 @@ function snapshotOf(target, recursive) {
   return map;
 }
 
-function kindOf(stat) {
-  const value = stat.mode;
+function kindOf(stats) {
+  const value = stats.mode;
   if ((value & constants.S_IFMT) === constants.S_IFDIR) return "dir";
   if ((value & constants.S_IFMT) === constants.S_IFLNK) return "link";
   return "file";

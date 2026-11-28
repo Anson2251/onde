@@ -27,7 +27,6 @@ const hostText = (() => {
 
 const {
   coded: makeError,
-  describeValue: describe,
   invalidArgType,
 } = require("./internal/errors.js");
 

@@ -974,6 +974,24 @@ function isHextet(part) {
   return part.length >= 1 && part.length <= 4 && /^[0-9a-fA-F]+$/.test(part);
 }
 
+function parseSide(side, allowIPv4) {
+  if (side === "") return [];
+  const parts = side.split(":");
+  const groups = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    const last = index === parts.length - 1;
+    if (allowIPv4 && last && part.indexOf(".") !== -1) {
+      if (!isIPv4(part)) return null;
+      groups.push(2);
+      continue;
+    }
+    if (!isHextet(part)) return null;
+    groups.push(1);
+  }
+  return groups;
+}
+
 function isIPv6(value) {
   if (typeof value !== "string" || value.length < 2) return false;
   // A zone identifier is allowed after a non-empty `%` (Node accepts `fe80::1%lo0`).
@@ -994,24 +1012,6 @@ function isIPv6(value) {
 
   // Only the final position of the whole address may be an embedded dotted-quad: with `::` that
   // is the end of the tail, without it the end of the single part list.
-  function parseSide(side, allowIPv4) {
-    if (side === "") return [];
-    const parts = side.split(":");
-    const groups = [];
-    for (let index = 0; index < parts.length; index += 1) {
-      const part = parts[index];
-      const last = index === parts.length - 1;
-      if (allowIPv4 && last && part.indexOf(".") !== -1) {
-        if (!isIPv4(part)) return null;
-        groups.push(2);
-        continue;
-      }
-      if (!isHextet(part)) return null;
-      groups.push(1);
-    }
-    return groups;
-  }
-
   const headGroups = parseSide(head, !hasCompression);
   const tailGroups = parseSide(tail, hasCompression);
   if (headGroups === null || tailGroups === null) return false;

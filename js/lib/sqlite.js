@@ -33,7 +33,6 @@ const { Buffer } = require("buffer");
 const {
   isAnyArrayBuffer,
   isArrayBufferView,
-  byteView,
 } = require("./internal/bytes.js");
 const {
   coded,
@@ -44,7 +43,6 @@ const {
 } = require("./internal/errors.js");
 
 const MAX_INT32 = 2147483647;
-const MAX_SAFE_INTEGER = 9007199254740991;
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 
@@ -640,6 +638,14 @@ class Database {
 // Statement
 // ---------------------------------------------------------------------------------------------
 
+// Node's iterator results are null-prototype and always carry `value` (`null` when done).
+function iteratorResult(finished, value) {
+  const object = Object.create(null);
+  object.done = finished;
+  object.value = value;
+  return object;
+}
+
 class Statement {
   #handle;
   #settings;
@@ -761,16 +767,9 @@ class Statement {
     const statement = this;
     let current = row;
     let done = row === null;
-    // Node's iterator results are null-prototype and always carry `value` (`null` when done).
-    const result = (finished, value) => {
-      const object = Object.create(null);
-      object.done = finished;
-      object.value = value;
-      return object;
-    };
     return {
       next() {
-        if (done) return result(true, null);
+        if (done) return iteratorResult(true, null);
         const value = statement.#shape(current);
         try {
           current = hostSqlite().next(
@@ -783,7 +782,7 @@ class Statement {
           throw error;
         }
         if (current === null) done = true;
-        return result(false, value);
+        return iteratorResult(false, value);
       },
       return() {
         if (!done) {
@@ -791,7 +790,7 @@ class Statement {
           // A stale generation is a no-op in the host; the iterator is simply invalidated.
           hostSqlite().finish(statement.#handle, generation);
         }
-        return result(true, null);
+        return iteratorResult(true, null);
       },
       [Symbol.iterator]() {
         return this;

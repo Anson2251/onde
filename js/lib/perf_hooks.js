@@ -124,9 +124,17 @@ class PerformanceObserver {
   }
 }
 
+function utilizationFrom(idleTime, activeTime) {
+  const total = idleTime + activeTime;
+  return {
+    idle: idleTime,
+    active: activeTime,
+    utilization: total > 0 ? activeTime / total : 0,
+  };
+}
+
 function buildPerformance(timeOrigin, now) {
   const entries = [];
-  const marks = () => entries.filter((entry) => entry.entryType === "mark");
   const findMark = (name) => {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
@@ -158,7 +166,7 @@ function buildPerformance(timeOrigin, now) {
 
   // `active` accumulates wall clock between samples; see the module comment.
   let active = 0;
-  let idle = 0;
+  const idle = 0;
   let last = now();
 
   function sample() {
@@ -166,15 +174,6 @@ function buildPerformance(timeOrigin, now) {
     if (current > last) active += current - last;
     last = current;
     return utilizationFrom(idle, active);
-  }
-
-  function utilizationFrom(idleTime, activeTime) {
-    const total = idleTime + activeTime;
-    return {
-      idle: idleTime,
-      active: activeTime,
-      utilization: total > 0 ? activeTime / total : 0,
-    };
   }
 
   return class Performance {

@@ -61,14 +61,6 @@ function isRegExpValue(value) {
   return value instanceof RegExp;
 }
 
-function invalidReturnValue(expected, name, actual) {
-  const err = new TypeError(
-    `The "${name}" argument must be ${expected}. Received ${describeValue(actual)}`,
-  );
-  err.code = "ERR_INVALID_RETURN_VALUE";
-  return err;
-}
-
 function promiseReturnError(actual) {
   const err = new TypeError(
     'Expected instance of Promise to be returned from the "promiseFn" ' +

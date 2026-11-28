@@ -450,6 +450,24 @@ function parseEmbeddedIPv4(group) {
   return [(values[0] << 8) | values[1], (values[2] << 8) | values[3]];
 }
 
+function parseGroups(str, allowIPv4AtEnd) {
+  if (str === "") return [];
+  const groups = str.split(":");
+  const out = [];
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    if (group === "") throw new Error("invalid ipv6");
+    if (allowIPv4AtEnd && i === groups.length - 1 && group.indexOf(".") !== -1) {
+      const pair = parseEmbeddedIPv4(group);
+      out.push(pair[0], pair[1]);
+    } else {
+      if (!/^[0-9a-fA-F]{1,4}$/.test(group)) throw new Error("invalid ipv6");
+      out.push(parseInt(group, 16));
+    }
+  }
+  return out;
+}
+
 function parseIPv6(input) {
   if (input === "") throw new Error("invalid ipv6");
   let left;
@@ -463,24 +481,6 @@ function parseIPv6(input) {
     if (right.indexOf("::") !== -1) throw new Error("invalid ipv6");
   } else {
     left = input;
-  }
-
-  function parseGroups(str, allowIPv4AtEnd) {
-    if (str === "") return [];
-    const groups = str.split(":");
-    const out = [];
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-      if (group === "") throw new Error("invalid ipv6");
-      if (allowIPv4AtEnd && i === groups.length - 1 && group.indexOf(".") !== -1) {
-        const pair = parseEmbeddedIPv4(group);
-        out.push(pair[0], pair[1]);
-      } else {
-        if (!/^[0-9a-fA-F]{1,4}$/.test(group)) throw new Error("invalid ipv6");
-        out.push(parseInt(group, 16));
-      }
-    }
-    return out;
   }
 
   const leftGroups = parseGroups(left, !compressed);
@@ -816,7 +816,7 @@ function parseSpecialAbsolute(scheme, rest) {
   return parseAuthorityPath(scheme, rest);
 }
 
-function parseOpaquePathAndTail(rest, scheme) {
+function parseOpaquePathAndTail(rest, _scheme) {
   const value = rest;
   const queryIndex = value.indexOf("?");
   const hashIndex = value.indexOf("#");
@@ -873,7 +873,7 @@ function parseFileAbsolute(rest, base) {
   const baseFile = base && base.scheme === "file";
   rest = replaceBackslashes(rest);
   if (rest.slice(0, 2) === "//") {
-    let afterSlashes = rest.slice(2);
+    const afterSlashes = rest.slice(2);
     let end = afterSlashes.search(/[/?#]/);
     if (end === -1) end = afterSlashes.length;
     const authority = afterSlashes.slice(0, end);
@@ -1260,11 +1260,6 @@ function getURLState(url) {
   return state;
 }
 
-function cloneState(state) {
-  return makeState(state.scheme, state.username, state.password, state.hostname,
-    state.port, state.path, state.query, state.fragment, state.opaque);
-}
-
 function getHostForOrigin(state) {
   return state.hostname === null ? "" : state.hostname;
 }
@@ -1431,7 +1426,7 @@ class URL {
     const state = getURLState(this);
     if (state.opaque) return;
     const special = isSpecial(state.scheme);
-    let raw = splitSetterHost(stripTabsNewlines(value), special);
+    const raw = splitSetterHost(stripTabsNewlines(value), special);
     try {
       if (state.scheme === "file") {
         if (raw[0] === "[") {
@@ -1670,7 +1665,7 @@ function isIpv6Hostname(hostname) {
 const forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/;
 const forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/;
 
-Url.prototype.parse = function parse(url, parseQueryString, slashesDenoteHost) {
+Url.prototype.parse = function parse(url, parseQuery, slashesDenoteHost) {
   validateString(url, "url");
 
   let hasHash = false;
@@ -1742,12 +1737,12 @@ Url.prototype.parse = function parse(url, parseQueryString, slashesDenoteHost) {
       this.pathname = simplePath[1];
       if (simplePath[2]) {
         this.search = simplePath[2];
-        if (parseQueryString) {
+        if (parseQuery) {
           this.query = querystring.parse(this.search.slice(1));
         } else {
           this.query = this.search.slice(1);
         }
-      } else if (parseQueryString) {
+      } else if (parseQuery) {
         this.search = null;
         this.query = { __proto__: null };
       }
@@ -1893,10 +1888,10 @@ Url.prototype.parse = function parse(url, parseQueryString, slashesDenoteHost) {
       this.search = rest.slice(questionIdx, hashIdx);
       this.query = rest.slice(questionIdx + 1, hashIdx);
     }
-    if (parseQueryString) {
+    if (parseQuery) {
       this.query = querystring.parse(this.query);
     }
-  } else if (parseQueryString) {
+  } else if (parseQuery) {
     this.search = null;
     this.query = { __proto__: null };
   }
@@ -2137,11 +2132,11 @@ function urlFormat(urlObject, options) {
   return Url.prototype.format.call(urlObject);
 }
 
-function urlParse(url, parseQueryString, slashesDenoteHost) {
+function urlParse(url, parseQuery, slashesDenoteHost) {
   if (url instanceof Url) return url;
 
   const urlObject = new Url();
-  urlObject.parse(url, parseQueryString, slashesDenoteHost);
+  urlObject.parse(url, parseQuery, slashesDenoteHost);
   return urlObject;
 }
 
@@ -2208,8 +2203,9 @@ Url.prototype.resolveObject = function resolveObject(relative) {
         !/^file:?$/.test(relative.protocol) &&
         !hostlessProtocol.has(relative.protocol)) {
       const relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) {
+      while (relPath.length && !relative.host) {
         // keep shifting until a host segment is found
+        relative.host = relPath.shift();
       }
       relative.host ||= "";
       relative.hostname ||= "";
@@ -2516,7 +2512,7 @@ function percentEncodeFilePath(path) {
 
 function fallbackPosixResolve(input) {
   let value = input;
-  let cwd = currentCwd();
+  const cwd = currentCwd();
   if (value[0] !== "/") value = cwd + "/" + value;
   const parts = value.split("/");
   const out = [];

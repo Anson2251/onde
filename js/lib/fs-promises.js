@@ -329,11 +329,11 @@ async function statfs(path, options) {
 // --- links -----------------------------------------------------------------------------------
 
 async function link(existingPath, newPath) {
-  const link = internal.toPath(newPath, "newPath");
-  await internal.promise("link", [internal.toPath(existingPath, "existingPath"), link]).then(
+  const linkPath = internal.toPath(newPath, "newPath");
+  await internal.promise("link", [internal.toPath(existingPath, "existingPath"), linkPath]).then(
     undefined,
     (error) => {
-      throw internal.withDest(error, link);
+      throw internal.withDest(error, linkPath);
     },
   );
 }
@@ -345,11 +345,11 @@ async function symlink(target, path, type) {
       throw internal.invalidArgValue("type", type, "must be one of 'dir', 'file', or 'junction'");
     }
   }
-  const link = internal.toPath(path);
-  await internal.promise("symlink", [internal.toPath(target, "target"), link]).then(
+  const linkPath = internal.toPath(path);
+  await internal.promise("symlink", [internal.toPath(target, "target"), linkPath]).then(
     undefined,
     (error) => {
-      throw internal.withDest(error, link);
+      throw internal.withDest(error, linkPath);
     },
   );
 }

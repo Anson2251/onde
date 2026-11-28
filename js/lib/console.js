@@ -383,7 +383,7 @@ class Console {
     const error = new Error();
     let stack = typeof error.stack === "string" ? error.stack : "";
     const lines = stack.split("\n");
-    if (lines.length > 0 && /^Error/.test(lines[0])) lines.shift();
+    if (lines.length > 0 && lines[0].startsWith("Error")) lines.shift();
     // Drop the frame for `trace` itself; Node uses ErrorCaptureStackTrace with
     // the trace function as the stack's boundary for the same reason.
     if (lines.length > 0 && /(?:^|\W)Console\.trace\b/.test(lines[0])) lines.shift();

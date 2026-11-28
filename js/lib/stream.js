@@ -61,8 +61,6 @@ const { abortError, invalidArgType } = require("./internal/errors.js");
 const DEFAULT_HIGH_WATER_MARK = 16 * 1024;
 const DEFAULT_OBJECT_HIGH_WATER_MARK = 16;
 
-const EMPTY = Buffer.alloc(0);
-
 // ---------------------------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------------------------
@@ -883,7 +881,7 @@ function fromIterable(iterable, opts) {
   }
 
   let reading = false;
-  let finished = false;
+  let isFinished = false;
   let isAsync = typeof iterable[Symbol.asyncIterator] === "function";
   const streamOptions = Object.assign({}, options, {
     objectMode: options.objectMode !== undefined ? Boolean(options.objectMode) : true,
@@ -894,7 +892,7 @@ function fromIterable(iterable, opts) {
       pump();
     },
     destroy(err, cb) {
-      finished = true;
+      isFinished = true;
       if (iterator && typeof iterator.return === "function") {
         let result;
         try {
@@ -923,16 +921,16 @@ function fromIterable(iterable, opts) {
 
   function fail(err) {
     reading = false;
-    finished = true;
+    isFinished = true;
     stream.destroy(err);
   }
 
   // Push one iteration result. Returns false when the pump should stop (EOF, null value or
   // backpressure) and true when the next value should be pulled immediately.
   function accept(result) {
-    if (finished) return false;
+    if (isFinished) return false;
     if (result.done) {
-      finished = true;
+      isFinished = true;
       reading = false;
       stream.push(null);
       return false;
@@ -950,7 +948,7 @@ function fromIterable(iterable, opts) {
   }
 
   function pump() {
-    if (reading || finished) return;
+    if (reading || isFinished) return;
     reading = true;
     if (isAsync) {
       stepAsync();
@@ -969,7 +967,7 @@ function fromIterable(iterable, opts) {
         // A sync iterable that yields promises: switch to the async path for the rest.
         isAsync = true;
         result.then(function onFirstAsync(value) {
-          if (finished) return;
+          if (isFinished) return;
           if (value === null) {
             fail(nullValuesError());
             return;
@@ -996,7 +994,7 @@ function fromIterable(iterable, opts) {
       return;
     }
     result.then(function onAsyncResult(settled) {
-      if (finished) return;
+      if (isFinished) return;
       if (accept(settled)) stepAsync();
     }, fail);
   }
@@ -1494,10 +1492,10 @@ function clearBuffer(stream, state) {
     function onwritev(err) {
       if (called) return;
       called = true;
-      const finished = [];
-      for (let i = 0; i < callbacks.length; i += 1) finished.push(callbacks[i]);
+      const settled = [];
+      for (let i = 0; i < callbacks.length; i += 1) settled.push(callbacks[i]);
       onWriteFinished(stream, state, err, function batch() {
-        for (let i = 0; i < finished.length; i += 1) finished[i](err);
+        for (let i = 0; i < settled.length; i += 1) settled[i](err);
       }, size);
     }
     try {

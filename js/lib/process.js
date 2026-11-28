@@ -102,6 +102,10 @@ function createInput(host, fd) {
     return stream;
   }
   const Readable = requireBuiltin("stream").Readable;
+  // Node delivers pipe data as `Buffer`s, so `chunk + ""` is the bytes as text. The host read op
+  // resolves with a plain `Uint8Array`, whose string form is "104,105,10". Wrap the same bytes in
+  // a Buffer (no copy: the engine already copied the read into its own ArrayBuffer).
+  const Buffer = requireBuiltin("buffer").Buffer;
   const stream = new Readable({
     highWaterMark: 64 * 1024,
     read(size) {
@@ -128,7 +132,7 @@ function createInput(host, fd) {
             stream.push(null);
             return;
           }
-          stream.push(chunk);
+          stream.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
           // The current `stream.js` fast path emits `data` from `push()` without re-arming the
           // next pull, so a flowing fd stream would stop after one chunk. `read(0)` requests the
           // next chunk only when nothing is buffered; it is a no-op once WP3 schedules that
@@ -452,7 +456,7 @@ module.exports = function createProcess(host, EventEmitter, scheduler) {
     removeAllListeners(event) {
       super.removeAllListeners(event);
       if (event === undefined) {
-        for (const [name, number] of this._signals) host.signal(number, false);
+        for (const [, number] of this._signals) host.signal(number, false);
         this._signals.clear();
       } else {
         this._updateSignal(event);

@@ -144,14 +144,6 @@ function isBoxedPrimitiveValue(value) {
   );
 }
 
-function isPromiseLike(value) {
-  return (
-    isObjectLike(value) &&
-    typeof value.then === "function" &&
-    typeof value.catch === "function"
-  );
-}
-
 function constructorName(value) {
   try {
     const proto = Object.getPrototypeOf(value);
@@ -540,7 +532,7 @@ function formatExtraProperties(
     : ctx;
   return (
     " " +
-    container("{", "}", entries, useCtx, indent, value, depth, false, 0)
+    container("{", "}", entries, useCtx, indent, value, depth, false, baseLength)
   );
 }
 
@@ -602,6 +594,10 @@ function renderArray(value, ctx, depth, indent) {
   return container("[", "]", output, ctx, indent, value, depth, grouped);
 }
 
+// Row padding for the aligned layout below; `numeric` picks which side is padded.
+const padStart = (str, len) => String(str).padStart(len, " ");
+const padEnd = (str, len) => String(str).padEnd(len, " ");
+
 // Node groups arrays with more than six entries into aligned rows.  This is
 // the same column calculation Node uses (see internal/util/inspect.js).
 function groupArrayElements(entries, ctx, indent, value) {
@@ -658,8 +654,6 @@ function groupArrayElements(entries, ctx, indent, value) {
       }
     }
   }
-  const padStart = (str, len) => String(str).padStart(len, " ");
-  const padEnd = (str, len) => String(str).padEnd(len, " ");
   const order = numeric ? padStart : padEnd;
   const out = [];
   for (let i = 0; i < outputLength; i += columns) {
@@ -754,7 +748,7 @@ function renderMap(value, ctx, depth, indent) {
     });
   }
   if (opts.sorted) {
-    pairs = pairs.sort((a, b) => (a.keyText < b.keyText ? -1 : a.keyText > b.keyText ? 1 : 0));
+    pairs = pairs.toSorted((a, b) => (a.keyText < b.keyText ? -1 : a.keyText > b.keyText ? 1 : 0));
   }
   const entries = [];
   for (let i = 0; i < max && i < pairs.length; i++) {
@@ -784,7 +778,7 @@ function renderSet(value, ctx, depth, indent) {
   for (const val of value) {
     rendered.push(renderValue(val, ctx, depth - 1, indent + 2));
   }
-  if (opts.sorted) rendered = rendered.sort();
+  if (opts.sorted) rendered = rendered.toSorted();
   const entries = rendered.slice(0, max);
   if (size > max) {
     const more = size - max;
@@ -887,7 +881,7 @@ function renderArrayBuffer(value, ctx, depth, indent) {
     opts.maxArrayLength === null || opts.maxArrayLength === Infinity
       ? bytes.length
       : Math.max(0, Math.min(bytes.length, Math.trunc(opts.maxArrayLength)));
-  let parts = [];
+  const parts = [];
   for (let i = 0; i < max; i++) {
     parts.push(hex(bytes[i], 2, false));
   }
@@ -923,7 +917,7 @@ function renderDataView(value, ctx, depth, indent) {
     `[buffer]: ${renderValue(value.buffer, ctx, depth - 1, indent + 2)}`,
   ];
   if (ctx.options.sorted) {
-    entries = entries.slice().sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    entries = entries.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
   return (
     "DataView " +
@@ -936,7 +930,7 @@ function renderTypedArray(value, ctx, depth, indent) {
   const tag = tagOf(value);
   const length = value.length;
   if (tag === "Buffer" || constructorName(value) === "Buffer") {
-    let parts = [];
+    const parts = [];
     for (let i = 0; i < value.length; i++) {
       parts.push(hex(value[i], 2, false));
     }
@@ -1062,7 +1056,7 @@ function renderObjectValue(value, ctx, depth, indent) {
 // Keys are collected in Node's order: enumerable string keys (integer keys
 // first, as Object.keys returns them), then enumerable symbols.  showHidden
 // appends non-enumerable properties.
-function objectKeys(value, ctx, includeKind) {
+function objectKeys(value, ctx, _includeKind) {
   const opts = ctx.options;
   const out = [];
   const names = Object.getOwnPropertyNames(value);
@@ -2036,10 +2030,10 @@ function getEnv(name) {
 
 function debuglog(section, callback) {
   const enabled = (() => {
-    const debug = getEnv("NODE_DEBUG");
-    if (!debug) return false;
+    const debugEnv = getEnv("NODE_DEBUG");
+    if (!debugEnv) return false;
     const upper = String(section).toUpperCase();
-    return String(debug)
+    return String(debugEnv)
       .toUpperCase()
       .split(/[\s,]+/)
       .some((entry) => entry === upper || entry === "*");
