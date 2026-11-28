@@ -1,0 +1,8 @@
+{
+  "ignorePatterns": [
+    "tuckbox/**",
+    "onde-lab/**",
+    "target/**",
+    "vendor/**"
+  ]
+}

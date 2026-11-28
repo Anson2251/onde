@@ -166,23 +166,43 @@ vendor/          rquickjs-sys 0.14.0 + patched quickjs-ng 0.17.0        [M6]
 
 ## 3. Build and test
 
+`make` is the short form of the commands below. It is a facade over the same cargo commands and
+suite scripts, not a second implementation:
+
+```sh
+make build
+make test                                       # default suites; builds target/debug/onde first
+make test SKIP=ffi,proc                         # skip suites by name (--list shows them)
+make test-all                                   # also net, standalone, stress, soak
+make lint                                       # fmt check + clippy + oxlint + oxfmt, same as CI
+make fmt                                        # rustfmt + oxfmt in place
+make check                                      # lint + test
+make sdk                                        # host SDK (onde.h, libonde-<tuple>.a)
+make sdk-stage                                  # flat release assets under dist/release/v<version>/
+```
+
+The underlying commands, for when a target is too coarse:
+
 ```sh
 cargo test --all                                # 550 tests across the crates
 cargo build -p ln-cli --no-default-features     # no node:sqlite/node:zlib (clear error on require)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
+pnpx oxlint@1.95.0 --deny-warnings js test     # CI uses `npx --yes` for the same version
+pnpx oxfmt@0.80.0 --check js test              # JS/TS formatting; same npx rule in CI
 
 ./test/conformance/run.sh                       # 253/253 corpus cases against target/debug/onde
 RUN=node ./test/conformance/run.sh              # prove the expectations still describe Node
 ./test/differential.sh                          # node vs onde, same stdout + exit code (239)
 ./test/smoke/run.sh                             # 30 CJS + 10 ESM packages, node vs onde
-./test/js/run.sh                                # 85 stdlib suites under node and onde + oracles
+./test/js/run.sh                                # 87 stdlib suites under node and onde + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
 ./test/async/run.sh                             # M6 acceptance: ALS matrix, hooks, 1M promises
 ./test/ffi/run.sh                               # M10 acceptance: C fixture, layout oracle, JS matrix, gates
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
+```
 ./test/net/run.sh                               # M4 acceptance: bench, interop, fdleak, slowloris
 node test/bench/run.js                          # node vs onde: compute, codecs, stdlib (rebuilds release)
 node test/net/coldstart.js target/release/onde  # 25 spawns per expression, median
@@ -201,6 +221,58 @@ name minified lines; frames in user code keep their file, line and column.
 
 `tuckbox` has its own harness: `cd tuckbox && pnpm install && pnpm test` runs every suite under
 both node and onde (see [tuckbox/README.md](../tuckbox/README.md)).
+
+### Formatting: `.editorconfig` owns whitespace
+
+Indent width, line endings, the final newline, trailing whitespace and the line width live in one
+place, `.editorconfig`. `oxfmt` reads it directly for the JS tree, and `rustfmt`'s defaults already
+agree with it (4 spaces, LF, final newline, 100 columns), so neither formatter carries a copy of
+those settings: `.oxfmtrc.json` only lists what it should skip, and there is no `rustfmt.toml`. A
+toolchain bump therefore cannot silently reformat the tree — only an `.editorconfig` edit can.
+
+`make fmt` runs both formatters; `make lint` (and CI) runs both in check mode. They cover `js/` and
+`test/` for JS and the whole cargo workspace for Rust. `tuckbox/`, `onde-lab/` and `vendor/` are
+excluded: the first is its own pnpm project, the others are not ours.
+
+### Lint: `js/` is the strict scope
+
+`.oxlintrc.json` gives `js/` an override the rest of the tree does not get. Everything keeps
+oxlint's `correctness` default; `js/` also enforces:
+
+- the bug-finding rules of `suspicious` and `perf` — `no-shadow`, `block-scoped-var`,
+  `no-extend-native`, `no-unmodified-loop-condition`, `unicorn/no-array-sort`,
+  `unicorn/no-instanceof-builtins`, `oxc/no-accumulating-spread` and the rest;
+- `no-undef`, with `env.node` and the host-injected `__ln_host` global declared, so a misspelled
+  builtin is a lint error instead of a runtime surprise;
+- declaration hygiene: `no-var`, `prefer-const`.
+
+oxlint 1.95 cannot attach a category to an override (only `files`, `excludeFiles`, `env`, `globals`,
+`plugins`, `jsPlugins` and `rules`), so the adopted rules are listed one at a time. Tightening lands
+a pass at a time: a rule joins that list when the tree passes it, and the pass that wrote the block
+also renamed the 42 locals `no-shadow` reported and hoisted the six nested helpers
+`unicorn/consistent-function-scoping` found out of their closures.
+
+Four rules are explicitly `off` in the override and `no-useless-return` is left unadopted, each
+because the tree does the reported thing on purpose:
+
+- `no-underscore-dangle` — `_handle`, `_readableState`, `_transform`, `_final` are the properties
+  Node's public API exposes; renaming them would break the mirror.
+- `no-await-in-loop` — one protocol step at a time is the semantics (a SQLite cursor advance, the
+  test runner's cases); parallelising changes observable ordering.
+- `unicorn/prefer-add-event-listener` — `signal.onabort = wrapper` and the `dest.on` capability
+  probe in `pipe` are the emulated API surface, not internal subscriptions.
+- `typescript/no-extraneous-class` — `MessageChannel` and friends are constructor-only classes
+  because that is the API; plain JS has no other way to expose one.
+- `no-useless-return` — the event dispatchers (`js/bootstrap.js`, `async_hooks`, `child_process`,
+  `internal/http`) end every switch case with an explicit `return;` so a case cannot fall into the
+  next one, which is exactly what the rule asks to delete.
+
+The global `off` entries above the override stay too: `new Array(n)` sizes buffers, and the regexes
+`no-control-regex` reports match control characters by design. `style`, `pedantic` and `restriction`
+stay off tree-wide — measured on `js/` they are dominated by rules that fight the code on purpose
+(`no-magic-numbers`, `curly`, `max-lines`, `no-continue`, `no-inline-comments`,
+`require-unicode-regexp`, `unicorn/prefer-code-point` for the UTF-16 walks that mirror Node's,
+`unicorn/no-null`, `no-bitwise`). Adopting those is a rewrite, not a lint gate.
 
 ### What each harness is for
 

@@ -142,6 +142,9 @@ Every optional module is a Cargo feature, and all of them are on by default:
 `zlib-payload` and `zstd-payload` are not modules: they carry the payload decoders a compiled app
 needs for `--compress zlib` and `--compress zstd`.
 
+`make build` and `make release` wrap the first two; `make test`, `make lint` and `make check`
+cover the checks, and `make sdk` builds the host SDK.
+
 ```sh
 cargo build                                                         # every module
 cargo build --release

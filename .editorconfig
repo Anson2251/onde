@@ -1,0 +1,29 @@
+# Whitespace rules live here and nowhere else. oxfmt reads this file (indent, end_of_line,
+# insert_final_newline, max_line_length); rustfmt's defaults match it, so neither formatter
+# carries its own copy of these settings.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 100
+
+[*.{js,ts}]
+indent_size = 4
+
+[*.rs]
+indent_size = 4
+
+[*.{c,h}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+# Hard wraps are not used, but two trailing spaces are a Markdown line break.
+trim_trailing_whitespace = false

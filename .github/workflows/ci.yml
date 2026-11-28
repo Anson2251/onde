@@ -10,11 +10,11 @@ on:
     - cron: "17 3 * * *"
 
 # Three stages:
-#   lint  -> fmt, clippy
-#   build -> one release artifact per host triple: the default build, the minimal build and (on
-#            Linux) the feature variants. Every binary is built once, in the profile this project
-#            ships.
-#   test  -> downloads that artifact and runs the harnesses with ONDE/... pointing at it.
+#   lint  -> `make lint`: rustfmt, clippy, oxlint, oxfmt (the runner has no pnpm, so npx is forced)
+#   build -> one release artifact per host triple: the default build, the minimal build, (on
+#            Linux) the feature variants, and the host SDK cell. Every binary is built once, in
+#            the profile this project ships.
+#   test  -> downloads that artifact and runs `test/run.sh` with ONDE/... pointing at it.
 #
 # CI is a semi-formal release channel, so the runtime under test is a release build. `cargo test
 # --all` still uses the dev profile for its test binaries; the harnesses use the release artifact.
@@ -32,10 +32,14 @@ jobs:
           components: rustfmt, clippy
       - name: libffi
         run: sudo apt-get update && sudo apt-get install -y libffi-dev
-      - name: fmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: lint
+        # The Makefile target runs the same rustfmt/clippy/oxlint/oxfmt commands as a developer.
+        # Force npx: GitHub's image has Node but not pnpm, and installing pnpm for two binaries is
+        # not worth it.
+        run: make lint OXLINT="npx --yes" OXFMT="npx --yes"
 
   build:
     name: build (${{ matrix.os }})
@@ -85,6 +89,18 @@ jobs:
         with:
           name: onde-${{ steps.host.outputs.triple }}
           path: dist/*
+          if-no-files-found: error
+      - name: build and stage the host SDK
+        # One cell per runner. The full eight-cell release merges these `SHA256SUMS.<tuple>`
+        # fragments; this job publishes what this machine can actually build.
+        run: make sdk-stage
+      - name: upload the SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: onde-sdk-${{ steps.host.outputs.triple }}
+          path: |
+            dist/sdk/**
+            dist/release/**
           if-no-files-found: error
 
   test:
@@ -152,51 +168,26 @@ jobs:
             echo "ONDE_SQLITE=$PWD/dist/onde-sqlite"
             echo "ONDE_ZLIB=$PWD/dist/onde-zlib"
           } >> "$GITHUB_ENV"
-      - name: Rust tests
-        run: cargo test --all
-      - name: feature flags (node:sqlite/node:zlib on, off and mixed)
-        if: runner.os == 'Linux'
-        run: ./test/features/run.sh
-      - name: M7 diagnostics (trace structure, timing, trace-gc)
-        run: ./test/diag/run.sh
-      - name: M7 node:test pilot (same transcript under node and onde)
-        run: ./test/node-test/run.sh
-      - name: onde:ffi (fixture, layout oracle, inference/struct/callback/lifetime matrix)
-        # Uses the prebuilt release and feature-off binaries; only the C fixture and the layout
-        # oracle are compiled here.
-        run: ./test/ffi/run.sh
-      - name: conformance corpus (release, bytecode snapshot)
-        # The release profile boots from the build-time bytecode snapshot (m7-plan criterion 9),
-        # so this is the shipped path, not the debug source path.
-        run: ./test/conformance/run.sh
-      - name: permissions (CLI matrix, inventory, deny-all sweep, race)
-        # The deny-all sweep reuses the conformance corpus with every grant withheld; it is the
-        # guarantee that a gate is wired, not a copy of the corpus's expected output.
-        run: ./test/perm/run.sh
-      - name: stdlib tests (node + onde) and Node oracles
-        run: ./test/js/run.sh
-      - name: M5 acceptance (children, workers, shared memory, signals)
-        run: ./test/proc/run.sh
-      - name: M6 acceptance (async_hooks, AsyncLocalStorage, 1M promises)
-        # The retention bound is only meaningful on an optimized build, so this leg runs the
-        # release binary, as the rest of the harnesses do.
-        run: ONDE="$ONDE_RELEASE" ./test/async/run.sh
+      - name: suites
+        shell: bash
+        # One entry, one summary. The suites this job does not own are skipped by name:
+        # differential belongs to corpus-selftest, net/stress/soak to the acceptance and nightly
+        # jobs, and features runs only on Linux (the variants are built there).
+        run: |
+          set -euo pipefail
+          skip="differential,net,stress,soak"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            skip="$skip,features"
+          fi
+          ./test/run.sh --all --skip "$skip"
       - name: vendored engine patch is exactly what the docs claim
         # The vendored tree must be pristine quickjs-ng 0.17.0 plus this patch. Reversing it is
         # the cheapest way to prove nobody hand-edited the vendor copy.
         run: cd vendor/rquickjs-sys && patch -p1 -R --dry-run < ../job-queue-hook.patch
-      - name: M3 acceptance programs (cat, wc -l, cp -r)
-        run: ./test/programs/run.sh
-      - name: module smoke set (30 CJS + 10 ESM packages)
-        run: ./test/smoke/run.sh
       - name: ondec smoke
         shell: bash
         run: |
           "$ONDEC" --version | grep -q "^ondec "
-      - name: standalone builds (archive + ondec + a linked app that runs)
-        # The archive is built for this cell and a real app is linked, run, and checked after its
-        # sources are deleted. This is the matrix's first real cell check, not a unit test.
-        run: ./test/standalone/run.sh
       - name: smoke
         shell: bash
         run: |
