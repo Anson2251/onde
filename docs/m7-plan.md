@@ -246,7 +246,7 @@ Scope, deliberately small:
 | `test`, `describe`, `it`, `before`, `after`, `beforeEach`, `afterEach` | `mock`, `snapshot`, `--experimental-test-coverage` |
 | `t.test()` subtests, `t.diagnostic()`, `t.plan(n)`, `t.assert` (thin alias over `node:assert`) | watch mode, `--test-only`, `--test-name-pattern` |
 | async tests (returned promise), callback tests (`(t, done)`), timeouts (`{timeout}` and per-test override) | reporters beyond the default; TAP output |
-| `onde --test [FILES…]`, discovery of `*.test.js` and `test/**/*.js`, exit code 1 on failure | running the existing conformance corpus |
+| `onde --test [FILES…]`, discovery of `*.test.js` and `test/**/*.js` (the no-path rule also takes `*.test.js` from the current directory), exit code 1 on failure | running the existing conformance corpus |
 
 The pilot (`test/node-test/`) runs five real conformance cases through the same file under
 `node --test` and `onde --test`, and CI asserts the two transcripts match. That is the whole point

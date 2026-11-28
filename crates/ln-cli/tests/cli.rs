@@ -727,3 +727,86 @@ fn missing_entry_file_reports_cannot_find_module() {
     assert!(text.contains("Cannot find module"), "{text}");
     assert!(!text.contains("panicked"), "{text}");
 }
+
+// --- D8/D9: `--test` discovery and the heap-cap diagnostic -------------------------------------
+
+/// Run `onde` with a working directory, for the discovery rules that are relative to `cwd`.
+fn onde_in(dir: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_onde"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("spawn onde")
+}
+
+#[test]
+fn test_discovers_cwd_test_files_without_arguments() {
+    let tree = TempTree::new("test-cwd");
+    tree.file(
+        "math.test.js",
+        "const { test } = require('node:test');\ntest('math adds', () => {});\n",
+    );
+    // Beside the test file but not named `*.test.js`: neither of Node's default rules wants it.
+    tree.file(
+        "helper.js",
+        "throw new Error('helper.js must not be discovered');\n",
+    );
+    // The cwd rule is non-recursive; a subdirectory needs a named path (or `test/`).
+    tree.file(
+        "sub/nested.test.js",
+        "throw new Error('nested.test.js must not be discovered');\n",
+    );
+
+    let output = onde_in(&tree.0, &["--test"]);
+
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert!(
+        stdout(&output).contains("✔ math adds"),
+        "stdout: {}",
+        stdout(&output)
+    );
+    assert!(stderr(&output).is_empty(), "stderr: {}", stderr(&output));
+}
+
+#[test]
+fn test_discovers_test_dir_and_cwd_test_files_together() {
+    let tree = TempTree::new("test-dir-and-cwd");
+    tree.file(
+        "test/legacy.js",
+        "const { test } = require('node:test');\ntest('legacy passes', () => {});\n",
+    );
+    tree.file(
+        "math.test.js",
+        "const { test } = require('node:test');\ntest('cwd passes', () => {});\n",
+    );
+
+    let output = onde_in(&tree.0, &["--test"]);
+
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("✔ legacy passes"), "stdout: {text}");
+    assert!(text.contains("✔ cwd passes"), "stdout: {text}");
+    assert!(text.contains("ℹ tests 2"), "stdout: {text}");
+}
+
+#[test]
+fn heap_cap_oom_prints_a_fatal_diagnostic_not_null() {
+    let path = script(
+        "oom.js",
+        "const held = [];\n\
+         for (let i = 0; i < 10000000; i += 1) held.push({ i, s: 'x'.repeat(100) });\n",
+    );
+    let output = onde(&["--max-old-space-size", "16", path.to_str().unwrap()]);
+    let text = stderr(&output);
+
+    assert_eq!(code(&output), 1, "stderr: {text}");
+    assert!(
+        text.contains("FATAL ERROR: JavaScript heap out of memory"),
+        "stderr: {text}"
+    );
+    // The defect was the literal `null` line; it must be gone, not merely followed by the cause.
+    assert!(
+        !text.lines().any(|line| line.trim() == "null"),
+        "stderr: {text}"
+    );
+}

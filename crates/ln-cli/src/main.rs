@@ -89,7 +89,8 @@ struct Cli {
     #[arg(long = "trace-buffer-mb", value_name = "MB", default_value_t = 4)]
     trace_buffer_mb: usize,
 
-    /// Run test files instead of a script (`node:test`; discovers `*.test.js`)
+    /// Run test files instead of a script (`node:test`; with no FILE, discovers `test/**/*.js` and
+    /// `*.test.js` in the current directory)
     #[arg(long = "test")]
     test: bool,
 
@@ -468,16 +469,19 @@ fn run_tests(cli: &Cli, exe: &str, options: &RunOptions) -> i32 {
 
 /// Resolve the paths `onde --test` should run, sorted and deduplicated.
 ///
-/// Two discovery rules, both from the plan's table: a named file is run as named and a named
-/// directory is searched for `*.test.js`; with no path at all every `.js` under `test/` is a test
-/// file, which is Node's `test/**/*.js` rule. Sorting keeps the transcript deterministic (the
-/// runner is sequential, so discovery order is execution order).
+/// Three discovery rules: a named file is run as named, a named directory is searched for
+/// `*.test.js`, and with no path at all both of Node's default rules apply — every `.js` under
+/// `test/` (`test/**/*.js`) and every `*.test.js` directly in the current directory. The last rule
+/// is what makes `onde --test` work in a directory that holds only `math.test.js`; it is
+/// non-recursive, so discovery does not walk the whole working tree. Sorting keeps the transcript
+/// deterministic (the runner is sequential, so discovery order is execution order).
 fn discover_tests(requested: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     if requested.is_empty() {
         if Path::new("test").is_dir() {
             collect_test_files(Path::new("test"), true, &mut files)?;
         }
+        collect_cwd_test_files(&mut files)?;
     } else {
         for path in requested {
             let metadata = fs::metadata(path)
@@ -529,6 +533,30 @@ fn collect_test_files(
             && path.extension().is_some_and(|extension| extension == "js")
             && (every_js || is_test_file_name(&path))
         {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Collect `*.test.js` files directly in the current directory.
+///
+/// This is Node's default rule when neither `--test` nor a positional path names anything: a test
+/// file beside the code is discovered without `test/` existing. Only the top level is read, so a
+/// large working tree is not walked; subdirectories keep needing a named path (or `test/**/*.js`).
+fn collect_cwd_test_files(files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(".").map_err(|error| format!("cannot read '.': {error}"))?;
+    let mut entries = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read '.': {error}"))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot stat '{}': {error}", path.display()))?;
+        if file_type.is_file() && is_test_file_name(&path) {
             files.push(path);
         }
     }
