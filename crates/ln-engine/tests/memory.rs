@@ -112,3 +112,36 @@ fn gc_runs_and_the_threshold_is_accepted() {
         .eval_global("globalThis.__after_gc = true;", "<gc>")
         .expect("engine still evaluates");
 }
+
+/// Allocate in small steps so the failing allocation is the one that fills the last bytes of the
+/// cap. QuickJS then cannot allocate the `InternalError` object that would describe the failure
+/// (`JS_ThrowError2` falls back to throwing `null`), which used to reach the CLI as the literal
+/// string `null`.
+const ALLOCATE_IN_SMALL_STEPS: &str = "\
+    var kept = [];\n\
+    for (;;) { kept.push({ s: 'x'.repeat(100) }); }\n";
+
+#[test]
+fn the_unallocatable_error_object_becomes_the_fatal_oom_diagnostic() {
+    let engine = Engine::new().expect("engine");
+    engine.set_memory_limit(limit_with_headroom(&engine));
+
+    let error = engine
+        .eval_global(ALLOCATE_IN_SMALL_STEPS, "<memory-limit>")
+        .expect_err("the loop crosses the limit");
+    // The engine's fallback sentinel is `null`; the boundary turns it into the line the CLI
+    // prints, so a report reader sees a cause instead of `null`.
+    assert_eq!(error.body(), ln_engine::OUT_OF_MEMORY_MESSAGE);
+
+    engine.set_memory_limit(0);
+}
+
+#[test]
+fn a_thrown_null_without_a_cap_keeps_its_javascript_meaning() {
+    let engine = Engine::new().expect("engine");
+    let error = engine
+        .eval_global("throw null;", "<throw-null>")
+        .expect_err("the throw is an exception");
+    assert_eq!(error.display, "null");
+    assert_eq!(error.body(), "null");
+}

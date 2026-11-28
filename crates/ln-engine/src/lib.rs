@@ -1002,7 +1002,52 @@ fn caught_from_error<'js>(ctx: &Ctx<'js>, error: js::Error) -> CaughtError {
     }
 }
 
+/// The line onde prints when a heap-capped run dies on QuickJS's out-of-memory sentinel.
+///
+/// Node's fatal OOM line is the shape users and tooling know; while onde cannot use V8's exact
+/// text, the `FATAL ERROR:` prefix and the "JavaScript heap out of memory" cause are the two
+/// things a reader recognises. The exit status is 1 (see D9 in the report).
+pub const OUT_OF_MEMORY_MESSAGE: &str = "FATAL ERROR: JavaScript heap out of memory";
+
+/// True when this engine enforces a heap cap (`--max-old-space-size`, a worker's
+/// `resourceLimits.maxOldGenerationSizeMb`).
+///
+/// `malloc_limit == 0` means unlimited (the engine's convention). The cap is the only
+/// discriminator QuickJS leaves for the out-of-memory sentinel: [`caught_from_value`] cannot see
+/// the failed allocation itself, and an uncaught `null` under a cap is the one shape that can be
+/// the engine's OOM. Without a cap the value keeps its JavaScript meaning and is rendered as
+/// `null`.
+fn has_memory_limit(ctx: &Ctx<'_>) -> bool {
+    let mut usage = std::mem::MaybeUninit::<js::qjs::JSMemoryUsage>::uninit();
+    // SAFETY: `ctx` is live, so `JS_GetRuntime` reads a valid runtime; `JS_ComputeMemoryUsage`
+    // fills the whole `JSMemoryUsage` (plain `int64_t` counts), so `assume_init` is sound.
+    let malloc_limit = unsafe {
+        let runtime = js::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
+        js::qjs::JS_ComputeMemoryUsage(runtime, usage.as_mut_ptr());
+        usage.assume_init().malloc_limit
+    };
+    malloc_limit > 0
+}
+
 fn caught_from_value<'js>(ctx: &Ctx<'js>, value: js::Value<'js>) -> CaughtError {
+    // QuickJS turns an allocation failure it cannot describe into a thrown `null`
+    // (`JS_ThrowError2`: "out of memory: throw JS_NULL to avoid recursing"), and a `null` thrown
+    // by user code is the same value. A memory cap is what makes the first possible: with no cap
+    // the only sentinel source is a failed C allocation, which is not something a JavaScript
+    // program can recover from anyway. Render the capped case as a diagnostic *before*
+    // `String(null)` allocates anything, so it cannot fall back to the literal `"null"`, and
+    // leave `throw null` meaningful everywhere else.
+    if value.is_null() && has_memory_limit(ctx) {
+        return CaughtError {
+            name: "InternalError".to_owned(),
+            message: "JavaScript heap out of memory".to_owned(),
+            stack: None,
+            display: OUT_OF_MEMORY_MESSAGE.to_owned(),
+            is_error: false,
+            code: None,
+        };
+    }
+
     let display = stringify(ctx, value.clone());
 
     // A thrown value can be an `Error` (from a job, or from `throw` inside a callback), in which
