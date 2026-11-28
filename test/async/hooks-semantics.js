@@ -66,7 +66,6 @@ assert.ok(
 ok("monotonic ids");
 
 // --- a promise chain reports init for the derived promise, then promiseResolve ----------------
-let parentId = 0;
 const derived = Promise.resolve()
   .then(() => {
     return 1;

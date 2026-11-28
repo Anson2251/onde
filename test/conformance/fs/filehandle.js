@@ -1,6 +1,5 @@
 "use strict";
 // fs/promises: FileHandle read/write/stat, close idempotence and EBADF after close.
-const fs = require("fs");
 const fsp = require("fs/promises");
 const os = require("os");
 const path = require("path");

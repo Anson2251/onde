@@ -64,10 +64,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function closed(socket) {
-  return new Promise((resolve) => socket.once("close", resolve));
-}
-
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 }

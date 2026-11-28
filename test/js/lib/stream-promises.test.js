@@ -20,10 +20,6 @@ function record(condition, detail) {
   }
 }
 
-function ok(value, message) {
-  record(Boolean(value), `${message} (expected truthy, got ${String(value)})`);
-}
-
 function eq(actual, expected, message) {
   record(actual === expected, `${message} (expected ${String(expected)}, got ${String(actual)})`);
 }
@@ -239,7 +235,7 @@ async function run() {
     consoleObject && typeof consoleObject.log === "function"
       ? consoleObject.log.bind(consoleObject)
       : function print(line) {
-          globalThis.__ln_print ? globalThis.__ln_print(line) : null;
+          if (globalThis.__ln_print) globalThis.__ln_print(line);
         };
 
   if (failures.length > 0) {

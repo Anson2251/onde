@@ -284,7 +284,6 @@ section("EventTarget");
     function () { new EventTarget().addEventListener("x", 3); },
     "TypeError", "ERR_INVALID_ARG_TYPE", "addEventListener rejects a non-callable listener"
   );
-  let noOpCalls = 0;
   new EventTarget().addEventListener("x", null);
   new EventTarget().removeEventListener("x", undefined);
   ok(true, "add/removeEventListener tolerate null and undefined listeners");

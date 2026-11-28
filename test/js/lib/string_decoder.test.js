@@ -241,7 +241,6 @@ is(new StringDecoder("utf8").write(from([0x61])), "a", "utf8 ascii");
 }
 
 {
-  const decoder = new StringDecoder("base64");
   is(writeAll("base64", [0x68, 0x65, 0x6c, 0x6c, 0x6f], 1), "aGVsbG8=", "base64 byte-by-byte");
 }
 

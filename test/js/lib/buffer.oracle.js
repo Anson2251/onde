@@ -58,10 +58,6 @@ function renderValue(value) {
   return String(value);
 }
 
-function renderBuffer(buffer) {
-  return hex(buffer) + "@" + buffer.length;
-}
-
 function mulberry32(seed) {
   let state = seed >>> 0;
   return function random() {

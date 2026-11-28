@@ -27,7 +27,6 @@ function bench(name, fn) {
 // 1 MB is what a `buf.indexOf` over a real file costs.
 const KB = Buffer.alloc(1024, 0x61);
 const B64 = KB.toString("base64");
-const HEX = KB.toString("hex");
 const MB = Buffer.alloc(1024 * 1024, 0x61);
 MB[1000000] = 0;
 

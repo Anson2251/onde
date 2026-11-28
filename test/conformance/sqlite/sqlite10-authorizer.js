@@ -7,7 +7,7 @@ db.exec("CREATE TABLE data(a)");
 db.exec("INSERT INTO data VALUES (1)");
 
 const seen = [];
-db.setAuthorizer((action, arg1, arg2, database, trigger) => {
+db.setAuthorizer((action, _arg1, _arg2, _database, _trigger) => {
   seen.push(action);
   return constants.SQLITE_OK;
 });

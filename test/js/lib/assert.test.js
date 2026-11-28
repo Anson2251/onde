@@ -17,16 +17,6 @@ function show(value) {
   }
 }
 
-function ok(condition, label, detail) {
-  checks++;
-  if (condition) {
-    console.log("ok " + label);
-  } else {
-    failures++;
-    console.log("not ok " + label + (detail ? " - " + detail : ""));
-  }
-}
-
 function is(actual, expected, label) {
   checks++;
   if (Object.is(actual, expected)) {

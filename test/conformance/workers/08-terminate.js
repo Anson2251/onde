@@ -1,4 +1,3 @@
-const path = require("path");
 const { Worker } = require("worker_threads");
 const worker = new Worker("while (true) {}", { eval: true });
 worker.on("online", () => {

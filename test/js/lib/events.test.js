@@ -556,7 +556,7 @@ async function run() {
   const log = consoleObject && typeof consoleObject.log === "function"
     ? consoleObject.log.bind(consoleObject)
     : function print(line) {
-        globalThis.__ln_print ? globalThis.__ln_print(line) : null;
+        if (globalThis.__ln_print) globalThis.__ln_print(line);
       };
 
   if (failures.length > 0) {
