@@ -2,7 +2,7 @@
 
 // Calls and returns (§2.1, §7): every scalar round-trip, variadics, `errno`, buffers, lifetime.
 
-const { test, run, assert, equal, throwsCode, LIBC } = require("./harness.js");
+const { test, run, assert, equal, throwsCode } = require("./harness.js");
 const ffi = require("onde:ffi");
 
 const path = process.env.ONDE_FFI_FIXTURE;
@@ -101,7 +101,7 @@ test("errno is read after the call and cleared by errno()", () => {
 });
 
 test("buffer and buffer_length read one view at call time", () => {
-  const libc = ffi.dlopen(LIBC, {
+  const libc = ffi.dlopen(ffi.libcName, {
     write: { args: [ffi.i32, ffi.buffer, ffi.buffer_length], ret: ffi.isize },
   });
   const bytes = new Uint8Array([10]);

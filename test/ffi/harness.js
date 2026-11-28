@@ -6,10 +6,6 @@
 // `node:test`; a test is a named function that throws on failure. Each file prints a summary and
 // sets the exit code, which is what `run.sh` checks.
 
-// The C library's name differs on the two supported platforms. Tests use this instead of
-// hardcoding the macOS spelling.
-const LIBC = process.platform === "darwin" ? "libc.dylib" : "libc.so.6";
-
 const cases = [];
 
 function test(name, fn) {
@@ -74,4 +70,4 @@ function render(value) {
   }
 }
 
-module.exports = { test, run, assert, equal, throwsCode, render, LIBC };
+module.exports = { test, run, assert, equal, throwsCode, render };

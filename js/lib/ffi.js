@@ -38,6 +38,9 @@ const {
 const target = ffiHost.target();
 const POINTER_BITS = target.pointerBits;
 const LONG_BITS = target.longBits;
+// The C library's soname differs by libc and OS. The host reports it so scripts do not hardcode
+// `libc.dylib` or `libc.so.6`.
+const LIBC_NAME = target.libcName;
 
 const VALUES = Symbol("onde.ffi.struct.values");
 const TYPED = Symbol("onde.ffi.typed");
@@ -1826,6 +1829,7 @@ module.exports = {
   ref,
   revive,
   errno,
+  libcName: LIBC_NAME,
   ptr,
   read,
   toArrayBuffer,

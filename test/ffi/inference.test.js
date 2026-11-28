@@ -5,7 +5,7 @@
 // A declared signature is authoritative; typed values carry their type; untyped primitives are
 // inferred only when they are unambiguous, and everything else throws with the position named.
 
-const { test, run, assert, equal, throwsCode, LIBC } = require("./harness.js");
+const { test, run, assert, equal, throwsCode } = require("./harness.js");
 const ffi = require("onde:ffi");
 
 const path = process.env.ONDE_FFI_FIXTURE;
@@ -137,7 +137,7 @@ test("a declared return may not change ABI class", () => {
 });
 
 test("a pointer return may be refined to a callback", () => {
-  const libc = ffi.dlopen(LIBC, {
+  const libc = ffi.dlopen(ffi.libcName, {
     dlopen: { args: [ffi.cstring, ffi.i32], ret: ffi.Ptr },
     dlsym: { args: [ffi.Ptr, ffi.cstring], ret: ffi.Ptr },
   });

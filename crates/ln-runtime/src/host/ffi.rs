@@ -267,6 +267,7 @@ pub(crate) fn install<'js>(
                         "longBits",
                         (std::mem::size_of::<std::os::raw::c_long>() * 8) as u32,
                     )?;
+                    info.set("libcName", target_libc())?;
                     Ok(info)
                 },
             )?,
@@ -862,6 +863,30 @@ pub(crate) fn install<'js>(
 
     host.set("ffi", ffi)?;
     Ok(())
+}
+
+/// The C library's loader name for the target this binary was built for.
+///
+/// This is a host fact, not a script constant: glibc, musl and macOS do not share a soname. The
+/// supported targets are checked by `ln-ffi`'s compile-time gate, so the fallback is unreachable
+/// in a build that compiles.
+fn target_libc() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "libc.dylib"
+    }
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    {
+        "libc.so"
+    }
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    {
+        "libc.so.6"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        "libc.so.6"
+    }
 }
 
 fn ffi_error<'js>(ctx: &js::Ctx<'js>, error: FfiError) -> js::Error {

@@ -135,7 +135,7 @@ Measured on the pinned engine (2026-11-13):
 
 | Module | Status | Notes |
 |---|---|---|
-| `onde:ffi` | 🟠 M10 | `dlopen` over libffi. Not a Node module and not in `module.builtinModules`: reached only as `onde:ffi` (through `require` or `import`), absent from a `--no-default-features` build, and gated at run time by `ffi.load`. Surface: `dlopen(path, declarations?)` → `{ path, symbols, call, fn, close }`, the scalar type tokens plus `Ptr`/`CArray`/`Struct`/`Callback`, `ref`, `read.*`, `ptr`, `toArrayBuffer`, `CString`, `voidType`, `errno()`, `revive()` and JSON envelopes. Test: `test/ffi/run.sh` |
+| `onde:ffi` | 🟠 M10 | `dlopen` over libffi. Not a Node module and not in `module.builtinModules`: reached only as `onde:ffi` (through `require` or `import`), absent from a `--no-default-features` build, and gated at run time by `ffi.load`. Surface: `dlopen(path, declarations?)` → `{ path, symbols, call, fn, close }`, the scalar type tokens plus `Ptr`/`CArray`/`Struct`/`Callback`, `ref`, `read.*`, `ptr`, `toArrayBuffer`, `CString`, `voidType`, `libcName`, `errno()`, `revive()` and JSON envelopes. Test: `test/ffi/run.sh` |
 
 ## 3. Divergences (deliberate, tested)
 

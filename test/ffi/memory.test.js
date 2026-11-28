@@ -3,7 +3,7 @@
 // Memory and lifetime (§8): zero-copy external buffers, the deallocator contract, `CString`,
 // one-shot reads and `close()`'s live-reference rule.
 
-const { test, run, assert, equal, throwsCode, LIBC } = require("./harness.js");
+const { test, run, assert, equal, throwsCode } = require("./harness.js");
 const ffi = require("onde:ffi");
 
 const path = process.env.ONDE_FFI_FIXTURE;
@@ -62,7 +62,7 @@ test("one-shot reads cover every scalar width", () => {
 });
 
 test("a deallocator-backed buffer counts as a live reference for close()", () => {
-  const sys = ffi.dlopen(LIBC, {
+  const sys = ffi.dlopen(ffi.libcName, {
     dlopen: { args: [ffi.cstring, ffi.i32], ret: ffi.Ptr },
     dlsym: { args: [ffi.Ptr, ffi.cstring], ret: ffi.Ptr },
   });

@@ -3,7 +3,7 @@
 // The acceptance example from docs/ffi-plan.md §2.1: open and close an in-memory SQLite database
 // through `dlopen`. Skipped when the system library is absent, exactly as the plan allows.
 
-const { test, run, assert, equal, throwsCode, LIBC } = require("./harness.js");
+const { test, run, assert, equal, throwsCode } = require("./harness.js");
 const ffi = require("onde:ffi");
 
 function openSqlite() {
@@ -55,7 +55,7 @@ test("a bare handle still refuses close while an owned buffer is live", () => {
     return;
   }
   const bare = ffi.dlopen(found.path);
-  const sys = ffi.dlopen(LIBC, {
+  const sys = ffi.dlopen(ffi.libcName, {
     dlopen: { args: [ffi.cstring, ffi.i32], ret: ffi.Ptr },
     dlsym: { args: [ffi.Ptr, ffi.cstring], ret: ffi.Ptr },
   });

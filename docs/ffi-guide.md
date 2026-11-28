@@ -34,9 +34,9 @@ do not resolve, and `module.builtinModules` does not list it.
 ## Loading a library
 
 ```js
-const { dlopen, i32, usize, cstring } = require("onde:ffi");
+const { dlopen, libcName, i32, usize, cstring } = require("onde:ffi");
 
-const lib = dlopen("libc.dylib", {
+const lib = dlopen(libcName, {
   getpid: { args: [], ret: i32 },
   strlen: { args: [cstring], ret: usize },
 });
@@ -46,21 +46,15 @@ console.log(lib.symbols.strlen("hello"));
 lib.close();
 ```
 
-The examples use the macOS library names. On Linux the C library is `libc.so.6` and the SQLite
-example uses `libsqlite3.so.0`. The path is passed to the system loader, so a bare name uses the
-loader's search path and an absolute path opens that file. The second argument carries the C
-signatures: `i32` names `int32_t` and `cstring` names `char *`. The [Data types](#data-types)
-section covers the rest of the vocabulary and why the width matters.
+The C library's name differs by platform. `onde:ffi` exports `libcName`, the name for the host that
+built the binary: `libc.dylib` on macOS, `libc.so.6` on glibc and `libc.so` on musl. Use it instead
+of a literal. The path is passed to the system loader, so a bare name uses the loader's search path
+and an absolute path opens that file. The second argument carries the C signatures: `i32` names
+`int32_t` and `cstring` names `char *`. The [Data types](#data-types) section covers the rest of the
+vocabulary and why the width matters.
 
-Keep the name in one place when a script runs on both:
-
-```js
-const LIBC = process.platform === "darwin" ? "libc.dylib"
-  : process.platform === "linux" ? "libc.so.6"
-  : null; // glibc; musl and Android use libc.so
-```
-
-The examples below use `libc.dylib` for brevity.
+The SQLite example uses the macOS library name `libsqlite3.dylib`; on Linux it is
+`libsqlite3.so.0`.
 
 `dlopen` returns an object with these members:
 
@@ -131,9 +125,9 @@ lib.call("mylib_count", [], i32);
 A symbol with no declaration takes the per-call return type, and `i32` when the caller omits it:
 
 ```js
-const { dlopen, usize } = require("onde:ffi");
+const { dlopen, libcName, usize } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib");
+const libc = dlopen(libcName);
 libc.call("getpid");                   // i32 by default
 libc.call("strlen", ["hello"], usize); // 64-bit return, stated
 ```
@@ -444,9 +438,9 @@ instance. A `Callback.of(args, ret)` return is a callable function with `address
 properties.
 
 ```js
-const { dlopen, cstring, i32, Ptr, Callback } = require("onde:ffi");
+const { dlopen, libcName, cstring, i32, Ptr, Callback } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib", {
+const libc = dlopen(libcName, {
   dlopen: { args: [cstring, i32], ret: Ptr },
   dlsym:  { args: [Ptr, cstring], ret: Ptr },
 });
@@ -610,9 +604,9 @@ foreign thread cannot enter the engine in this version.
 A declared variadic function marks the fixed prefix:
 
 ```js
-const { dlopen, cstring, i32 } = require("onde:ffi");
+const { dlopen, libcName, cstring, i32 } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib", {
+const libc = dlopen(libcName, {
   printf: { args: [cstring], ret: i32, varargs: true },
 });
 
@@ -625,9 +619,9 @@ The declaration needs at least one fixed argument, because C requires a named pa
 An undeclared variadic call states the fixed count per call:
 
 ```js
-const { dlopen, i32 } = require("onde:ffi");
+const { dlopen, libcName, i32 } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib");
+const libc = dlopen(libcName);
 libc.call("printf", ["%d\n", 42], i32, { varargs: 1 });
 ```
 
@@ -692,9 +686,9 @@ for a pointer envelope.
 value. Call it before any other FFI call if the number matters.
 
 ```js
-const { dlopen, errno } = require("onde:ffi");
+const { dlopen, libcName, errno } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib");
+const libc = dlopen(libcName);
 libc.call("open", ["/no/such/file", 0]);
 const number = errno(); // the C errno from that call
 ```
@@ -739,10 +733,10 @@ On Linux the library is `libsqlite3.so.0`, and on Debian or Ubuntu it comes from
 
 ```js
 const {
-  dlopen, Callback, Ptr, i32, usize, buffer, read, voidType,
+  dlopen, libcName, Callback, Ptr, i32, usize, buffer, read, voidType,
 } = require("onde:ffi");
 
-const libc = dlopen("libc.dylib", {
+const libc = dlopen(libcName, {
   qsort: {
     args: [buffer, usize, usize, Callback.of([Ptr.of(i32), Ptr.of(i32)], i32)],
     ret: voidType,

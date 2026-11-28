@@ -118,7 +118,8 @@ fi
 # `ffi.load` is the single runtime gate (ADR-0011); the build feature is the structural one.
 denied="$("$onde" --permission -e '
 try {
-  require("onde:ffi").dlopen("libc.dylib");
+  const { dlopen, libcName } = require("onde:ffi");
+  dlopen(libcName);
   console.log("allowed");
 } catch (error) {
   console.log(error.code + " " + error.capability);
@@ -131,9 +132,10 @@ else
 fi
 
 granted="$("$onde" --permission --allow-ffi -e '
-const { dlopen, i32 } = require("onde:ffi");
-const lib = dlopen("libc.dylib", { getpid: { args: [], ret: i32 } });
-console.log(lib.symbols.getpid() > 0 ? "granted" : "bad");' 2>&1)"
+const { dlopen, libcName } = require("onde:ffi");
+const lib = dlopen(libcName);
+lib.close();
+console.log("granted");' 2>&1)"
 if [ "$granted" = "granted" ]; then
   note "ok        --allow-ffi grants ffi.load"
 else

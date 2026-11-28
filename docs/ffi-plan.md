@@ -27,7 +27,7 @@ this file.
 
 ```js
 const {
-  dlopen, Struct, Ptr, CArray, Callback, ref, revive, errno,
+  dlopen, Struct, Ptr, CArray, Callback, ref, revive, errno, libcName,
   ptr, read, toArrayBuffer, CString, voidType,
   i8, i16, i32, i64, u8, u16, u32, u64, isize, usize, cLong,
   f32, f64, bool, cstring, buffer, buffer_length,
@@ -35,6 +35,10 @@ const {
 ```
 
 `voidType` rather than `void` because `void` is an operator, not an identifier.
+
+`libcName` is the C library's loader name for the host that built the binary: `libc.dylib` on
+macOS, `libc.so.6` on glibc and `libc.so` on musl. It exists so a script does not hardcode a
+soname, and it is a host fact rather than a permission decision.
 
 `onde:ffi` is the only spelling. Bare `require("ffi")` does not resolve, `node:ffi` is not claimed,
 and `module.builtinModules` does not list the module — deliberately, so the extension cannot be
