@@ -32,6 +32,10 @@ REGEN=1 RUN=node ./test/conformance/run.sh   # re-record from Node (never from o
 SUITES="modules stdlib" ./test/conformance/run.sh
 ```
 
+Recording and the Node self-test both mean the **official** Node build. A distributor can differ in
+the edges the corpus pins — Homebrew's `node` devendors V8's simdutf and stops masking code units in
+the legacy base64/hex decoders — see [docs/internals.md](../../docs/internals.md) §3.
+
 `divergences/` is excluded from the Node self-test and the differential harness. To record it:
 
 ```sh

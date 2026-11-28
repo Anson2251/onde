@@ -1,9 +1,8 @@
 "use strict";
 // The base64/hex rules Node's decoders actually implement, including the ones that look like
 // bugs: characters outside the alphabet are skipped, padding ends the input, an odd hex digit is
-// dropped. A character above U+00FF is outside both alphabets — Node stopped masking code units to
-// a byte in 26.13, so "š" no longer reads as "a" and a surrogate is no longer "=". Printed as hex
-// so a difference in any single byte fails the comparison.
+// dropped, and each UTF-16 code unit is masked to a byte before the lookup. Printed as hex so a
+// difference in any single byte fails the comparison.
 
 const { Buffer } = require("buffer");
 
@@ -31,11 +30,12 @@ decode("hex stops at a pair", "12zz34", "hex");
 decode("hex bad first pair", "0g00", "hex");
 decode("hex empty tail", "ab0", "hex");
 
-// Non-Latin-1 text: base64 skips the character, hex ends the pair. These changed in Node 26.13,
-// which dropped the code-unit masking that used to make "š" an "a".
-decode("hex non-latin1", "\u01610", "hex");
-decode("hex astral", "ab\u{1f4a9}cd", "hex");
-decode("base64 non-latin1", "QU\u0161JD", "base64");
+// Recorded against an official Node build. Homebrew's node devendors V8's simdutf, which changes
+// this conversion (docs/internals.md §3); that is a distributor difference, not this runtime's.
+// Node masks a UTF-16 code unit to one byte, so non-ASCII text can still be a digit.
+decode("hex latin-1 masking", "\u01610", "hex");
+decode("hex astral masking", "ab\u{1f4a9}cd", "hex");
+decode("base64 latin-1 masking", "QU\u0161JD", "base64");
 decode("base64 lone surrogate", "QU\uD83DJD", "base64");
 decode("base64 lone low surrogate", "QU\uDC00JD", "base64");
 decode("base64 astral", "QU\u{1f4a9}JD", "base64");

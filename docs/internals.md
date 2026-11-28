@@ -290,6 +290,17 @@ stay off tree-wide — measured on `js/` they are dominated by rules that fight 
   `onde:ffi` matrix (there is no Node equivalent, so nothing is diffed), and checks the
   `--no-default-features` and `ffi.load` gates. It needs `libffi-dev` on Linux.
 
+### The reference Node build
+
+The oracles, the node self-test and the recording step compare against the `node` on `PATH`, and that
+has to be an **official build**. A distributor can change V8's dependencies and with them the edges
+the corpus pins: Homebrew's `node` devendors V8's simdutf (`--shared-simdutf`, simdutf 9.5.0), and
+that newer library no longer masks a code unit to one byte when it converts UTF-16 to Latin-1. On
+26.13.1 `Buffer.from("QU\u0161JD", "base64")` is therefore `414243` on Homebrew and `414689`
+upstream. onde mirrors the official build; the oracle reports the Homebrew one as the divergence it
+is, not as a bug in the shim. Run the harnesses with `nvm`, the nodejs.org tarball, or the runner's
+`setup-node`.
+
 ### Why the corpus compares stdout and the exit code, not stderr
 
 V8 and QuickJS frame text differ (`Module._compile` vs `<eval>`) even when the header and the error

@@ -8,11 +8,9 @@
 // small coercion helpers (`byteView`, `concatBytes`) that the stdlib shares.
 //
 // The decoders follow Node's native behaviour, including its asymmetries: `ascii` truncates to
-// eight bits when encoding but masks 0x7F when decoding, hex drops an odd trailing digit and ends
-// at the first pair that is not two digits, and base64 accepts both alphabets, ignores anything
-// outside them, stops at the first `=` and drops a lone trailing character. Node 26.13 stopped
-// masking each UTF-16 code unit to a byte first: a character above U+00FF is outside both
-// alphabets, so "š" (U+0161) is skipped by base64 and ends a hex pair rather than reading as "a".
+// eight bits when encoding but masks 0x7F when decoding, hex drops an odd trailing digit and
+// masks each UTF-16 code unit to a byte, and base64 accepts both alphabets, ignores anything
+// outside them, stops at the first `=` and drops a lone trailing character.
 //
 // Nothing here throws for a bad coercion: `byteView` returns `null` and callers keep their own
 // `ERR_INVALID_ARG_TYPE` wording. This file is a leaf, so it can be required from anywhere.
@@ -45,9 +43,9 @@ const nativeBase64Encode = hostMember("encodeBase64");
 const nativeBase64Decode = hostMember("decodeBase64");
 
 // A lone surrogate cannot cross the host boundary: the engine hands the string to Rust as CESU-8,
-// which is not UTF-8, so the host would report a conversion error where Node reads the code unit as
-// an ordinary non-alphabet character. Only well-formed strings take the native path; the loop below
-// is the oracle for the rest. `isWellFormed` is ES2024 and the engine provides it.
+// which is not UTF-8, so the host would report a conversion error where Node simply masks the code
+// unit to a byte. Only well-formed strings take the native path; the loop below is the oracle for
+// the rest. `isWellFormed` is ES2024 and the engine provides it.
 function hostString(string) {
     return (
         typeof string === "string" &&
@@ -167,12 +165,6 @@ for (let i = 0; i < 6; i++) {
     HEX_VALUES[0x61 + i] = 10 + i;
 }
 
-// One hex digit's value, or -1 for a character that is not one. A code unit above U+00FF is not:
-// Node stopped masking code units to a byte in 26.13, so a non-Latin-1 character ends the pair.
-function hexDigitValue(code) {
-    return code < 256 ? HEX_VALUES[code] : -1;
-}
-
 function hexEncode(bytes, start, end) {
     if (nativeHexEncode !== null) return nativeHexEncode(bytes, start, end);
     let out = "";
@@ -188,8 +180,10 @@ function hexDecode(string) {
     const out = new Uint8Array((string.length + 1) >> 1);
     let written = 0;
     for (let i = 0; i + 1 < string.length; i += 2) {
-        const hi = hexDigitValue(string.charCodeAt(i));
-        const lo = hexDigitValue(string.charCodeAt(i + 1));
+        // Node's decoder masks each UTF-16 code unit to one byte before the table lookup, so "š"
+        // (U+0161) looks like "a"; any other non-hex pair ends decoding.
+        const hi = HEX_VALUES[string.charCodeAt(i) & 0xff];
+        const lo = HEX_VALUES[string.charCodeAt(i + 1) & 0xff];
         if (hi < 0 || lo < 0) break;
         out[written++] = (hi << 4) | lo;
     }
@@ -248,9 +242,9 @@ function base64Decode(string, urlSafe) {
     let accumulator = 0;
     let bits = 0;
     for (let i = 0; i < string.length; i++) {
-        // A code unit is looked up as itself: anything above the ASCII alphabet (a non-Latin-1
-        // character included) is not in the table and is skipped, as Node 26.13 does.
-        const code = string.charCodeAt(i);
+        // Node masks code units to one byte before its base64 lookup; a surrogate such as U+D83D
+        // becomes '=' (0x3D) and therefore terminates decoding.
+        const code = string.charCodeAt(i) & 0xff;
         if (code === 0x3d) break; // '='
         const value = code < 128 ? BASE64_LOOKUP[code] : -1;
         if (value < 0) continue;

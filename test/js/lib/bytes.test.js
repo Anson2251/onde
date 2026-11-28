@@ -179,8 +179,8 @@ function from(list) {
     sameBytes(hexDecode("abc"), [0xab], "hexDecode drops an odd trailing digit");
     sameBytes(hexDecode(""), [], "hexDecode(empty)");
     sameBytes(hexDecode("12zz34"), [0x12], "hexDecode stops at the first non-hex pair");
-    sameBytes(hexDecode("š0"), [], "hexDecode ends at a non-Latin-1 code unit");
-    sameBytes(hexDecode("\u01610"), [], "hexDecode does not mask a non-ASCII code unit");
+    sameBytes(hexDecode("š0"), [0xa0], "hexDecode masks a UTF-16 code unit to a byte");
+    sameBytes(hexDecode("\u01610"), [0xa0], "hexDecode masks a non-ASCII code unit");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -235,8 +235,8 @@ function from(list) {
     sameBytes(base64Decode("QQ==QUJD", false), [0x41], "base64Decode stops at the first '='");
     sameBytes(
         base64Decode("QU\uD83DJD", false),
-        [0x41, 0x42, 0x43],
-        "base64Decode skips a surrogate instead of masking it",
+        [0x41],
+        "base64Decode stops at a masked surrogate",
     );
 }
 

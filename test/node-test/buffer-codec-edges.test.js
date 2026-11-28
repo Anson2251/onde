@@ -4,9 +4,9 @@
 //
 // The conformance case prints each decoded buffer as hex so any single-byte difference fails the
 // byte comparison. The same rules are asserted here directly: characters outside the alphabet are
-// skipped, padding ends the input, an odd hex digit is dropped, and a character above U+00FF is
-// outside both alphabets — Node stopped masking code units to a byte in 26.13. These are Node's
-// documented-by-behaviour edges, so the file also has to keep passing under Node 26.
+// skipped, padding ends the input, an odd hex digit is dropped, and each UTF-16 code unit is masked
+// to one byte before the lookup. These are Node's documented-by-behaviour edges, so the file also
+// has to keep passing under Node 26.
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -39,12 +39,12 @@ test.describe("base64 decoding", () => {
         assert.strictEqual(decodedHex("+/8=", "base64url"), "fbff");
     });
 
-    test("a code unit above U+00FF is skipped, not masked", () => {
-        assert.strictEqual(decodedHex("QU\u0161JD", "base64"), "414243");
-        assert.strictEqual(decodedHex("QU\uD83DJD", "base64"), "414243");
+    test("a code unit is masked to one byte", () => {
+        assert.strictEqual(decodedHex("QU\u0161JD", "base64"), "414689");
+        assert.strictEqual(decodedHex("QU\uD83DJD", "base64"), "41");
         assert.strictEqual(decodedHex("QU\uDC00JD", "base64"), "414243");
-        assert.strictEqual(decodedHex("QU\u{1f4a9}JD", "base64"), "414243");
-        assert.strictEqual(decodedHex("\uD83DQUJD", "base64"), "414243");
+        assert.strictEqual(decodedHex("QU\u{1f4a9}JD", "base64"), "41");
+        assert.strictEqual(decodedHex("\uD83DQUJD", "base64"), "");
     });
 });
 
@@ -58,8 +58,8 @@ test.describe("hex decoding", () => {
         assert.strictEqual(decodedHex("ab0", "hex"), "ab");
     });
 
-    test("a character above U+00FF ends the pair", () => {
-        assert.strictEqual(decodedHex("\u01610", "hex"), "");
+    test("characters are masked to one byte", () => {
+        assert.strictEqual(decodedHex("\u01610", "hex"), "a0");
         assert.strictEqual(decodedHex("ab\u{1f4a9}cd", "hex"), "ab");
     });
 });
