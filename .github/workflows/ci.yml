@@ -65,6 +65,8 @@ jobs:
           mkdir -p dist
           cargo build --locked --release -p ln-cli
           cp target/release/onde dist/onde-release
+          cargo build --locked --release -p ondec
+          cp target/release/ondec dist/ondec
           cargo build --locked --release --no-default-features -p ln-cli
           cp target/release/onde dist/onde-minimal
       - name: build the feature matrix
@@ -135,6 +137,7 @@ jobs:
             echo "ONDE_RELEASE=$PWD/dist/onde-release"
             echo "ONDE_MINIMAL=$PWD/dist/onde-minimal"
             echo "ONDE_FEATURE_OFF=$PWD/dist/onde-minimal"
+            echo "ONDEC=$PWD/dist/ondec"
             echo "RUN=$PWD/dist/onde-release"
           } >> "$GITHUB_ENV"
       - name: expose the feature variants
@@ -186,6 +189,10 @@ jobs:
         run: ./test/programs/run.sh
       - name: module smoke set (30 CJS + 10 ESM packages)
         run: ./test/smoke/run.sh
+      - name: ondec smoke
+        shell: bash
+        run: |
+          "$ONDEC" --version | grep -q "^ondec "
       - name: standalone builds (archive + ondec + a linked app that runs)
         # The archive is built for this cell and a real app is linked, run, and checked after its
         # sources are deleted. This is the matrix's first real cell check, not a unit test.
