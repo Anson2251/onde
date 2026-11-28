@@ -14,9 +14,10 @@
 //!   ignores everything outside the alphabet (whitespace included), stops at the first `=`, and
 //!   drops a trailing character that cannot fill a whole byte. A small sanitizer normalises the
 //!   input and the `base64` crate performs the packing;
-//! * both decoders mask each UTF-16 code unit to one byte before the table lookup, because that
-//!   is what Node's decoders do: `"š"` (U+0161) is the hex digit `a`, and a surrogate such as
-//!   U+D83D is `=`, which ends base64 decoding.
+//! * both decoders look each UTF-16 code unit up as itself: a character above U+00FF is simply not
+//!   in either alphabet, so base64 skips it and hex ends the pair there. Node masked the code unit
+//!   to a byte until 26.13, which made `"š"` (U+0161) the hex digit `a` and a surrogate such as
+//!   U+D83D the `=` that ends base64 decoding.
 //!
 //! The `&str` signature means a lone surrogate cannot reach these functions at all (the engine
 //! renders the JS string as CESU-8, which is not UTF-8); `internal/bytes.js` sends only
@@ -50,10 +51,11 @@ pub(super) fn encode_base64(bytes: &[u8], url_safe: bool) -> String {
 
 /// Node-lenient base64 decode.
 ///
-/// The sanitizer is the Node semantics: walk UTF-16 code units (Node masks each one to a byte, so
-/// `"š"` is `a` and a surrogate is `=`), stop at the first `=`, drop every non-alphabet character,
-/// map the URL-safe spellings, and ignore a final group of one character. The `base64` engine then
-/// does the standard 4-to-3 packing; it never sees a character Node would have skipped.
+/// The sanitizer is the Node semantics: walk UTF-16 code units as themselves (`"š"` is not in the
+/// alphabet, and a surrogate is not `=` since 26.13), stop at the first `=`, drop every
+/// non-alphabet character, map the URL-safe spellings, and ignore a final group of one character.
+/// The `base64` engine then does the standard 4-to-3 packing; it never sees a character Node would
+/// have skipped.
 pub(super) fn decode_base64(text: &str, _url_safe: bool) -> Vec<u8> {
     NODE_BASE64
         .decode(sanitize_base64(text))
@@ -63,13 +65,13 @@ pub(super) fn decode_base64(text: &str, _url_safe: bool) -> Vec<u8> {
 fn sanitize_base64(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     for unit in text.encode_utf16() {
-        // Node masks the UTF-16 code unit to one byte before its table lookup.
-        let code = (unit & 0xff) as u8;
-        let mapped = match code {
-            b'=' => break,
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' => code,
-            b'-' => b'+',
-            b'_' => b'/',
+        // The code unit is matched as itself: only the ASCII alphabet survives, so a character
+        // above U+00FF is skipped rather than masked to its low byte.
+        let mapped = match unit {
+            0x3d => break, // '='
+            0x41..=0x5a | 0x61..=0x7a | 0x30..=0x39 | 0x2b | 0x2f => unit as u8,
+            0x2d => b'+', // '-'
+            0x5f => b'/', // '_'
             _ => continue,
         };
         out.push(mapped);
@@ -108,14 +110,24 @@ pub(super) fn encode_hex(bytes: &[u8]) -> String {
     String::from_utf8(out).expect("hex digits are ASCII")
 }
 
+/// A hex digit's value, or `-1` for a character that is not one. A code unit above U+00FF is not a
+/// digit: Node stopped masking code units to a byte in 26.13, so it ends the pair instead.
+fn hex_value(unit: u16) -> i8 {
+    if unit < 0x100 {
+        HEX_VALUES[usize::from(unit)]
+    } else {
+        -1
+    }
+}
+
 pub(super) fn decode_hex(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() / 2);
     let mut units = text.encode_utf16();
 
     // An odd trailing digit has no partner, so it falls out of the pattern and is dropped.
     while let (Some(high), Some(low)) = (units.next(), units.next()) {
-        let high = HEX_VALUES[usize::from(high & 0xff)];
-        let low = HEX_VALUES[usize::from(low & 0xff)];
+        let high = hex_value(high);
+        let low = hex_value(low);
         if high < 0 || low < 0 {
             break;
         }
@@ -213,22 +225,19 @@ mod tests {
     }
 
     #[test]
-    fn base64_masks_utf16_code_units_to_bytes() {
-        // U+0161 masks to 0x61, the alphabet slot for 'a', so it decodes exactly like "QUaJD".
+    fn base64_skips_characters_above_latin1() {
+        // Since 26.13 Node looks the code unit up as itself: U+0161 is not in the alphabet, so it
+        // is skipped and the rest of the input decodes as if it were absent.
+        assert_eq!(decode_base64("QU\u{161}JD", false), b"ABC");
         assert_eq!(
             decode_base64("QU\u{161}JD", false),
-            decode_base64("QUaJD", false)
+            decode_base64("QUJD", false)
         );
-        // U+0141 masks to 'A'.
-        assert_eq!(
-            decode_base64("QU\u{141}JD", false),
-            decode_base64("QUAJD", false)
-        );
-        // An astral character is two code units; 0xD83D masks to '=', which stops decoding.
-        assert_eq!(decode_base64("QU\u{1f4a9}JD", false), vec![0x41]);
+        // An astral character is two code units, both outside the alphabet and both skipped.
+        assert_eq!(decode_base64("QU\u{1f4a9}JD", false), b"ABC");
         assert_eq!(
             decode_base64("QU\u{1f4a9}JD", false),
-            decode_base64("QU=JD", false)
+            decode_base64("QUJD", false)
         );
     }
 
@@ -259,12 +268,11 @@ mod tests {
     }
 
     #[test]
-    fn hex_masks_utf16_code_units_to_bytes() {
-        // U+0161 masks to 0x61, 'a'; U+0030 is '0'.
-        assert_eq!(decode_hex("\u{161}0"), vec![0xa0]);
-        assert_eq!(decode_hex("\u{161}0"), decode_hex("a0"));
-        // An astral character is two code units; 0xD83D masks to '=' (not hex), so decoding
-        // stops there.
+    fn hex_ends_at_a_character_above_latin1() {
+        // U+0161 is not a digit since 26.13: the pair ends the input instead of reading as "a0".
+        assert!(decode_hex("\u{161}0").is_empty());
+        assert_ne!(decode_hex("\u{161}0"), decode_hex("a0"));
+        // An astral character is two code units, neither a digit, so it also ends the pair.
         assert_eq!(decode_hex("ab\u{1f4a9}cd"), vec![0xab]);
         assert_eq!(decode_hex("ab\u{1f4a9}cd"), decode_hex("ab"));
     }

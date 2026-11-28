@@ -103,8 +103,8 @@ fallbacks in place. Doing the dedup first creates the single module the host bra
    the JS validators throw one taxonomy, and host codec failures are programming errors.
 6. **Use the standard crate for the standard algorithm.** `base64` is already in the lock through
    the TLS stack; the RFC 4648 encoder/decoder uses it. Keep only Node's non-standard sanitizer
-   (junk characters, both alphabets, UTF-16 masking) local. Hex has no crate in the graph and is
-   a twenty-line loop.
+   (junk characters, both alphabets, no code-unit masking since Node 26.13) local. Hex has no crate
+   in the graph and is a twenty-line loop.
 
 ### 2.2 Tracks
 
@@ -393,8 +393,8 @@ native branch is added in one module, not four.
 * `host/codec.rs` (new private module): `encode_base64` and the 4-to-3 packing of
   `decode_base64` use the `base64` crate's standard and URL-safe engines (already in the lock
   through the TLS stack). Only the Node-compat sanitizer in front of the decoder is local:
-  it drops junk, accepts both alphabets, masks UTF-16 code units, stops at `=`, and drops a lone
-  trailing character. `encode_hex`/`decode_hex` stay local (twenty lines, no crate in the graph).
+  it drops junk, accepts both alphabets, looks each code unit up as itself (Node stopped masking
+  them in 26.13), stops at `=`, and drops a lone trailing character. `encode_hex`/`decode_hex` stay local (twenty lines, no crate in the graph).
   No `js::Value`, so unit tests need no engine.
 * `host/buffer.rs` installs them using the existing `with_bytes` borrow pattern; ranges arrive
   from JS and are clamped there. `decodeBase64`/`decodeHex` allocate the result `Uint8Array`.

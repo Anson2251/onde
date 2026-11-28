@@ -16,13 +16,13 @@ hex uppercase: 3 abcdef
 hex stops at a pair: 1 12
 hex bad first pair: 0 
 hex empty tail: 1 ab
-hex latin-1 masking: 1 a0
-hex astral masking: 1 ab
-base64 latin-1 masking: 3 414689
-base64 lone surrogate: 1 41
+hex non-latin1: 0 
+hex astral: 1 ab
+base64 non-latin1: 3 414243
+base64 lone surrogate: 3 414243
 base64 lone low surrogate: 3 414243
-base64 astral: 1 41
-base64 lone surrogate first: 0 
+base64 astral: 3 414243
+base64 lone surrogate first: 3 414243
 encode 0 "" "" ""
 encode 1 "00" "AA==" "AA"
 encode 1 "0f" "Dw==" "Dw"
