@@ -9,9 +9,37 @@ on:
   schedule:
     - cron: "17 3 * * *"
 
+# Three stages:
+#   lint  -> fmt, clippy
+#   build -> one release artifact per host triple: the default build, the minimal build and (on
+#            Linux) the feature variants. Every binary is built once, in the profile this project
+#            ships.
+#   test  -> downloads that artifact and runs the harnesses with ONDE/... pointing at it.
+#
+# CI is a semi-formal release channel, so the runtime under test is a release build. `cargo test
+# --all` still uses the dev profile for its test binaries; the harnesses use the release artifact.
+# `test/features`, `test/ffi` and the auxiliary jobs consume the uploaded binaries, so a platform
+# does not rebuild the main program for each script.
+
 jobs:
-  test:
-    name: test (${{ matrix.os }})
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: libffi
+        run: sudo apt-get update && sudo apt-get install -y libffi-dev
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,6 +47,60 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: libffi
+        # `ln-ffi` links the system libffi. It ships with the macOS SDK; Ubuntu images do not
+        # guarantee the development package, so install it before the build.
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libffi-dev
+      - name: build the runtime variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cargo build --locked --release -p ln-cli
+          cp target/release/onde dist/onde-release
+          cargo build --locked --release --no-default-features -p ln-cli
+          cp target/release/onde dist/onde-minimal
+      - name: build the feature matrix
+        # Feature flags are compile-time and platform-independent; one Linux build covers the
+        # matrix and keeps the macOS artifact small.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in node-net node-tls node-crypto node-sqlite node-zlib; do
+            cargo build --locked --release --no-default-features --features "$feature" -p ln-cli
+            cp target/release/onde "dist/onde-${feature#node-}"
+          done
+      - name: upload the binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist/*
+          if-no-files-found: error
+
+  test:
+    name: test (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
       - name: GNU timeout for the harnesses
         # macOS ships no `timeout`; conformance, the net fdleak check and the M6 async harness all
         # bound a case with it. Homebrew's coreutils exposes the unprefixed binary only from
@@ -30,60 +112,72 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           ln -sf "$(brew --prefix coreutils)/libexec/gnubin/timeout" "$HOME/.local/bin/timeout"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: libffi (onde:ffi)
-        # `ln-ffi` links the system libffi. It ships with the macOS SDK; Ubuntu images do not
-        # guarantee the development package, so install it before the Rust build.
+      - name: libffi
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libffi-dev
-      - name: fmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
+      - name: expose the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ONDE=$PWD/dist/onde-release"
+            echo "ONDE_DEFAULT=$PWD/dist/onde-release"
+            echo "ONDE_RELEASE=$PWD/dist/onde-release"
+            echo "ONDE_MINIMAL=$PWD/dist/onde-minimal"
+            echo "ONDE_FEATURE_OFF=$PWD/dist/onde-minimal"
+            echo "RUN=$PWD/dist/onde-release"
+          } >> "$GITHUB_ENV"
+      - name: expose the feature variants
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ONDE_NET=$PWD/dist/onde-net"
+            echo "ONDE_TLS=$PWD/dist/onde-tls"
+            echo "ONDE_CRYPTO=$PWD/dist/onde-crypto"
+            echo "ONDE_SQLITE=$PWD/dist/onde-sqlite"
+            echo "ONDE_ZLIB=$PWD/dist/onde-zlib"
+          } >> "$GITHUB_ENV"
+      - name: Rust tests
         run: cargo test --all
-      - name: build
-        run: cargo build
       - name: feature flags (node:sqlite/node:zlib on, off and mixed)
+        if: runner.os == 'Linux'
         run: ./test/features/run.sh
       - name: M7 diagnostics (trace structure, timing, trace-gc)
         run: ./test/diag/run.sh
       - name: M7 node:test pilot (same transcript under node and onde)
         run: ./test/node-test/run.sh
-      - name: standalone builds (archive + ondec + a linked app that runs)
-        # The archive is built for this cell and a real app is linked, run, and checked after its
-        # sources are deleted. This is the matrix's first real cell check, not a unit test.
-        run: ./test/standalone/run.sh
       - name: onde:ffi (fixture, layout oracle, inference/struct/callback/lifetime matrix)
-        # Builds the C fixture and the layout oracle with the system compiler, then checks the
-        # build-feature gate (a --no-default-features binary has no onde:ffi) and the ffi.load
-        # permission gate.
+        # Uses the prebuilt release and feature-off binaries; only the C fixture and the layout
+        # oracle are compiled here.
         run: ./test/ffi/run.sh
-      - name: conformance corpus
+      - name: conformance corpus (release, bytecode snapshot)
+        # The release profile boots from the build-time bytecode snapshot (m7-plan criterion 9),
+        # so this is the shipped path, not the debug source path.
         run: ./test/conformance/run.sh
       - name: permissions (CLI matrix, inventory, deny-all sweep, race)
         # The deny-all sweep reuses the conformance corpus with every grant withheld; it is the
         # guarantee that a gate is wired, not a copy of the corpus's expected output.
         run: ./test/perm/run.sh
-      - name: conformance on the bootstrap snapshot path
-        # Criterion 9 of m7-plan §6: the release profile boots from build-time bytecode. This runs
-        # the same corpus through the bytecode path in a debug build, where both paths are
-        # selectable, so a broken snapshot cannot hide until a release is cut.
-        run: ONDE_BOOTSTRAP=bytecode RUN=target/debug/onde ./test/conformance/run.sh
-      - name: node for the stdlib oracle
-        uses: actions/setup-node@v4
-        with:
-          node-version: "26"
       - name: stdlib tests (node + onde) and Node oracles
         run: ./test/js/run.sh
       - name: M5 acceptance (children, workers, shared memory, signals)
         run: ./test/proc/run.sh
       - name: M6 acceptance (async_hooks, AsyncLocalStorage, 1M promises)
         # The retention bound is only meaningful on an optimized build, so this leg runs the
-        # release binary; the debug suite above already covers the semantics.
-        run: cargo build --release -p ln-cli && ONDE=target/release/onde ./test/async/run.sh
+        # release binary, as the rest of the harnesses do.
+        run: ONDE="$ONDE_RELEASE" ./test/async/run.sh
       - name: vendored engine patch is exactly what the docs claim
         # The vendored tree must be pristine quickjs-ng 0.17.0 plus this patch. Reversing it is
         # the cheapest way to prove nobody hand-edited the vendor copy.
@@ -92,18 +186,24 @@ jobs:
         run: ./test/programs/run.sh
       - name: module smoke set (30 CJS + 10 ESM packages)
         run: ./test/smoke/run.sh
+      - name: standalone builds (archive + ondec + a linked app that runs)
+        # The archive is built for this cell and a real app is linked, run, and checked after its
+        # sources are deleted. This is the matrix's first real cell check, not a unit test.
+        run: ./test/standalone/run.sh
       - name: smoke
+        shell: bash
         run: |
-          test "$(cargo run -q -p ln-cli -- -e '1+1')" = "2"
-          cargo run -q -p ln-cli -- --version
+          test "$("$ONDE" -e '1+1')" = "2"
+          "$ONDE" --version
           printf 'const x = 1;\n' > /tmp/onde-check.js
-          cargo run -q -p ln-cli -- --check /tmp/onde-check.js
+          "$ONDE" --check /tmp/onde-check.js
 
   # tuckbox is the demo that keeps the runtime honest: a real tool, in TypeScript, resolving and
   # installing real npm packages with nothing but the modules onde implements. Each suite runs
   # under node AND onde and the outputs are compared, so a module cannot quietly lean on either.
   tuckbox:
     name: tuckbox (a package installer on onde)
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,8 +214,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
-      - name: build onde
-        run: cargo build
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
       - name: install and build tuckbox
         working-directory: tuckbox
         run: |
@@ -126,13 +236,14 @@ jobs:
         working-directory: tuckbox
         run: node test/run.js
         env:
-          TUCKBOX_ONDE: ${{ github.workspace }}/target/debug/onde
+          TUCKBOX_ONDE: ${{ github.workspace }}/dist/onde-release
 
   # The corpus is the contract. This job proves the .expected files still describe real Node
   # behaviour, so they cannot silently rot into "whatever onde does". It also runs the
   # differential harness (node vs onde, same stdout + exit code) from scratch.
   corpus-selftest:
     name: corpus is still Node-valid
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,10 +251,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
+      - name: expose the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ONDE=$PWD/dist/onde-release" >> "$GITHUB_ENV"
       - name: node self-test
         run: RUN=node ./test/conformance/run.sh
-      - name: build onde
-        run: cargo build
       - name: differential (node vs onde)
         run: ./test/differential.sh
       - name: module smoke set against Node
@@ -153,49 +279,6 @@ jobs:
 
   # License policy: deny.toml. A separate job because it does not depend on the OS matrix.
   # M4 adds `webpki-roots` (MPL-2.0), which the allowlist covers.
-  # M7 performance (m7-plan §5-6). Soft by default on a shared runner: every number is printed and
-  # none is enforced. The release binary also runs the whole conformance corpus here, because the
-  # release profile is the one that boots from the bytecode snapshot (WP2).
-  perf:
-    name: M7 performance (soft on shared runners)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "26"
-      - name: build release
-        run: cargo build --release -p ln-cli
-      - name: conformance corpus on the snapshot path
-        run: RUN=target/release/onde ./test/conformance/run.sh
-      - name: performance ratios (soft)
-        run: |
-          NET_BENCH_FORCE=1 NET_BENCH_SOFT=1 PERF_BUILD=0 PERF_SKIP_HALFOPEN=1 ./test/perf/run.sh
-      - name: half-open bound (soft, 500 connections to fit the runner)
-        run: NET_BENCH_SOFT=1 ONDE=target/release/onde NET_CONNS=500 ./test/perf/halfopen.sh
-
-  # Nightly: the same numbers with the gates on, plus the RSS soak, on the reference machine label.
-  # Until that machine is registered, this job runs on a hosted runner with the gates still soft
-  # and the soak capped — a red job that means "the runner is busy" is worse than a report.
-  nightly:
-    name: nightly soak and hard ratios
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "26"
-      - name: build release
-        run: cargo build --release -p ln-cli
-      - name: performance ratios
-        run: PERF_BUILD=0 ./test/perf/run.sh
-      - name: RSS soak (30 min on a hosted runner; the reference run is 60)
-        run: ONDE=target/release/onde SOAK_SECONDS=1800 ./test/soak/run.sh
-
   licenses:
     name: licenses and sources
     runs-on: ubuntu-latest
@@ -209,13 +292,12 @@ jobs:
           command: check
           command-arguments: licenses bans sources
 
-  # WP7 network acceptance harness. Performance numbers are soft in CI (a shared runner is not the
-  # reference machine): req/s, latency, cold-start and the slow-loris memory bound are reported, not
-  # enforced, because the last of those is a recorded M4 gap that M7 closes. What stays hard is
-  # functional: interop, the fd/RSS leak check, the 431 probe and the server surviving the flood.
-  # The corpus itself is graded by the `test` and `corpus-selftest` jobs.
-  acceptance:
-    name: M4 network acceptance (soft perf)
+  # M7 performance (m7-plan §5-6). Soft by default on a shared runner: every number is printed and
+  # none is enforced. The release binary from the build stage also runs the whole conformance
+  # corpus here, because the release profile is the one that boots from the bytecode snapshot.
+  perf:
+    name: M7 performance (soft on shared runners)
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,9 +305,111 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
-      - name: build debug and release
+      - name: host triple
+        id: host
+        shell: bash
         run: |
-          cargo build
-          cargo build --release -p ln-cli
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
+      - name: expose the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "PERF_LITE=$PWD/dist/onde-release"
+            echo "ONDE_RELEASE=$PWD/dist/onde-release"
+            echo "NET_BENCH_NO_BUILD=1"
+          } >> "$GITHUB_ENV"
+      - name: conformance corpus on the snapshot path
+        run: RUN="$PERF_LITE" ./test/conformance/run.sh
+      - name: performance ratios (soft)
+        run: PERF_BUILD=0 NET_BENCH_FORCE=1 NET_BENCH_SOFT=1 PERF_SKIP_HALFOPEN=1 ./test/perf/run.sh
+      - name: half-open bound (soft, 500 connections to fit the runner)
+        run: ONDE="$PERF_LITE" NET_BENCH_SOFT=1 NET_CONNS=500 ./test/perf/halfopen.sh
+
+  # Nightly: the same numbers with the gates on, plus the RSS soak, on the reference machine label.
+  # Until that machine is registered, this job runs on a hosted runner with the gates still soft
+  # and the soak capped — a red job that means "the runner is busy" is worse than a report.
+  nightly:
+    name: nightly soak and hard ratios
+    if: github.event_name == 'schedule'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
+      - name: expose the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ONDE=$PWD/dist/onde-release"
+            echo "PERF_LITE=$PWD/dist/onde-release"
+            echo "ONDE_RELEASE=$PWD/dist/onde-release"
+            echo "NET_BENCH_NO_BUILD=1"
+          } >> "$GITHUB_ENV"
+      - name: performance ratios
+        run: PERF_BUILD=0 ./test/perf/run.sh
+      - name: RSS soak (30 min on a hosted runner; the reference run is 60)
+        run: SOAK_SECONDS=1800 ./test/soak/run.sh
+
+  # WP7 network acceptance harness. Performance numbers are soft in CI (a shared runner is not the
+  # reference machine): req/s, latency, cold-start and the slow-loris memory bound are reported, not
+  # enforced, because the last of those is a recorded M4 gap that M7 closes. What stays hard is
+  # functional: interop, the fd/RSS leak check, the 431 probe and the server surviving the flood.
+  # The corpus itself is graded by the `test` and `corpus-selftest` jobs.
+  acceptance:
+    name: M4 network acceptance (soft perf)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: host triple
+        id: host
+        shell: bash
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_OUTPUT"
+      - name: download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: onde-${{ steps.host.outputs.triple }}
+          path: dist
+      - name: make the binaries executable
+        run: chmod +x dist/onde-*
+      - name: expose the binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ONDE=$PWD/dist/onde-release"
+            echo "ONDE_RELEASE=$PWD/dist/onde-release"
+            echo "NET_BENCH_NO_BUILD=1"
+          } >> "$GITHUB_ENV"
       - name: network acceptance (soft performance thresholds)
         run: NET_BENCH_SOFT=1 ./test/net/run.sh

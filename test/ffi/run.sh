@@ -87,11 +87,28 @@ fi
 # --- the build-feature gate -------------------------------------------------------------------
 #
 # A binary built without `ffi` must not merely disable the module: the name must not resolve, so
-# no script can talk it into loading a library.
+# no script can talk it into loading a library. CI passes `ONDE_FEATURE_OFF` from the build stage;
+# a developer run builds it here.
 if [ "${FFI_FEATURE_CHECK:-1}" = "1" ]; then
-  off_dir="$root/target/ffi-off"
-  if cargo build -q -p ln-cli --no-default-features --target-dir "$off_dir"; then
-    off="$off_dir/debug/onde"
+  off=""
+  if [ -n "${ONDE_FEATURE_OFF:-}" ]; then
+    off="$ONDE_FEATURE_OFF"
+    if [ ! -x "$off" ]; then
+      note "FAIL      ONDE_FEATURE_OFF is not executable: $off"
+      fail=1
+      off=""
+    fi
+  else
+    off_dir="$root/target/ffi-off"
+    if cargo build -q -p ln-cli --no-default-features --target-dir "$off_dir"; then
+      off="$off_dir/debug/onde"
+    else
+      note "FAIL      cargo build --no-default-features"
+      fail=1
+    fi
+  fi
+
+  if [ -n "$off" ]; then
     out="$("$off" -e 'try { require("onde:ffi"); console.log("loaded"); } catch (error) { console.log(error.code); }' 2>&1)"
     if [ "$out" = "ERR_UNKNOWN_BUILTIN_MODULE" ]; then
       note "ok        a feature-off build has no onde:ffi"
@@ -107,9 +124,6 @@ if [ "${FFI_FEATURE_CHECK:-1}" = "1" ]; then
       note "FAIL      node:ffi resolved unexpectedly: $out"
       fail=1
     fi
-  else
-    note "FAIL      cargo build --no-default-features"
-    fail=1
   fi
 fi
 

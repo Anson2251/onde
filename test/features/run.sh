@@ -4,23 +4,66 @@
 # out must name the missing feature. `node-tls` implies `node-net`.
 #
 #   ./test/features/run.sh
+#   ONDE_DEFAULT=... ONDE_MINIMAL=... ONDE_NET=... ONDE_TLS=... ONDE_CRYPTO=... \
+#     ONDE_SQLITE=... ONDE_ZLIB=... ./test/features/run.sh
 #
-# The script builds the matrix in the normal target directory and restores the default build on
-# exit, so a CI step can run it between the other onde jobs.
+# With no variables set the script builds the matrix in the normal target directory and restores
+# the default build on exit. With all six paths set it uses those binaries and runs no cargo build,
+# which is how CI avoids rebuilding the same variants in the test stage.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-onde="$root/target/debug/onde"
+default_bin="${ONDE_DEFAULT:-${ONDE:-$root/target/debug/onde}}"
+minimal_bin="${ONDE_MINIMAL:-}"
+net_bin="${ONDE_NET:-}"
+tls_bin="${ONDE_TLS:-}"
+crypto_bin="${ONDE_CRYPTO:-}"
+sqlite_bin="${ONDE_SQLITE:-}"
+zlib_bin="${ONDE_ZLIB:-}"
+
+prebuilt=0
+if [ -n "$minimal_bin$net_bin$tls_bin$crypto_bin$sqlite_bin$zlib_bin" ]; then
+  prebuilt=1
+  for path in "$default_bin" "$minimal_bin" "$net_bin" "$tls_bin" "$crypto_bin" "$sqlite_bin" "$zlib_bin"; do
+    if [ ! -x "$path" ]; then
+      echo "feature matrix: not executable: $path" >&2
+      exit 2
+    fi
+  done
+fi
+
+onde="$default_bin"
 
 restore() {
-  cargo build -q -p ln-cli >/dev/null 2>&1 || true
+  if [ "$prebuilt" -eq 0 ]; then
+    cargo build -q -p ln-cli >/dev/null 2>&1 || true
+  fi
 }
 trap restore EXIT
 
 build() {
   echo "== cargo build -p ln-cli $*"
   cargo build -q -p ln-cli "$@"
+}
+
+use() { # binary
+  onde="$1"
+  if [ ! -x "$onde" ]; then
+    echo "feature matrix: no onde binary at '$onde'" >&2
+    exit 2
+  fi
+}
+
+use_variant() { # binary, cargo args...
+  local binary="$1"
+  shift
+  if [ "$prebuilt" -eq 1 ]; then
+    use "$binary"
+  else
+    build "$@"
+    use "$root/target/debug/onde"
+  fi
 }
 
 loads() { # specifier, marker property exported by the module
@@ -121,7 +164,12 @@ fails_net_tls_crypto() {
 # ------------------------------------------------------------------------------------------------
 # All features: the normal build.
 # ------------------------------------------------------------------------------------------------
-build
+if [ "$prebuilt" -eq 1 ]; then
+  use "$default_bin"
+else
+  build
+  use "$root/target/debug/onde"
+fi
 "$onde" -e 'console.log(1 + 1)' | grep -qx 2
 loads_all
 expect_table "$ALL" "default"
@@ -135,7 +183,7 @@ echo "ok        default build has every module"
 # ------------------------------------------------------------------------------------------------
 # No features: every module reports the missing feature, CJS and ESM.
 # ------------------------------------------------------------------------------------------------
-build --no-default-features
+use_variant "$minimal_bin" --no-default-features
 "$onde" -e 'console.log(1 + 1)' | grep -qx 2
 fails_net_tls_crypto
 fails_with_feature node:sqlite node-sqlite
@@ -161,7 +209,7 @@ echo "ok        no features: readable errors, no optional dependencies linked"
 # ------------------------------------------------------------------------------------------------
 # Network only: sockets and HTTP/1.1, no rustls, no TLS module.
 # ------------------------------------------------------------------------------------------------
-build --no-default-features --features node-net
+use_variant "$net_bin" --no-default-features --features node-net
 loads node:net createServer
 loads node:http createServer
 loads node:dns lookup
@@ -183,7 +231,7 @@ echo "ok        node-net only: sockets and http, no tls, no rustls"
 # ------------------------------------------------------------------------------------------------
 # TLS: implies net, so every socket module plus tls/https is present.
 # ------------------------------------------------------------------------------------------------
-build --no-default-features --features node-tls
+use_variant "$tls_bin" --no-default-features --features node-tls
 loads node:net createServer
 loads node:http createServer
 loads node:tls connect
@@ -202,7 +250,7 @@ echo "ok        node-tls only: tls implies net, rustls linked"
 # ------------------------------------------------------------------------------------------------
 # Crypto alone: the module is independent of the network flags.
 # ------------------------------------------------------------------------------------------------
-build --no-default-features --features node-crypto
+use_variant "$crypto_bin" --no-default-features --features node-crypto
 loads node:crypto createHash
 constants_survives
 if has_dependency rustls --no-default-features --features node-crypto \
@@ -216,7 +264,7 @@ echo "ok        node-crypto only: crypto without any socket code"
 # ------------------------------------------------------------------------------------------------
 # Standalone modules keep their own flags.
 # ------------------------------------------------------------------------------------------------
-build --no-default-features --features node-sqlite
+use_variant "$sqlite_bin" --no-default-features --features node-sqlite
 loads node:sqlite Database
 fails_with_feature node:zlib node-zlib
 fails_with_feature node:net node-net
@@ -227,7 +275,7 @@ if has_dependency ln-zlib --no-default-features --features node-sqlite; then
 fi
 echo "ok        node-sqlite only"
 
-build --no-default-features --features node-zlib
+use_variant "$zlib_bin" --no-default-features --features node-zlib
 loads node:zlib gzipSync
 fails_with_feature node:sqlite node-sqlite
 fails_with_feature node:net node-net
@@ -238,7 +286,12 @@ if has_dependency libsqlite3-sys --no-default-features --features node-zlib; the
 fi
 echo "ok        node-zlib only"
 
-# Restore the default build before the script exits (the trap covers failures too).
-restore
-loads_all
-echo "ok        default build restored"
+if [ "$prebuilt" -eq 1 ]; then
+  echo "ok        prebuilt matrix from the build stage"
+else
+  # Restore the default build before the script exits (the trap covers failures too).
+  restore
+  use "$root/target/debug/onde"
+  loads_all
+  echo "ok        default build restored"
+fi
