@@ -40,7 +40,7 @@ Measured on the pinned engine (2026-11-13):
 | `structuredClone` | 🔵 M2 | subset: plain data, Map/Set/Date/RegExp, buffers, typed arrays, cycles (D27) |
 | `crypto` (WebCrypto) | ⚪ | `subtle` in M7; `randomBytes`/hash are M3 ops |
 | `fetch`, `WebStreams` | ⚪ | 1.1 candidates |
-| `WebAssembly` | ⚪ | non-goal |
+| `WebAssembly` | ⚪ | non-goal for 1.0, and it is the *global* that is the non-goal: Node gets it from V8, where it would be a whole engine here, and half of the surface is worse than none. wasm as a capability is a separate question ([wasm-plan.md](wasm-plan.md), `onde:wasm`) |
 | `performance` | 🟢 | engine object; `perf_hooks` wrapper in M3 |
 | `setTimeout`/`setInterval`/`setImmediate` | 🟢 M1 | ours: `ln-sched` heap + `ln-runtime` loop |
 | `process` | 🟡 M1/M2 | see §2; signals and CPU accounting are later |

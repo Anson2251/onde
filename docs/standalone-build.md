@@ -48,8 +48,8 @@ can be smaller than `onde` because unreferenced code is dropped; and the same li
 C/C++ host links when it wants to embed onde. Appending to a copy of the runtime (Bun/LLRT/qjs
 style) cannot produce a valid macOS signature — verified, see Appendix B — and needs its own loader
 format. The `wrappe` backend is the deliberate exception: it is compiler-less and keeps real files
-at run time, and it pays for that with extraction, a second process and no signable output. Both
-are supported; the choice belongs to the project.
+at run time, and it pays for that with extraction, a second process and an outer file whose payload
+cannot be sealed. Both are supported; the choice belongs to the project.
 
 Raw research behind the numbers and the prior art:
 
@@ -399,7 +399,7 @@ macOS, so one environment variable moves it), and `$ONDE_SDK_CACHE` overrides th
 <dir>` bypasses the cache entirely; that is the route for an air-gapped machine and for a `onde`
 built from a checkout, which has no matching release.
 
-A local SDK for the host cell is one script away:
+A local SDK for the host cell is one script away (`make sdk` runs it):
 
 ```console
 $ ./scripts/build-sdk.sh
@@ -1019,10 +1019,12 @@ Signing is a post-link step, never something the library or the payload knows ab
 
 Order is fixed: compile → link → strip → sign → report. Each signing step is a
 `child_process.spawn` with an argv array, `stdio: "inherit"`, so the tool's output and warnings are
-visible and the exit code is honoured. `ondec build` prints the command it runs (identity names are
-not secrets, but certificates and PFX passwords are: those come from the environment or the
-keychain, never from the command line). The macOS identity in v1 carries no entitlements by
-default; QuickJS does not need JIT entitlements.
+visible and the exit code is honoured. The `wrappe` backend moves the step: the files it extracts
+are the ones that are loaded, so the staged runtime and every staged native file are signed before
+packing (Appendix D.4), and the outer artifact is signed after, if at all. `ondec build` prints the
+command it runs (identity names are not secrets, but certificates and PFX passwords are: those come
+from the environment or the keychain, never from the command line). The macOS identity in v1
+carries no entitlements by default; QuickJS does not need JIT entitlements.
 
 ---
 
@@ -1433,6 +1435,15 @@ any file today. That is the seductive part.
   (Appendix B has the exact transcript). To get a signable artifact the payload must be *inside*
   the image — a Mach-O segment, as Node SEA's `NODE_SEA` and Bun's `__BUN` do — or inside a signed
   `.app` bundle's resources. Both need a packer that knows the format; neither is a wrappe flag.
+  That last sentence is about the **outer** file — what Gatekeeper and the service manager check —
+  and it is not the check that runs when the extracted `onde` loads a native plugin. Under the
+  hardened runtime, library validation at `dlopen` compares the library against the identity of the
+  process that loads it, which is the inner `onde`: it is signed, its signature survives extraction,
+  and it is the process the load happens in. So a wrappe package that ships native plugins is viable
+  on macOS when the staged `onde` and every staged plugin library are signed with one identity
+  **before** packing. What stays unsealed is the outer artifact, which is a distribution and
+  Gatekeeper question, not a load-time one. An ad-hoc signature does not satisfy library validation;
+  the identity has to be real.
   Windows is different: Authenticode hashes the file up to the certificate table, so `signtool`
   after packing does work, and only the extracted `onde` needs its own signature.
 - **Size.** Always the whole `onde` (5.3 MB) plus runner (~1 MB) plus the app; no dead-code
@@ -1448,7 +1459,7 @@ any file today. That is the seductive part.
 | startup | one process, bytecode in the image | runner + `onde`, bytecode parsed at start, first run extracts |
 | output files | one binary, no runtime files | one binary that unpacks to disk |
 | app's view of the filesystem | only builtins; modules from the table | real files; workers/assets/`fs` just work |
-| macOS signing | valid (payload inside the image) | needs a payload-in-image packer or a `.app` bundle; `wrappe`'s append cannot be sealed |
+| macOS signing | valid (payload inside the image) | the outer file cannot be sealed; the extracted runtime and any native files can be signed first, and load-time library validation uses those |
 | size | ~4.4 MB + app | ~6.5–7 MB + app |
 | data files | out of scope (a future VFS would be needed) | real files, `--asset` |
 | run-time performance gate (§12) | enforced | reported, not enforced (the trade is the point) |

@@ -28,9 +28,10 @@ v1.0 ships when all of the following hold:
 | 11 | `onde:ffi`: `dlopen` + libffi, declared or inferred calls, structs, callbacks, JSON envelopes; behind the `ffi` build feature and the `ffi.load` capability |
 
 Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
-`Intl` (beyond what we can afford), `WebAssembly`, `fetch` (candidate for 1.1). N-API/native
-addons remain a non-goal and FFI is not a stepping stone to them
-([ADR-0010](adr/0010-ffi-dlopen.md) §2).
+`Intl` (beyond what we can afford), the `WebAssembly` global, `fetch` (candidate for 1.1). A wasm
+*engine* is a different question from the browser-shaped global — an engine needs no `WebAssembly`
+object — and [wasm-plan.md](wasm-plan.md) is where that one is argued. N-API/native addons remain a
+non-goal and FFI is not a stepping stone to them ([ADR-0010](adr/0010-ffi-dlopen.md) §2).
 
 ---
 
