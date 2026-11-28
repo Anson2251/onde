@@ -873,7 +873,9 @@ pub(crate) fn install<'js>(
 }
 
 /// The keys `__ln_loader` must carry (ADR-0011 §5.4.1). Kept next to the install so the debug
-/// guard can compare the object it built with the documented set.
+/// guard can compare the object it built with the documented set. Compiled only in debug builds,
+/// where the guard exists; a release build has no use for it.
+#[cfg(debug_assertions)]
 const PRIVILEGED_KEYS: [&str; 10] = [
     "platform",
     "resolve",
