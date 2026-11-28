@@ -58,6 +58,11 @@ for case_file in inference call struct callback memory json sqlite; do
   run_case "$case_file.test.js" "$onde" "$here/$case_file.test.js"
 done
 
+# --- the crash trace --------------------------------------------------------------------------
+#
+# The trace assertions live in `trace.sh`; the entry stays the matrix and the gates.
+"$here/trace.sh" || fail=1
+
 # --- the namespace ----------------------------------------------------------------------------
 #
 # `onde:ffi` is an extension namespace, not a Node builtin: a bare `ffi` must fall through to

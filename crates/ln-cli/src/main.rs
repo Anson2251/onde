@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use ln_perm::{GrantArgs, Policy};
-use ln_runtime::{Budget, Config, DiagnosticsConfig, Failure, Isolate};
+use ln_runtime::{Budget, Config, DiagnosticsConfig, Failure, FfiTrace, Isolate};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -68,6 +68,18 @@ struct Cli {
     /// Report sampled collections in --trace-events (they are sampled, see D69)
     #[arg(long = "trace-gc")]
     trace_gc: bool,
+
+    /// Trace FFI calls to stderr, synchronously, so the last line survives a crash
+    /// (`--trace-ffi=full` adds layouts and argument contents)
+    #[arg(
+        long = "trace-ffi",
+        value_name = "LEVEL",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "summary",
+        value_parser = ["summary", "full"]
+    )]
+    trace_ffi: Option<String>,
 
     /// Print per-phase and per-op time at exit
     #[arg(long = "timing")]
@@ -207,13 +219,18 @@ impl Cli {
             .map_err(|error| format!("permissions: {error}"))
     }
 
-    /// What the three diagnostic flags asked for; all-empty when none was passed.
+    /// What the diagnostic flags asked for; all-empty when none was passed.
     fn diagnostics(&self) -> DiagnosticsConfig {
         DiagnosticsConfig {
             trace_events: self.trace_events.clone(),
             trace_buffer_mb: self.trace_buffer_mb.clamp(1, 512),
             timing: self.timing,
             trace_gc: self.trace_gc,
+            trace_ffi: match self.trace_ffi.as_deref() {
+                Some("full") => FfiTrace::Full,
+                Some(_) => FfiTrace::Summary,
+                None => FfiTrace::Off,
+            },
             // Filled in by `real_main` after the policy is parsed.
             setup_micros: None,
         }
@@ -368,6 +385,7 @@ fn real_main() -> i32 {
     config.async_stack_traces = options.async_stack_traces;
     config.inheritable.max_old_space_size = options.max_old_space_size;
     config.inheritable.permissions = options.permissions.clone();
+    config.inheritable.trace_ffi = options.diagnostics.trace_ffi;
     config.diagnostics = options.diagnostics.clone();
     let mut isolate = match Isolate::new(config) {
         Ok(isolate) => isolate,
@@ -434,6 +452,7 @@ fn run_tests(cli: &Cli, exe: &str, options: &RunOptions) -> i32 {
     config.async_stack_traces = options.async_stack_traces;
     config.inheritable.max_old_space_size = options.max_old_space_size;
     config.inheritable.permissions = options.permissions.clone();
+    config.inheritable.trace_ffi = options.diagnostics.trace_ffi;
     config.diagnostics = options.diagnostics.clone();
     config.test_files = Some(paths);
 
@@ -529,6 +548,7 @@ fn run_eval(expression: &str, argv: Vec<String>, options: &RunOptions) -> i32 {
     config.async_stack_traces = options.async_stack_traces;
     config.inheritable.max_old_space_size = options.max_old_space_size;
     config.inheritable.permissions = options.permissions.clone();
+    config.inheritable.trace_ffi = options.diagnostics.trace_ffi;
     config.diagnostics = options.diagnostics.clone();
     // Node's `-e` evaluates as CommonJS with `require` in scope; keep the completion-value
     // printing, which is onde's documented convenience.

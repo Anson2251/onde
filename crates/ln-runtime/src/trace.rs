@@ -300,6 +300,61 @@ pub struct Diagnostics {
     gc: Option<GcTracker>,
 }
 
+/// How much of the FFI boundary to log (`--trace-ffi`, `ONDE_FFI_TRACE`).
+///
+/// The log is written from the host, synchronously, before control enters C: a crash inside the
+/// library kills the process, so the last line is the only record of which call was in flight.
+/// `Summary` prints the call, its coerced values and the JavaScript frame; `Full` also prints
+/// struct layouts and the contents of struct and array arguments.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FfiTrace {
+    #[default]
+    Off,
+    Summary,
+    Full,
+}
+
+impl FfiTrace {
+    pub fn enabled(self) -> bool {
+        !matches!(self, FfiTrace::Off)
+    }
+
+    pub fn full(self) -> bool {
+        matches!(self, FfiTrace::Full)
+    }
+
+    /// The value the host hands `onde:ffi` (0 off, 1 summary, 2 full).
+    pub fn level(self) -> u8 {
+        match self {
+            FfiTrace::Off => 0,
+            FfiTrace::Summary => 1,
+            FfiTrace::Full => 2,
+        }
+    }
+
+    /// `ONDE_FFI_TRACE`: `1`/`summary` for the call log, `2`/`full` for layouts and values.
+    /// Anything unrecognised is off, so a typo cannot flood stderr.
+    pub fn from_env() -> FfiTrace {
+        match std::env::var("ONDE_FFI_TRACE") {
+            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "full" | "2" | "verbose" => FfiTrace::Full,
+                "1" | "summary" | "on" | "true" => FfiTrace::Summary,
+                _ => FfiTrace::Off,
+            },
+            Err(_) => FfiTrace::Off,
+        }
+    }
+
+    /// The flag wins when it was passed; the environment covers compiled apps and `ondec`.
+    pub fn or_env(self) -> FfiTrace {
+        if self.enabled() {
+            self
+        } else {
+            FfiTrace::from_env()
+        }
+    }
+}
+
 /// What the CLI asked for.
 #[derive(Debug, Clone)]
 pub struct DiagnosticsConfig {
@@ -311,6 +366,8 @@ pub struct DiagnosticsConfig {
     pub timing: bool,
     /// Report sampled collections.
     pub trace_gc: bool,
+    /// Trace the FFI boundary (`--trace-ffi`; `ONDE_FFI_TRACE` is the fallback).
+    pub trace_ffi: FfiTrace,
     /// Time the CLI spent parsing the permission policy, before the isolate existed. Reported as a
     /// `permissions` row under `--timing` (ADR-0011 §7); `None` when no policy was parsed.
     pub setup_micros: Option<u64>,
@@ -323,6 +380,7 @@ impl Default for DiagnosticsConfig {
             trace_buffer_mb: DEFAULT_BUFFER_LIMIT / (1024 * 1024),
             timing: false,
             trace_gc: false,
+            trace_ffi: FfiTrace::Off,
             setup_micros: None,
         }
     }

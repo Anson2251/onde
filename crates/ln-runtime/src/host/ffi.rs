@@ -34,6 +34,7 @@ use ln_ffi::{
 use ln_perm::{Capability, Request};
 
 use crate::host_error::{throw_node_error, throw_node_error_value};
+use crate::trace::FfiTrace;
 
 use super::HostState;
 
@@ -41,6 +42,8 @@ use super::HostState;
 pub(crate) struct FfiState {
     types: Rc<TypeTable>,
     inner: RefCell<FfiInner>,
+    /// `--trace-ffi` / `ONDE_FFI_TRACE`: write every boundary event to stderr, synchronously.
+    trace: FfiTrace,
     /// A JavaScript exception raised inside a callback, parked until the outer call returns.
     pending: RefCell<Option<js::Persistent<js::Value<'static>>>>,
 }
@@ -78,10 +81,12 @@ struct LibraryEntry {
     /// Deallocator-backed external buffers whose deallocator resolves into this library. A
     /// `close()` while any is live is refused: the deallocator's code may live in the library.
     live_external: Arc<AtomicUsize>,
+    /// True once `--trace-ffi` printed this image's load address.
+    image_logged: bool,
 }
 
 impl FfiState {
-    pub(crate) fn new() -> Rc<Self> {
+    pub(crate) fn new(trace: FfiTrace) -> Rc<Self> {
         Rc::new(FfiState {
             types: Rc::new(TypeTable::new()),
             inner: RefCell::new(FfiInner {
@@ -92,6 +97,7 @@ impl FfiState {
                 external_live: Arc::new(AtomicUsize::new(0)),
                 declared_plans: vec![None],
             }),
+            trace,
             pending: RefCell::new(None),
         })
     }
@@ -137,7 +143,11 @@ pub(crate) fn install<'js>(
                     inner.libraries.push(Some(LibraryEntry {
                         library,
                         live_external: Arc::new(AtomicUsize::new(0)),
+                        image_logged: false,
                     }));
+                    if ffi_state.trace.enabled() {
+                        trace_line(ffi_state.trace, format_args!("open {path}"));
+                    }
                     Ok((inner.libraries.len() - 1) as u32)
                 },
             )?,
@@ -185,7 +195,11 @@ pub(crate) fn install<'js>(
                     }
                     // Dropping the `Library` unloads it. No symbol can be called afterwards
                     // because JavaScript's handle object is marked closed first.
+                    let path = entry.library.path().to_owned();
                     inner.libraries[handle as usize] = None;
+                    if ffi_state.trace.enabled() {
+                        trace_line(ffi_state.trace, format_args!("close {path}"));
+                    }
                     Ok(true)
                 },
             )?,
@@ -203,7 +217,8 @@ pub(crate) fn install<'js>(
                       name: String,
                       args: Vec<u32>,
                       ret: u32,
-                      varargs: bool|
+                      varargs: bool,
+                      strict: bool|
                       -> js::Result<u32> {
                     // Validate the declaration now: a bad type id must fail at dlopen, not at the
                     // first call (the plan's WP0 exit criterion).
@@ -231,6 +246,49 @@ pub(crate) fn install<'js>(
                             varargs,
                         },
                     );
+                    // `strict` binds now, so a typo in the declaration fails at dlopen instead of
+                    // at the first call. The default stays lazy for libraries that resolve a
+                    // symbol only after an init entry point.
+                    if strict {
+                        entry
+                            .library
+                            .address_of(&name)
+                            .map_err(|error| ffi_error(&ctx, error))?;
+                    }
+                    if ffi_state.trace.enabled() {
+                        let type_name = |id: u32| {
+                            ffi_state
+                                .types
+                                .get(id)
+                                .map(|entry| entry.ty.name())
+                                .unwrap_or_else(|_| "?".to_owned())
+                        };
+                        let mut params = args
+                            .iter()
+                            .map(|id| type_name(*id))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        if varargs {
+                            if !params.is_empty() {
+                                params.push_str(", ");
+                            }
+                            params.push_str("...");
+                        }
+                        trace_line(
+                            ffi_state.trace,
+                            format_args!(
+                                "declare {} {name}({params}) -> {}",
+                                entry.library.path(),
+                                type_name(ret)
+                            ),
+                        );
+                        // Resolve one symbol now so the log carries the image's load address,
+                        // which is what `atos -l` / `addr2line` need later. A missing symbol is
+                        // still reported by the call, exactly as before.
+                        if let Ok(address) = entry.library.address_of(&name) {
+                            log_image_once(entry, ffi_state.trace, address);
+                        }
+                    }
                     // A variadic signature has a per-call tail, so it keeps the generic path.
                     // An unsupported layout (an array by value, for example) also falls back:
                     // the generic call reports the precise error when it is actually used.
@@ -288,6 +346,7 @@ pub(crate) fn install<'js>(
     // host facts, not constants: LP64 gives 8 for both, LLP64 gives a 4-byte `long`, and a
     // 32-bit target gives 4 for the pointer types too.
     {
+        let ffi_state = ffi_state.clone();
         ffi.set(
             "target",
             js::Function::new(
@@ -300,6 +359,9 @@ pub(crate) fn install<'js>(
                         (std::mem::size_of::<std::os::raw::c_long>() * 8) as u32,
                     )?;
                     info.set("libcName", target_libc())?;
+                    // 0 off, 1 summary, 2 full. `onde:ffi` reads this once and captures a call
+                    // site per call only when it is nonzero.
+                    info.set("trace", ffi_state.trace.level())?;
                     Ok(info)
                 },
             )?,
@@ -352,15 +414,45 @@ pub(crate) fn install<'js>(
             "structType",
             js::Function::new(
                 ctx.clone(),
-                move |ctx: js::Ctx<'js>, fields: Vec<u32>| -> js::Result<js::Object<'js>> {
+                move |ctx: js::Ctx<'js>,
+                      field_ids: Vec<u32>,
+                      label: String,
+                      names: Vec<String>|
+                      -> js::Result<js::Object<'js>> {
                     let id = ffi_state
                         .types
-                        .define_struct(&fields)
+                        .define_struct(&field_ids)
                         .map_err(|error| ffi_error(&ctx, error))?;
                     let entry = ffi_state
                         .types
                         .get(id)
                         .map_err(|error| ffi_error(&ctx, error))?;
+                    if ffi_state.trace.full() {
+                        let mut fields = String::new();
+                        for ((name, field_id), offset) in
+                            names.iter().zip(&field_ids).zip(&entry.offsets)
+                        {
+                            if !fields.is_empty() {
+                                fields.push_str(", ");
+                            }
+                            let ty = ffi_state
+                                .types
+                                .get(*field_id)
+                                .map(|field| field.ty.name())
+                                .unwrap_or_else(|_| "?".to_owned());
+                            let _ = std::fmt::Write::write_fmt(
+                                &mut fields,
+                                format_args!("{name}:{ty}@{offset}"),
+                            );
+                        }
+                        trace_line(
+                            ffi_state.trace,
+                            format_args!(
+                                "struct {label} bytes={} align={} {fields}",
+                                entry.bytes, entry.align
+                            ),
+                        );
+                    }
                     let info = js::Object::new(ctx.clone())?;
                     info.set("id", id)?;
                     info.set("bytes", entry.bytes)?;
@@ -393,8 +485,16 @@ pub(crate) fn install<'js>(
                       options: js::Value<'js>|
                       -> js::Result<js::Value<'js>> {
                     let (shape, varargs) = parse_call_options(&options);
+                    // Off the trace path, do not pay for a property lookup per call.
+                    let frame = if ffi_state.trace.enabled() {
+                        options.as_object().and_then(|object| {
+                            object.get::<_, Option<String>>("frame").ok().flatten()
+                        })
+                    } else {
+                        None
+                    };
                     let args = convert_args(&ctx, &ffi_state.types, &arg_ids, &values)?;
-                    let (plan, address) = {
+                    let (plan, address, trace_info) = {
                         let mut inner = ffi_state.inner.borrow_mut();
                         let entry = match inner
                             .libraries
@@ -404,10 +504,15 @@ pub(crate) fn install<'js>(
                             Some(entry) => entry,
                             None => return Err(ffi_error(&ctx, FfiError::closed())),
                         };
+                        let trace_info = ffi_state
+                            .trace
+                            .enabled()
+                            .then(|| (entry.library.path().to_owned(), name.clone()));
                         let address = entry
                             .library
                             .address_of(&name)
                             .map_err(|error| ffi_error(&ctx, error))?;
+                        log_image_once(entry, ffi_state.trace, address);
                         // A declaration fixes the ABI: a variadic declaration carries its fixed
                         // count, and a non-variadic one ignores `options.varargs` rather than
                         // silently switching to `ffi_prep_cif_var`. Only a symbol with no
@@ -432,9 +537,19 @@ pub(crate) fn install<'js>(
                                 &shape,
                             )
                             .map_err(|error| ffi_error(&ctx, error))?;
-                        (plan, address)
+                        (plan, address, trace_info)
                     };
 
+                    if let Some((path, symbol)) = &trace_info {
+                        trace_call(
+                            ffi_state.trace,
+                            path,
+                            symbol,
+                            plan.arg_entries(),
+                            &args,
+                            frame.as_deref(),
+                        );
+                    }
                     let ret_entry = ffi_state
                         .types
                         .get(ret_id)
@@ -473,9 +588,11 @@ pub(crate) fn install<'js>(
                 move |ctx: js::Ctx<'js>,
                       handle: u32,
                       plan_id: u32,
-                      values: js::Array<'js>|
+                      values: js::Array<'js>,
+                      frame: js::Value<'js>|
                       -> js::Result<js::Value<'js>> {
-                    let (plan, address) = {
+                    let frame = frame.as_string().and_then(|text| text.to_string().ok());
+                    let (plan, address, trace_info) = {
                         let mut inner = ffi_state.inner.borrow_mut();
                         let FfiInner {
                             libraries,
@@ -501,6 +618,10 @@ pub(crate) fn install<'js>(
                         else {
                             return Err(ffi_error(&ctx, FfiError::closed()));
                         };
+                        let trace_info = ffi_state
+                            .trace
+                            .enabled()
+                            .then(|| (entry.library.path().to_owned(), slot.symbol.clone()));
                         let address = if slot.resolved {
                             slot.address
                         } else {
@@ -512,7 +633,8 @@ pub(crate) fn install<'js>(
                             slot.resolved = true;
                             address
                         };
-                        (slot.plan.clone(), address)
+                        log_image_once(entry, ffi_state.trace, address);
+                        (slot.plan.clone(), address, trace_info)
                     };
 
                     if values.len() != plan.arg_entries().len() {
@@ -530,6 +652,16 @@ pub(crate) fn install<'js>(
                     for (index, entry) in plan.arg_entries().iter().enumerate() {
                         let value: js::Value = values.get(index)?;
                         args.push(js_to_value(&ctx, &ffi_state.types, entry, &value)?);
+                    }
+                    if let Some((path, symbol)) = &trace_info {
+                        trace_call(
+                            ffi_state.trace,
+                            path,
+                            symbol,
+                            plan.arg_entries(),
+                            &args,
+                            frame.as_deref(),
+                        );
                     }
                     let ret_entry = plan.ret_entry().clone();
                     ffi_state.inner.borrow_mut().calls_in_flight += 1;
@@ -1012,6 +1144,198 @@ fn target_libc() -> &'static str {
 
 fn ffi_error<'js>(ctx: &js::Ctx<'js>, error: FfiError) -> js::Error {
     throw_node_error(ctx, error.code, &error.message)
+}
+
+// -------------------------------------------------------------------------------------------
+// Crash tracing
+// -------------------------------------------------------------------------------------------
+
+/// Write one line to stderr without buffering.
+///
+/// The trace exists to survive a crash inside C, so the write has to reach the descriptor before
+/// `ffi_call` runs. `libc::write` also keeps the trace out of Rust's stderr lock, which a signal
+/// would leave unusable; the process is not crashing here, but the ordering guarantee is the same.
+fn write_stderr(text: &str) {
+    #[cfg(unix)]
+    {
+        let bytes = text.as_bytes();
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let written = unsafe {
+                libc::write(
+                    2,
+                    bytes[offset..].as_ptr() as *const c_void,
+                    bytes.len() - offset,
+                )
+            };
+            if written < 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                break;
+            }
+            if written == 0 {
+                break;
+            }
+            offset += written as usize;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(text.as_bytes());
+    }
+}
+
+fn trace_line(trace: FfiTrace, args: std::fmt::Arguments<'_>) {
+    if !trace.enabled() {
+        return;
+    }
+    use std::fmt::Write as _;
+    let mut line = String::from("[ffi] ");
+    let _ = line.write_fmt(args);
+    line.push('\n');
+    write_stderr(&line);
+}
+
+/// One `call` line: the library and symbol, the coerced arguments, and the JavaScript frame.
+fn trace_call(
+    trace: FfiTrace,
+    library: &str,
+    symbol: &str,
+    entries: &[Arc<TypeEntry>],
+    args: &[FfiValue],
+    frame: Option<&str>,
+) {
+    if !trace.enabled() {
+        return;
+    }
+    use std::fmt::Write as _;
+    let mut values = String::new();
+    for (entry, value) in entries.iter().zip(args) {
+        if !values.is_empty() {
+            values.push_str(", ");
+        }
+        let _ = write!(values, "{}=", entry.ty.name());
+        format_value(trace, value, 0, &mut values);
+    }
+    trace_line(
+        trace,
+        format_args!(
+            "call {library} {symbol}({values}) at {}",
+            frame.unwrap_or("<unknown>")
+        ),
+    );
+}
+
+fn format_value(trace: FfiTrace, value: &FfiValue, depth: usize, out: &mut String) {
+    use std::fmt::Write as _;
+    match value {
+        FfiValue::Void => out.push_str("void"),
+        FfiValue::Int(value) => {
+            let _ = write!(out, "{value}");
+        }
+        FfiValue::UInt(value) => {
+            let _ = write!(out, "{value}");
+        }
+        FfiValue::Bool(value) => {
+            let _ = write!(out, "{value}");
+        }
+        FfiValue::F32(value) => {
+            let _ = write!(out, "{value}");
+        }
+        FfiValue::F64(value) => {
+            let _ = write!(out, "{value}");
+        }
+        FfiValue::Ptr(0) => out.push_str("null"),
+        FfiValue::Ptr(value) => {
+            let _ = write!(out, "{value:#x}");
+        }
+        FfiValue::CString(text) => push_string(text, trace.full(), out),
+        FfiValue::Struct(fields) if trace.full() && depth < 2 => {
+            out.push('{');
+            for (index, field) in fields.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                format_value(trace, field, depth + 1, out);
+            }
+            out.push('}');
+        }
+        FfiValue::Struct(fields) => {
+            let _ = write!(out, "{{{}}}", fields.len());
+        }
+        FfiValue::Array(items) if trace.full() && depth < 2 => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                format_value(trace, item, depth + 1, out);
+            }
+            out.push(']');
+        }
+        FfiValue::Array(items) => {
+            let _ = write!(out, "[{}]", items.len());
+        }
+    }
+}
+
+fn push_string(text: &str, full: bool, out: &mut String) {
+    let limit = if full { 96 } else { 24 };
+    out.push('"');
+    let mut truncated = false;
+    for (index, ch) in text.chars().enumerate() {
+        if index == limit {
+            truncated = true;
+            break;
+        }
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => out.push(' '),
+            ch => out.push(ch),
+        }
+    }
+    if truncated {
+        out.push_str("...");
+    }
+    out.push('"');
+}
+
+/// Print the image's load address once, the first time this library resolves a symbol.
+fn log_image_once(entry: &mut LibraryEntry, trace: FfiTrace, address: usize) {
+    if !trace.enabled() || entry.image_logged {
+        return;
+    }
+    let Some(base) = image_base(address) else {
+        return;
+    };
+    entry.image_logged = true;
+    trace_line(
+        trace,
+        format_args!("image {} base={base:#x}", entry.library.path()),
+    );
+}
+
+/// The load address of the image containing `address`, for `atos -l` and `addr2line`.
+#[cfg(unix)]
+fn image_base(address: usize) -> Option<usize> {
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let resolved = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+    if resolved == 0 || info.dli_fbase.is_null() {
+        None
+    } else {
+        Some(info.dli_fbase as usize)
+    }
+}
+
+#[cfg(not(unix))]
+fn image_base(_address: usize) -> Option<usize> {
+    None
 }
 
 /// A borrowed or owned block of native memory exposed as an `ArrayBuffer`.

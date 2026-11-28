@@ -65,7 +65,7 @@ use proc::{IpcBridge, ProcBridge};
 use trace::Diagnostics;
 
 use signals::SignalBridge;
-pub use trace::DiagnosticsConfig;
+pub use trace::{DiagnosticsConfig, FfiTrace};
 
 /// Callback kinds understood by `bootstrap.js`'s `__ln_dispatch`.
 const KIND_TIMER: u8 = 0;
@@ -90,6 +90,8 @@ pub struct Inheritable {
     /// The opt-in permission policy (ADR-0011). `None` is the default: every check is skipped.
     /// `Some(Policy::deny_all())` is `--permission` with no grants.
     pub permissions: Option<Policy>,
+    /// The FFI trace level (`--trace-ffi`), so a worker's boundary events reach the same stderr.
+    pub trace_ffi: FfiTrace,
 }
 
 /// Isolate configuration.
@@ -163,6 +165,7 @@ impl Inheritable {
     /// the worker bridge, which stores the set rather than a whole parent config.
     pub fn into_config(self, argv: Vec<String>) -> Config {
         let mut config = Config::new(argv);
+        config.diagnostics.trace_ffi = self.trace_ffi;
         config.inheritable = self;
         config
     }
@@ -598,7 +601,7 @@ impl Isolate {
         #[cfg(feature = "node-sqlite")]
         let sqlite = Rc::new(host::sqlite::SqliteState::new());
         #[cfg(feature = "ffi")]
-        let ffi = host::ffi::FfiState::new();
+        let ffi = host::ffi::FfiState::new(config.diagnostics.trace_ffi.or_env());
         let async_hooks = AsyncTracker::new();
         // A worker gets no diagnostics of its own: one trace file per process is the contract, and
         // a worker's turns would need a lane in the main isolate's file (m7-plan §3.4).
@@ -2767,6 +2770,7 @@ process.exit(3);
         parent.inheritable.io_threads = 9;
         parent.inheritable.max_old_space_size = Some(64 << 20);
         parent.inheritable.permissions = Some(Policy::deny_all());
+        parent.inheritable.trace_ffi = FfiTrace::Full;
         parent.expose_require = true;
         parent.async_stack_traces = true;
         parent.test_files = Some(vec!["x".to_owned()]);

@@ -57,7 +57,9 @@ const db = ref(Ptr);                                  // sqlite3** out-param
 sqlite3_open_v2(":memory:", db, 0x2 | 0x4, null);
 ```
 
-The returned object is `{ path, symbols, call, fn, close }`.
+The returned object is `{ path, symbols, call, fn, address, close }`. `dlopen` takes an optional
+third argument, `{ strict: true }`: every declared symbol resolves at load time instead of on its
+first call, and `call`/`fn` refuse a symbol that has no declaration (`ERR_FFI_UNDECLARED`).
 
 | member | meaning |
 |---|---|
@@ -65,6 +67,7 @@ The returned object is `{ path, symbols, call, fn, close }`.
 | `symbols` | one function per declared symbol; absent for undeclared ones |
 | `call(name, args, ret?, options?)` | one call to an arbitrary symbol; an omitted `ret` uses the declaration's, else `i32`; an explicit `ret` that is not ABI-compatible with a declared symbol throws `ERR_FFI_SIGNATURE_CONFLICT` (compatible refinements are allowed, §4.1) |
 | `fn(name, ret?, options?)` | a reusable function; an omitted `ret` uses the declaration's, else `i32`; a declared symbol's arguments are used as declared, an undeclared one's are inferred per shape and cached; same conflict rule |
+| `address(name)` | resolves a symbol and returns a `Ptr` without calling it; useful for a deallocator |
 | `close()` | unloads and invalidates every symbol from this handle (later calls throw `ERR_FFI_CLOSED`); throws `ERR_FFI_LIVE_REFERENCES` while a deallocator-backed external buffer is live |
 
 Declarations are optional and may be partial. `options` has one key, `{ varargs: n }` — the number of
@@ -105,14 +108,16 @@ produces a typed value, `f64.bytes` is 8, and `args: [f64]` uses the type itself
 | `CArray.of(T, n)` | `T[n]` | `n * bytes(T)` | `align(T)` | `Uint8Array` for `u8`, else array | layout-only (struct fields); length must equal `n`; elements coerced |
 | struct class | `struct S` | host-computed | host-computed | struct instance | instance, or an initializer object |
 | `Callback` | function pointer | 8 | 8 | `Callback` | the callback object |
-| `buffer` | `void *` | — | — | TypedArray or DataView | argument-only pseudo-type |
-| `buffer_length` | `size_t` | — | — | the same view | argument-only; pairs with `buffer` |
+| `buffer` | `void *` | — | — | TypedArray, DataView, `Ptr`, `ref`, or `null` | argument-only pseudo-type |
+| `buffer_length` | `size_t` | — | — | the same view, or a number with a `Ptr` | argument-only; pairs with `buffer` |
 
-`buffer` and `buffer_length` are not layout types. `buffer_length` is passed the same view as the
+`buffer` and `buffer_length` are not layout types. The common form passes the same view as the
 paired `buffer`, and the host reads pointer and length from that one object at call time, so a
 resizable or transferred buffer cannot produce a torn pair (the same idea as Bun's
-`FFIType.buffer_length`). `buffer_length` must immediately follow its `buffer` in a declaration; a
-lone `buffer_length`, or one that follows anything else, throws at `dlopen`. It is never inferred.
+`FFIType.buffer_length`). An already-resolved pointer passes its byte length explicitly, for example
+`[ptr(view), view.byteLength]`. `buffer_length` must immediately follow its `buffer` in a
+declaration; a lone `buffer_length`, or one that follows anything else, throws at `dlopen`. It is
+never inferred.
 
 `Callback` used as an argument type accepts any `Callback` instance and takes the signature from the
 instance; `Callback.of(args, ret)` describes a raw function pointer obtained from C. A bare `Ptr`
@@ -500,6 +505,7 @@ values produced by `toJSON` rather than arbitrary user JSON.
 | `ERR_ACCESS_DENIED` | host (ADR-0011) | `--permission` without a `ffi.load` grant; the error carries `capability: "ffi.load"`. A build without the feature has no module at all |
 | `ERR_FFI_DLOPEN` | host | `dlopen` failed; the message carries the loader's text |
 | `ERR_FFI_SYMBOL_NOT_FOUND` | host | the symbol is absent from the library |
+| `ERR_FFI_UNDECLARED` | JS | a strict library called a symbol with no declaration |
 | `ERR_FFI_CLOSED` | host | a call through a handle or callback that was closed |
 | `ERR_FFI_LIVE_REFERENCES` | host | `close()` while a deallocator-backed external buffer is live |
 | `ERR_FFI_AMBIGUOUS_ARGUMENT` | JS | inference refused a value (§4.2) |
@@ -524,8 +530,8 @@ values produced by `toJSON` rather than arbitrary user JSON.
   `write` namespace on `read`: in-place writes go through `Struct.view` accessors or
   `host.ffi.write`, because a bare write needs a type and an address and reads badly as a method.
 * `toArrayBuffer(address, offset, length, deallocator?)` returns a zero-copy `ArrayBuffer` over
-  external memory. With a deallocator — a `Ptr` to `void dealloc(void *ptr, void *context)` plus an
-  optional context — the buffer owns the memory; the host adapts it to the engine's realloc-shaped
+  external memory. With a deallocator — a `Ptr` to `void dealloc(void *ptr, void *context)`, which
+  `lib.address(name)` supplies, plus an optional context — the buffer owns the memory; the host adapts it to the engine's realloc-shaped
   hook and calls it once when the buffer is released, on the isolate thread (during a collection or
   at `JS_FreeRuntime`), never on another thread. It must not call into JavaScript. Detaching the
   buffer — for example by transferring it — calls the deallocator immediately, which is the
@@ -636,7 +642,7 @@ The suite is `test/ffi/run.sh`. CI runs it as its own step and installs `libffi-
   `FixtureMixed`, `FixtureNested`, `FixtureArray`, `FixtureBig`); the values are identical on the
   dev cell. A second platform cell is measured by the same program, not compared with those
   numbers.
-* **JavaScript matrix** — seven files, 87 cases: `inference.test.js`, `call.test.js`,
+* **JavaScript matrix** — seven files, 91 cases: `inference.test.js`, `call.test.js`,
   `struct.test.js`, `callback.test.js`, `memory.test.js`, `json.test.js` and `sqlite.test.js`.
   They cover every row of §4.2 including the throws, the signature refinements, the `Ptr` cast, the
   `CArray` refusals, JSON round-trips, and the lifetime rules.
@@ -698,7 +704,7 @@ Status of each item. The dev cell is macOS arm64; CI also runs the same `test/ff
 x86_64:
 
 1. **Done** — the fixture matrix passes, including every inference throw and every lifetime test
-   (87 cases).
+   (91 cases).
 2. **Done on the dev cell** — the layout oracle's `sizeof`/`_Alignof`/`offsetof` values are
    identical for five structs. Linux is measured by the same program, not compared with those
    numbers.
@@ -718,6 +724,10 @@ x86_64:
    fast path, against 1.24/2.95/6.34/11.08 µs before it. The fixed cost is now ~0.24 µs and a
    scalar argument ~0.05 µs; bigger payloads are copy-bound. The `ffi` feature costs +173,632
    bytes (+2.2%) on an otherwise identical release build: 7,957,984 against 7,784,352.
+9. **Done** — `--trace-ffi` (and `ONDE_FFI_TRACE` for compiled apps) writes `open`, `declare`,
+   `image`, `call` and `close` lines from the host, synchronously, with the JavaScript frame and,
+   under `--trace-ffi=full`, struct layouts and argument contents. Pinned by `test/ffi/trace.sh`,
+   which `test/ffi/run.sh` calls.
 
 | Measurement | Value |
 |---|---:|

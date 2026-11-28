@@ -26,6 +26,11 @@ onde --permission --allow-ffi app.js
 { "ffi": { "load": true } }
 ```
 
+`--allow-ffi` is full trust, not a capability switch. A loaded library runs with the process's
+authority: it can open files, spawn processes and use the network regardless of the other grants,
+because native code is not mediated by the permission layer. Do not grant it to a script you do
+not trust.
+
 A denied load throws `ERR_ACCESS_DENIED` with `capability: "ffi.load"`. A binary built without the
 `ffi` feature has no `onde:ffi` module at all, and `require("onde:ffi")` reports
 `ERR_UNKNOWN_BUILTIN_MODULE`. The module is only reachable as `onde:ffi`; bare `ffi` and `node:ffi`
@@ -71,7 +76,8 @@ The SQLite example uses the macOS library name `libsqlite3.dylib`; on Linux it i
 
 ### Declarations
 
-A declaration is `{ args, ret, varargs? }`:
+A declaration is `{ args, ret, varargs? }`; Deno's `parameters` and `result` are accepted when the
+onde names are absent:
 
 ```js
 const {
@@ -93,8 +99,22 @@ Declarations are optional and may cover only part of a library. A symbol that is
 still be called with `call` or wrapped with `fn`.
 
 The host checks declarations when `dlopen` runs. A malformed `buffer_length` position or an unknown
-type fails there, before any call. A declared symbol that the library does not export is found on
-the first call and throws `ERR_FFI_SYMBOL_NOT_FOUND` then.
+type fails there, before any call. By default a declared symbol that the library does not export is
+found on the first call and throws `ERR_FFI_SYMBOL_NOT_FOUND` then. Pass `{ strict: true }` as the
+third argument to `dlopen` to make declarations authoritative: every declared symbol resolves at
+load time and `call`/`fn` refuse a symbol that has no declaration, so every pointer parameter has a
+declared type to check against:
+
+```js
+const lib = dlopen("libmylib.dylib", declarations, { strict: true });
+```
+
+`lib.address(name)` resolves a symbol without calling it and returns a `Ptr`, which is what a
+deallocator argument needs:
+
+```js
+const released = toArrayBuffer(block, 0, size, lib.address("mylib_free"));
+```
 
 ### Calling and reusing
 
@@ -174,14 +194,20 @@ its own subsection below.
 | `Callback` | function pointer | `Callback` | |
 | `Callback.of(args, ret)` | function pointer | `Callback` or callable | describes a C function pointer |
 | `voidType` | `void` | undefined | return only |
-| `buffer` | `void *` | TypedArray or DataView | argument only |
-| `buffer_length` | `size_t` | the same view | argument only; pointer width, follows `buffer` |
+| `buffer` | `void *` | TypedArray, DataView, `Ptr`, `ref` or null | argument only |
+| `buffer_length` | `size_t` | the same view, or a number when `buffer` is a `Ptr` | argument only; pointer width, follows `buffer` |
 
-`buffer` and `buffer_length` are not layout types. The caller passes the same view for both
+`buffer` and `buffer_length` are not layout types. The common form passes the same view for both
 positions and the host reads pointer and length from that object at call time, so a buffer that is
-resized or transferred cannot produce a torn pair. `buffer_length` must immediately follow its
-`buffer` in a declaration. A lone `buffer_length`, or one after a different type, throws at
-`dlopen`.
+resized or transferred cannot produce a torn pair. A pointer that is already resolved passes the
+length explicitly:
+
+```js
+lib.symbols.write(2, ptr(view), view.byteLength);
+```
+
+`buffer_length` must immediately follow its `buffer` in a declaration. A lone `buffer_length`, or
+one after a different type, throws at `dlopen`.
 
 ### Type tokens and boxers
 
@@ -668,6 +694,7 @@ for a pointer envelope.
 | `ERR_ACCESS_DENIED` | `ffi.load` is not granted; the error carries `capability: "ffi.load"` |
 | `ERR_FFI_DLOPEN` | the loader could not open the path |
 | `ERR_FFI_SYMBOL_NOT_FOUND` | the symbol is absent from the library |
+| `ERR_FFI_UNDECLARED` | a strict library was asked to call a symbol with no declaration |
 | `ERR_FFI_CLOSED` | a call through a closed handle or callback |
 | `ERR_FFI_LIVE_REFERENCES` | `close()` while a deallocator-backed buffer or a call is live |
 | `ERR_FFI_AMBIGUOUS_ARGUMENT` | inference refused a value |
@@ -693,6 +720,75 @@ const libc = dlopen(libcName);
 libc.call("open", ["/no/such/file", 0]);
 const number = errno(); // the C errno from that call
 ```
+
+## Debugging a crash
+
+A segmentation fault inside native code is not a JavaScript exception. The process dies at the
+faulting instruction: there is no `catch`, no engine stack, and the shell prints only
+`Segmentation fault: 11`. The runtime cannot recover, because the faulting C frames may hold
+allocator or library locks and the engine's state is no longer trustworthy.
+
+What it can do is record the call that was in flight. `--trace-ffi` writes one line per boundary
+event to stderr with `write(2)`, before control enters C, so the last line survives:
+
+```console
+$ onde --trace-ffi decode.js
+[ffi] open /usr/local/lib/libcodec.dylib
+[ffi] declare /usr/local/lib/libcodec.dylib decode(ptr, i64) -> ptr
+[ffi] image /usr/local/lib/libcodec.dylib base=0x100a2c000
+[ffi] call /usr/local/lib/libcodec.dylib decode(ptr=0x16f0a3c00, i64=1048576) at /tmp/decode.js:12:18
+Segmentation fault: 11
+```
+
+The last line names the library, the symbol, the coerced arguments and the JavaScript call site.
+`image` is printed once per library; its base is what a crash report's program counter needs. On
+macOS, symbolicate the fault with that base:
+
+```console
+$ atos -o /usr/local/lib/libcodec.dylib -l 0x100a2c000 0x100a2c4d0
+decode (in libcodec.dylib) + 40
+```
+
+On Linux the equivalent is `addr2line -e libcodec.so -f -C 0x4d0`, with the address relative to
+the same base. Write the trace to a file for a chatty program (`2> ffi.log`, then `tail`); the
+last line is the one that matters.
+
+`--trace-ffi=full` adds argument contents and every `Struct` layout when it is first defined:
+
+```console
+[ffi] struct TracePoint bytes=16 align=8 x:i32@0, y:f64@8
+```
+
+Compare that against `offsetof` in the C header. A declaration that disagrees with the header is
+the one bug no sanitizer reports, because the write still lands inside the allocation.
+
+Compiled apps have no command line, so the same switch is an environment variable:
+`ONDE_FFI_TRACE=1` or `ONDE_FFI_TRACE=full`. The flag wins when both are present.
+
+When the trace is not enough, attach a debugger:
+
+```console
+$ lldb -- ./onde --allow-ffi decode.js
+(lldb) run
+(lldb) bt
+```
+
+Release builds keep symbols, so `onde` frames are named; the fault is usually the library frame
+just above `ffi_call`. On Linux, `gdb`, `valgrind` or an ASAN build tell you why the memory was
+invalid, which is a different question from where the process stopped.
+
+The common causes, in the order they appear:
+
+* a declaration that disagrees with the header (`i64` where C takes `double`, a missing
+  `buffer_length`, a `Struct` field out of order), which makes libffi pass the wrong registers;
+* an integer passed where C expects a pointer in an **undeclared** call. Inference types the
+  number as `i32`, and the call has no signature to contradict it, so `lib.call("greet", [5])`
+  still crashes even though a declared `cstring` parameter rejects a number. Declare the symbol,
+  use `{ strict: true }` so undeclared calls are refused, or pass an explicit `Ptr`;
+* an explicit `BigInt` or `Ptr` address that is not a valid pointer. That is the documented
+  escape hatch and the runtime does not second-guess it;
+* a `ref` read after `free()`, or a `Ptr` from `ptr(view)` used after the buffer was detached;
+* a callback whose declared signature differs from the C function pointer type it fills.
 
 ## Worked example: sqlite3
 
