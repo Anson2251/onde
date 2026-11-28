@@ -160,7 +160,12 @@ function normalizeType(type) {
 function makeScalar(name, descriptor, bits, coerce, integer) {
   const type = function boxed(value) {
     if (typeof value === "object" && value !== null && value[TYPED] === true) return value;
-    return Object.freeze({ [TYPED]: true, type, value: coerce(name, value) });
+    return Object.freeze({
+      [TYPED]: true,
+      __ffiTyped: true,
+      type,
+      value: coerce(name, value),
+    });
   };
   Object.defineProperties(type, {
     __ffiType: { value: true },
@@ -522,6 +527,21 @@ function toAddress(label, value) {
   throw invalidArgType(label, "Ptr, BigInt or non-negative integer", value);
 }
 
+/// A pointer argument must be explicit: a `Ptr`, a `Callback`, a `ref` handle, a BigInt address or
+/// null. Plain numbers are accepted by `read`/`toArrayBuffer` for convenience, but not here: a
+/// bare number is how a typo becomes a segfault (the lab report's D1).
+function pointerArgument(label, value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Ptr) return value.address;
+  if (value instanceof Callback) return value.address;
+  if (isRefHandle(value)) return value.address;
+  if (typeof value === "bigint") {
+    if (value < 0n) throw invalidArgValue(label, value, "must not be negative");
+    return value;
+  }
+  throw invalidArgType(label, "Ptr, Callback, ref, BigInt or null", value);
+}
+
 function isTypedValue(value) {
   return typeof value === "object" && value !== null && value[TYPED] === true;
 }
@@ -587,18 +607,13 @@ function toHost(type, value, label) {
     return callbackAddress(label, value);
   }
   if (type === Callback || isPtrType(type)) {
-    if (value === null || value === undefined) return null;
     if (value instanceof Callback) return callbackAddress(label, value);
-    if (value instanceof Ptr) return value.address;
-    if (isRefHandle(value)) return value.address;
-    return toAddress(label, value);
+    return pointerArgument(label, value);
   }
   if (type === cstring) {
     if (value === null) return null;
     if (typeof value === "string") return value;
-    if (value instanceof Ptr) return value.address;
-    if (isRefHandle(value)) return value.address;
-    return toAddress(label, value);
+    return pointerArgument(label, value);
   }
   if (type === bool) {
     if (typeof value !== "boolean") throw invalidArgType(label, "boolean", value);
@@ -624,8 +639,7 @@ function callbackAddress(label, value) {
     }
     return value.address;
   }
-  if (value instanceof Ptr) return value.address;
-  return toAddress(label, value);
+  return pointerArgument(label, value);
 }
 
 function arrayToPlain(type, value, label) {
@@ -635,17 +649,28 @@ function arrayToPlain(type, value, label) {
   const count = type.__count;
   const element = type.__element;
   if (isView(value)) {
-    const bytes = byteView(value);
-    if (bytes.byteLength !== count) {
+    if (element === u8 || element === i8) {
+      const bytes = byteView(value);
+      if (bytes.byteLength !== count) {
+        throw invalidArgValue(
+          label,
+          value,
+          `must have exactly ${count} bytes for ${typeName(type)} (got ${bytes.byteLength})`,
+        );
+      }
+      if (element === u8) return bytes.slice();
+      return Array.from(bytes, (byte) => (byte << 24) >> 24);
+    }
+    if (!Number.isInteger(value.length) || value.length !== count) {
       throw invalidArgValue(
         label,
         value,
-        `must have exactly ${count} bytes for ${typeName(type)} (got ${bytes.byteLength})`,
+        `must have exactly ${count} elements for ${typeName(type)}`,
       );
     }
-    const result = new Array(count);
-    for (let index = 0; index < count; index += 1) result[index] = BigInt(bytes[index]);
-    return element === u8 || element === i8 ? bytes.slice() : result;
+    return Array.from({ length: count }, (_, index) =>
+      toHost(element, value[index], `${label}[${index}]`),
+    );
   }
   if (!Array.isArray(value)) throw invalidArgType(label, "array", value);
   if (value.length !== count) {
@@ -1068,17 +1093,28 @@ function coerceField(type, value, name) {
     throw invalidArgType(name, `an instance of ${type.name}`, value);
   }
   if (type.__ffiKind === "array") {
+    const count = type.__count;
+    const element = type.__element;
     if (isView(value)) {
-      const bytes = byteView(value);
-      if (bytes.byteLength !== type.__count) {
-        throw invalidArgValue(name, value, `needs exactly ${type.__count} bytes`);
+      if (element === u8 || element === i8) {
+        const bytes = byteView(value);
+        if (bytes.byteLength !== count) {
+          throw invalidArgValue(name, value, `needs exactly ${count} bytes`);
+        }
+        if (element === u8) return new Uint8Array(bytes);
+        return Array.from(bytes, (byte) => (byte << 24) >> 24);
       }
-      return new Uint8Array(bytes);
+      if (!Number.isInteger(value.length) || value.length !== count) {
+        throw invalidArgValue(name, value, `needs exactly ${count} elements`);
+      }
+      return Array.from({ length: count }, (_, index) =>
+        coerceField(element, value[index], name),
+      );
     }
-    if (!Array.isArray(value) || value.length !== type.__count) {
-      throw invalidArgValue(name, value, `needs exactly ${type.__count} elements`);
+    if (!Array.isArray(value) || value.length !== count) {
+      throw invalidArgValue(name, value, `needs exactly ${count} elements`);
     }
-    return value.map((item) => coerceField(type.__element, item, name));
+    return value.map((item) => coerceField(element, item, name));
   }
   if (type === bool) {
     if (typeof value !== "boolean") throw invalidArgType(name, "boolean", value);
@@ -1436,6 +1472,33 @@ function installBuiltinCodecs() {
 
 const i32Default = i32;
 
+/// Argument types the host can coerce directly from the rest array.
+///
+/// `bool` stays out because the host's scalar entries do not distinguish `bool` from `u8`; the
+/// JavaScript coercion keeps `true`/`false` strict.
+function isDirectArgumentType(type) {
+  return (
+    type !== bool &&
+    (isScalarType(type) || type === cstring || isPtrType(type))
+  );
+}
+
+/// Coerce declared arguments to the plain form for `callPlan` when a wrapper is involved.
+function marshalPlanArgs(declaration, args) {
+  if (args.length !== declaration.args.length) {
+    throw coded(
+      Error,
+      "ERR_FFI_MISSING_ARGUMENT",
+      `symbol takes ${declaration.args.length} arguments, got ${args.length}`,
+    );
+  }
+  const plain = new Array(declaration.args.length);
+  for (let index = 0; index < declaration.args.length; index += 1) {
+    plain[index] = toHost(declaration.args[index], args[index], `argument ${index}`);
+  }
+  return plain;
+}
+
 function inferArgument(value, position) {
   if (value === undefined) {
     throw coded(
@@ -1610,13 +1673,17 @@ function openLibrary(path, declarations) {
       const ret = normalizeType(declaration.ret === undefined ? i32Default : declaration.ret);
       const varargs = declaration.varargs === true;
       const argIds = args.map((type) => ensureRegistered(type === buffer ? Ptr : type));
-      ffiHost.declare(handle, name, argIds, ensureRegistered(ret), varargs);
+      const planId = ffiHost.declare(handle, name, argIds, ensureRegistered(ret), varargs);
       // The shape is fixed by the declaration; computing it once keeps the per-call path free of
-      // a join for the common (declared) case.
+      // a join for the common (declared) case. The host prepares a plan too: a non-variadic
+      // declaration can then call `callPlan`, which skips the argument-id vector, shape string
+      // and options object on every call.
       declared[name] = {
         args,
         ret,
         varargs,
+        planId,
+        direct: args.every(isDirectArgumentType),
         shape: args.map((type) => ensureRegistered(type === buffer ? Ptr : type)).join(","),
       };
     }
@@ -1625,6 +1692,20 @@ function openLibrary(path, declarations) {
   const assertOpen = () => {
     if (closed) throw ffiError("ERR_FFI_CLOSED", `library ${path} is closed`);
   };
+
+  function invokePlan(declaration, values) {
+    const plain = declaration.direct ? values : marshalPlanArgs(declaration, values);
+    return fromHost(declaration.ret, ffiHost.callPlan(handle, declaration.planId, plain));
+  }
+
+  function planCaller(declaration) {
+    // The direct branch is inlined: this is the per-call path for declared scalar symbols.
+    if (declaration.direct) {
+      return (...args) =>
+        fromHost(declaration.ret, ffiHost.callPlan(handle, declaration.planId, args));
+    }
+    return (...args) => invokePlan(declaration, args);
+  }
 
   function call(name, args, ret, options) {
     assertOpen();
@@ -1641,6 +1722,17 @@ function openLibrary(path, declarations) {
     }
     const settings = parseOptions(options);
     const declaration = declared[name];
+    if (
+      declaration !== undefined &&
+      declaration.planId > 0 &&
+      !declaration.varargs &&
+      settings.varargs === undefined &&
+      (ret === undefined ||
+        ret === null ||
+        (typeof ret === "string" ? normalizeType(ret) : ret) === declaration.ret)
+    ) {
+      return invokePlan(declaration, values);
+    }
     const { ids, plain, types } = resolveArguments(values, declaration, settings);
     const retType = resolveReturn(declaration, ret);
     // A declared variadic symbol has a fixed prefix but a per-call tail; the plan key must see
@@ -1663,7 +1755,20 @@ function openLibrary(path, declarations) {
     }\u0000${settings.varargs === undefined ? "" : String(settings.varargs)}`;
     let cached = fnCache.get(key);
     if (cached === undefined) {
-      cached = (...args) => call(name, args, ret, settings);
+      const declaration = declared[name];
+      const explicitRet =
+        ret === undefined || ret === null ? undefined : normalizeType(ret);
+      if (
+        declaration !== undefined &&
+        declaration.planId > 0 &&
+        !declaration.varargs &&
+        settings.varargs === undefined &&
+        (explicitRet === undefined || explicitRet === declaration.ret)
+      ) {
+        cached = planCaller(declaration);
+      } else {
+        cached = (...args) => call(name, args, ret, settings);
+      }
       fnCache.set(key, cached);
     }
     return cached;
@@ -1671,7 +1776,15 @@ function openLibrary(path, declarations) {
 
   const symbols = {};
   for (const name of Object.keys(declared)) {
-    symbols[name] = (...args) => call(name, args);
+    const declaration = declared[name];
+    if (declaration.planId > 0) {
+      // A plan prepared at dlopen. Direct argument types are handed to the host raw; the host
+      // coerces them against the plan's entries. Structs, buffers, bool and callbacks keep the
+      // JavaScript coercion because the host cannot see those wrappers (or their closed state).
+      symbols[name] = planCaller(declaration);
+    } else {
+      symbols[name] = (...args) => call(name, args);
+    }
   }
 
   function close() {

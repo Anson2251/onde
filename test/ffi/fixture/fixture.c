@@ -27,6 +27,8 @@
 
 #include "fixture.h"
 
+#include <pthread.h>
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -213,6 +215,31 @@ int32_t fixture_call_cb_ptrs(int32_t (*cb)(const int32_t *, const int32_t *),
         return 0;
     }
     return cb(&a, &b);
+}
+
+struct thread_callback {
+    int32_t (*callback)(int32_t);
+    int32_t value;
+    int32_t result;
+};
+
+static void *invoke_on_foreign_thread(void *argument) {
+    struct thread_callback *call = argument;
+    call->result = call->callback(call->value);
+    return NULL;
+}
+
+int32_t fixture_call_cb_thread(int32_t (*cb)(int32_t), int32_t v) {
+    if (cb == NULL) {
+        return 0;
+    }
+    struct thread_callback call = { cb, v, 0 };
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, invoke_on_foreign_thread, &call) != 0) {
+        return -1;
+    }
+    pthread_join(thread, NULL);
+    return call.result;
 }
 
 /* ------------------------------------------------------------------ */

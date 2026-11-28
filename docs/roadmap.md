@@ -599,7 +599,7 @@ What the exit criteria ask for and where it is proven:
 
 | Criterion | Evidence |
 |---|---|
-| fixture matrix: every scalar, struct, callback, buffer and JSON path | `test/ffi/run.sh`: a C fixture (35 functions + one data symbol) and 7 JS files, 84 cases |
+| fixture matrix: every scalar, struct, callback, buffer and JSON path | `test/ffi/run.sh`: a C fixture (35 functions + one data symbol) and 7 JS files, 87 cases |
 | struct layout is the compiler's | `test/ffi/layout.c` compared for 5 structs, identical on the dev cell |
 | the §2.1 sqlite example works | `test/ffi/sqlite.test.js`, skipped when no system libsqlite3 is present |
 | the build feature is a structural gate | a `--no-default-features` build has no `onde:ffi` (`ERR_UNKNOWN_BUILTIN_MODULE`) and `node:ffi` does not resolve; bare `ffi` is never a builtin in any build |

@@ -596,8 +596,9 @@ stack, or while any FFI call is in flight, throws `ERR_FFI_LIVE_REFERENCES`. Fre
 closure that C may still call is undefined; keep the object alive for as long as C holds the
 pointer.
 
-`threadsafe: true` is refused with `ERR_FFI_UNSUPPORTED_THREADSAFE`. A callback invoked on a
-foreign thread cannot enter the engine in this version.
+`threadsafe: true` is refused with `ERR_FFI_UNSUPPORTED_THREADSAFE`. If C calls the pointer from a
+foreign thread anyway, the trampoline returns a zeroed value without entering the engine; the
+isolate is left untouched.
 
 ## Variadic functions
 

@@ -39,7 +39,7 @@ case "$(uname -s)" in
   *) lib="$work/libffi-fixture.so" ;;
 esac
 
-if ! cc -shared -fPIC -O2 -o "$lib" "$here/fixture/fixture.c"; then
+if ! cc -shared -fPIC -O2 -pthread -o "$lib" "$here/fixture/fixture.c"; then
   echo "cannot build the C fixture (a C compiler is required)" >&2
   exit 2
 fi

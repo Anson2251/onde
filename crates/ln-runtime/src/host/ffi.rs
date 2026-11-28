@@ -59,6 +59,18 @@ struct FfiInner {
     /// name never resolves an image path, so `close()` uses this counter to refuse
     /// conservatively instead of missing an unreleasable deallocator.
     external_live: Arc<AtomicUsize>,
+    /// Plans prepared once at `dlopen` for declared, non-variadic symbols. Slot 0 is reserved.
+    /// The fast path avoids rebuilding the argument-id vector, shape string and options object
+    /// for every call.
+    declared_plans: Vec<Option<DeclaredPlan>>,
+}
+
+struct DeclaredPlan {
+    handle: u32,
+    symbol: String,
+    plan: Rc<ln_ffi::Plan>,
+    address: usize,
+    resolved: bool,
 }
 
 struct LibraryEntry {
@@ -78,6 +90,7 @@ impl FfiState {
                 last_errno: 0,
                 calls_in_flight: 0,
                 external_live: Arc::new(AtomicUsize::new(0)),
+                declared_plans: vec![None],
             }),
             pending: RefCell::new(None),
         })
@@ -191,15 +204,7 @@ pub(crate) fn install<'js>(
                       args: Vec<u32>,
                       ret: u32,
                       varargs: bool|
-                      -> js::Result<()> {
-                    let mut inner = ffi_state.inner.borrow_mut();
-                    let Some(entry) = inner
-                        .libraries
-                        .get_mut(handle as usize)
-                        .and_then(Option::as_mut)
-                    else {
-                        return Err(ffi_error(&ctx, FfiError::closed()));
-                    };
+                      -> js::Result<u32> {
                     // Validate the declaration now: a bad type id must fail at dlopen, not at the
                     // first call (the plan's WP0 exit criterion).
                     for id in args.iter().chain(std::iter::once(&ret)) {
@@ -208,15 +213,42 @@ pub(crate) fn install<'js>(
                             .get(*id)
                             .map_err(|error| ffi_error(&ctx, error))?;
                     }
+                    let mut inner = ffi_state.inner.borrow_mut();
+                    let FfiInner {
+                        libraries,
+                        declared_plans,
+                        ..
+                    } = &mut *inner;
+                    let Some(entry) = libraries.get_mut(handle as usize).and_then(Option::as_mut)
+                    else {
+                        return Err(ffi_error(&ctx, FfiError::closed()));
+                    };
                     entry.library.declare(
                         &name,
                         Declaration {
-                            arg_ids: args,
+                            arg_ids: args.clone(),
                             ret_id: ret,
                             varargs,
                         },
                     );
-                    Ok(())
+                    // A variadic signature has a per-call tail, so it keeps the generic path.
+                    // An unsupported layout (an array by value, for example) also falls back:
+                    // the generic call reports the precise error when it is actually used.
+                    if varargs {
+                        return Ok(0);
+                    }
+                    let Ok(plan) = ln_ffi::prepare(&ffi_state.types, &args, ret, None) else {
+                        return Ok(0);
+                    };
+                    let id = declared_plans.len() as u32;
+                    declared_plans.push(Some(DeclaredPlan {
+                        handle,
+                        symbol: name,
+                        plan: Rc::new(plan),
+                        address: 0,
+                        resolved: false,
+                    }));
+                    Ok(id)
                 },
             )?,
         )?;
@@ -424,6 +456,95 @@ pub(crate) fn install<'js>(
                         return Err(ctx.throw(value));
                     }
 
+                    value_to_js(&ctx, &ffi_state.types, &ret_entry, value)
+                },
+            )?,
+        )?;
+    }
+
+    {
+        // Fast path for a symbol that was declared at `dlopen`. The plan, argument entries and
+        // (after the first call) the resolved symbol address are all held host-side.
+        let ffi_state = ffi_state.clone();
+        ffi.set(
+            "callPlan",
+            js::Function::new(
+                ctx.clone(),
+                move |ctx: js::Ctx<'js>,
+                      handle: u32,
+                      plan_id: u32,
+                      values: js::Array<'js>|
+                      -> js::Result<js::Value<'js>> {
+                    let (plan, address) = {
+                        let mut inner = ffi_state.inner.borrow_mut();
+                        let FfiInner {
+                            libraries,
+                            declared_plans,
+                            ..
+                        } = &mut *inner;
+                        let Some(slot) = declared_plans
+                            .get_mut(plan_id as usize)
+                            .and_then(Option::as_mut)
+                        else {
+                            return Err(ffi_error(
+                                &ctx,
+                                FfiError::new("ERR_FFI_CLOSED", "unknown declared plan"),
+                            ));
+                        };
+                        if slot.handle != handle {
+                            return Err(ffi_error(&ctx, FfiError::closed()));
+                        }
+                        // Check the library even when the address is cached: a close may have
+                        // happened after the first call.
+                        let Some(entry) =
+                            libraries.get_mut(handle as usize).and_then(Option::as_mut)
+                        else {
+                            return Err(ffi_error(&ctx, FfiError::closed()));
+                        };
+                        let address = if slot.resolved {
+                            slot.address
+                        } else {
+                            let address = entry
+                                .library
+                                .address_of(&slot.symbol)
+                                .map_err(|error| ffi_error(&ctx, error))?;
+                            slot.address = address;
+                            slot.resolved = true;
+                            address
+                        };
+                        (slot.plan.clone(), address)
+                    };
+
+                    if values.len() != plan.arg_entries().len() {
+                        return Err(throw_node_error(
+                            &ctx,
+                            "ERR_FFI_MISSING_ARGUMENT",
+                            &format!(
+                                "symbol takes {} arguments, got {}",
+                                plan.arg_entries().len(),
+                                values.len()
+                            ),
+                        ));
+                    }
+                    let mut args = Vec::with_capacity(plan.arg_entries().len());
+                    for (index, entry) in plan.arg_entries().iter().enumerate() {
+                        let value: js::Value = values.get(index)?;
+                        args.push(js_to_value(&ctx, &ffi_state.types, entry, &value)?);
+                    }
+                    let ret_entry = plan.ret_entry().clone();
+                    ffi_state.inner.borrow_mut().calls_in_flight += 1;
+                    let outcome = ln_ffi::invoke(&plan, &ffi_state.types, address, &args);
+                    ffi_state.inner.borrow_mut().calls_in_flight -= 1;
+                    let (value, errno) = outcome.map_err(|error| ffi_error(&ctx, error))?;
+                    ffi_state.inner.borrow_mut().last_errno = errno;
+
+                    let pending = ffi_state.pending.borrow_mut().take();
+                    if let Some(pending) = pending {
+                        let value = pending
+                            .restore(&ctx)
+                            .map_err(|_| ffi_error(&ctx, FfiError::closed()))?;
+                        return Err(ctx.throw(value));
+                    }
                     value_to_js(&ctx, &ffi_state.types, &ret_entry, value)
                 },
             )?,
@@ -1054,12 +1175,31 @@ fn convert_args<'js>(
     Ok(args)
 }
 
+/// A boxed scalar from `js/lib/ffi.js` (`i32(1)`, `f64(2)`) arrives as an object carrying its
+/// value. The host unwraps it here so the fast path does not need a per-argument JavaScript scan
+/// for typed values.
+fn unwrap_typed<'js>(
+    _ctx: &js::Ctx<'js>,
+    value: &js::Value<'js>,
+) -> js::Result<Option<js::Value<'js>>> {
+    if value.is_object() {
+        if let Some(object) = value.as_object() {
+            if object.get::<_, bool>("__ffiTyped").unwrap_or(false) {
+                return object.get("value").map(Some);
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn js_to_value<'js>(
     ctx: &js::Ctx<'js>,
     table: &TypeTable,
     entry: &TypeEntry,
     value: &js::Value<'js>,
 ) -> js::Result<FfiValue> {
+    let unwrapped = unwrap_typed(ctx, value)?;
+    let value = unwrapped.as_ref().unwrap_or(value);
     if value.is_undefined() {
         return Err(throw_node_error(
             ctx,
@@ -1095,10 +1235,12 @@ fn js_to_value<'js>(
                     text.to_string().map_err(|_| invalid_string(ctx))?,
                 ))
             } else {
-                Ok(FfiValue::Ptr(as_address(ctx, value)?))
+                Ok(FfiValue::Ptr(as_pointer_argument(ctx, value)?))
             }
         }
-        Type::Pointer(_) | Type::Callback { .. } => Ok(FfiValue::Ptr(as_address(ctx, value)?)),
+        Type::Pointer(_) | Type::Callback { .. } => {
+            Ok(FfiValue::Ptr(as_pointer_argument(ctx, value)?))
+        }
         Type::Struct(_) => {
             let Some(array) = value.as_array() else {
                 return Err(throw_node_error(
@@ -1300,9 +1442,48 @@ fn number_value<'js>(ctx: &js::Ctx<'js>, value: &js::Value<'js>) -> js::Result<f
         .ok_or_else(|| throw_node_error(ctx, "ERR_INVALID_ARG_TYPE", "expected a number"))
 }
 
+/// A pointer argument. Numbers are allowed by the generic address helper (for `read` and
+/// `toArrayBuffer`), but not here: a bare number in a pointer slot is the shortest path to a
+/// segmentation fault. A BigInt, a `Ptr`/`Callback`/`ref` object or null is explicit.
+fn as_pointer_argument<'js>(ctx: &js::Ctx<'js>, value: &js::Value<'js>) -> js::Result<u64> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(0);
+    }
+    if let Some(object) = value.as_object() {
+        if let Ok(address) = object.get::<_, js::Value>("address") {
+            if !address.is_undefined() && !address.is_null() {
+                return as_pointer_argument(ctx, &address);
+            }
+        }
+    }
+    if value.is_big_int() {
+        return bigint_to_u64(ctx, value).ok_or_else(|| {
+            throw_node_error(
+                ctx,
+                "ERR_INVALID_ARG_TYPE",
+                "expected a Ptr, Callback, ref, BigInt or null address",
+            )
+        });
+    }
+    Err(throw_node_error(
+        ctx,
+        "ERR_INVALID_ARG_TYPE",
+        "expected a Ptr, Callback, ref, BigInt or null address",
+    ))
+}
+
 fn as_address<'js>(ctx: &js::Ctx<'js>, value: &js::Value<'js>) -> js::Result<u64> {
     if value.is_null() || value.is_undefined() {
         return Ok(0);
+    }
+    // The direct declared path hands the host a `Ptr`, `Callback` or `ref` object rather than
+    // unwrapping it in JavaScript. All three expose an `address` property.
+    if let Some(object) = value.as_object() {
+        if let Ok(address) = object.get::<_, js::Value>("address") {
+            if !address.is_undefined() && !address.is_null() {
+                return as_address(ctx, &address);
+            }
+        }
     }
     if value.is_big_int() {
         return bigint_to_u64(ctx, value).ok_or_else(|| {

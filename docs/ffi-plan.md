@@ -636,7 +636,7 @@ The suite is `test/ffi/run.sh`. CI runs it as its own step and installs `libffi-
   `FixtureMixed`, `FixtureNested`, `FixtureArray`, `FixtureBig`); the values are identical on the
   dev cell. A second platform cell is measured by the same program, not compared with those
   numbers.
-* **JavaScript matrix** — seven files, 84 cases: `inference.test.js`, `call.test.js`,
+* **JavaScript matrix** — seven files, 87 cases: `inference.test.js`, `call.test.js`,
   `struct.test.js`, `callback.test.js`, `memory.test.js`, `json.test.js` and `sqlite.test.js`.
   They cover every row of §4.2 including the throws, the signature refinements, the `Ptr` cast, the
   `CArray` refusals, JSON round-trips, and the lifetime rules.
@@ -698,7 +698,7 @@ Status of each item. The dev cell is macOS arm64; CI also runs the same `test/ff
 x86_64:
 
 1. **Done** — the fixture matrix passes, including every inference throw and every lifetime test
-   (84 cases).
+   (87 cases).
 2. **Done on the dev cell** — the layout oracle's `sizeof`/`_Alignof`/`offsetof` values are
    identical for five structs. Linux is measured by the same program, not compared with those
    numbers.
@@ -712,17 +712,18 @@ x86_64:
    (`capability: "ffi.load"`); `--allow-ffi` grants it.
 7. **Done** — `compat.md` records the module as an extension (D81), `architecture.md` lists
    `ln-ffi` in the crate graph, and the roadmap names M10 as pre-1.0.
-8. **Done** — `test/ffi/bench.js` on a release build (macOS arm64, 100k calls): a declared
-   symbol is 4.4–4.6 µs/call, `fn()` 5.5–5.6 µs, an undeclared `call()` 4.3 µs (a plain JS `add`
-   is 33–39 ns). The `ffi` feature costs +173,632 bytes (+2.2%) on an otherwise identical release
-   build: 7,957,984 against 7,784,352. Marshalling and the two host crossings dominate, not
-   `ffi_call`.
+8. **Done** — `test/ffi/bench.js` on a release build (macOS arm64): a declared symbol is about
+   0.6 µs/call, `fn()` 0.6 µs, an undeclared `call()` 0.8 µs (a plain JS `add` is ~40 ns). The
+   lab's 0/1/4/8-argument C fixture measures 0.24/0.58/0.66/0.77 µs/call after the declared-plan
+   fast path, against 1.24/2.95/6.34/11.08 µs before it. The fixed cost is now ~0.24 µs and a
+   scalar argument ~0.05 µs; bigger payloads are copy-bound. The `ffi` feature costs +173,632
+   bytes (+2.2%) on an otherwise identical release build: 7,957,984 against 7,784,352.
 
 | Measurement | Value |
 |---|---:|
-| per-call overhead, declared symbol (`test/ffi/bench.js`) | 4.4–4.6 µs |
-| per-call overhead, `fn()` | 5.5–5.6 µs |
-| per-call overhead, undeclared `call()` | 4.3 µs |
+| per-call overhead, declared symbol (`test/ffi/bench.js`) | ~0.6 µs |
+| per-call overhead, `fn()` | ~0.6 µs |
+| per-call overhead, undeclared `call()` | ~0.8 µs |
 | binary-size delta, `ffi` feature | +173,632 bytes (+2.2%) |
 
 ## 16. File map

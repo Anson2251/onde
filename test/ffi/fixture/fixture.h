@@ -119,6 +119,7 @@ int32_t fixture_call_cb(int32_t (*cb)(int32_t, int32_t), int32_t a, int32_t b);
 int32_t fixture_call_cb_n(int32_t (*cb)(int32_t), int32_t n);
 int32_t fixture_call_cb_ptrs(int32_t (*cb)(const int32_t *, const int32_t *),
                              int32_t a, int32_t b);
+int32_t fixture_call_cb_thread(int32_t (*cb)(int32_t), int32_t v);
 
 /* ---- variadic ---- */
 

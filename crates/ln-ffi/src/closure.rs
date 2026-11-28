@@ -37,6 +37,10 @@ struct ClosureCtx {
     arg_entries: Vec<Arc<TypeEntry>>,
     ret_entry: Arc<TypeEntry>,
     callback: CallbackBody,
+    /// The isolate thread that created the closure. `threadsafe: true` is refused, but C can
+    /// still call the pointer from a foreign thread; entering QuickJS there is undefined. A
+    /// foreign call gets a zeroed return value instead of touching the engine.
+    thread: std::thread::ThreadId,
 }
 
 impl Closure {
@@ -123,6 +127,7 @@ impl Closure {
             arg_entries,
             ret_entry,
             callback,
+            thread: std::thread::current().id(),
         });
         let user_data = &mut *ctx as *mut ClosureCtx as *mut c_void;
         let status =
@@ -165,6 +170,14 @@ unsafe extern "C" fn trampoline(
     }
     let ctx = &mut *(user as *mut ClosureCtx);
     if args.is_null() {
+        return;
+    }
+    if std::thread::current().id() != ctx.thread {
+        // Never enter the engine from a foreign thread. A zeroed return keeps the ABI valid and
+        // the isolate untouched; the plan refuses `threadsafe: true` for the same reason.
+        if !ret.is_null() && ctx.ret_entry.bytes > 0 {
+            std::ptr::write_bytes(ret as *mut u8, 0, ctx.ret_entry.bytes);
+        }
         return;
     }
     let table = &ctx.table;

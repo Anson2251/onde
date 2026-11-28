@@ -160,6 +160,17 @@ test("an array field is an indexed view", () => {
   equal(storage[7], 9);
 });
 
+test("an inline array of wider elements accepts a typed view", () => {
+  class Ints extends ffi.Struct {
+    static fields = [["nums", ffi.i32, 3]];
+  }
+  const value = new Ints({ nums: new Int32Array([1, 2, 3]) });
+  equal([...value.nums], [1, 2, 3]);
+  equal(value.toJSON().nums, [1, 2, 3]);
+  equal(Ints.fieldOf("nums").bytes, 12);
+  equal(value.bytes, 12);
+});
+
 // --- definition and validation --------------------------------------------------------------
 
 test("Struct.define creates an anonymous subclass with ffiName", () => {

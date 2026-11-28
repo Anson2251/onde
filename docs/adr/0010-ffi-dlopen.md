@@ -214,9 +214,10 @@ docs before the feature ships, not after.
   only way to catch an alignment disagreement before a user does.
 * **Performance.** Per-call overhead is dominated by argument marshalling and the 103 ns host-call
   baseline, not by `ffi_call`. `test/ffi/bench.js` prints per-call numbers for a declared symbol,
-  `fn()` and an undeclared `call()`. On a release build (macOS arm64): 4.4–4.6 µs for a declared
-  symbol, 5.5–5.6 µs through `fn()`, 4.3 µs undeclared; marshalling and the two host crossings
-  dominate, not `ffi_call`. FFI calls are synchronous and block the isolate; the plan documents
+  `fn()` and an undeclared `call()`. After the declared-plan fast path (2026-11-27), a release
+  build on macOS arm64 measures about 0.6 µs for a declared symbol, 0.6 µs through `fn()` and
+  0.8 µs undeclared; the fixed cost is ~0.24 µs and a scalar argument ~0.05 µs. Marshalling
+  and the host boundary still dominate `ffi_call`; large strings and buffers are copy-bound. FFI calls are synchronous and block the isolate; the plan documents
   this and does not pretend a timeout can preempt C.
 * **1.0 includes it.** FFI is M10 scope, shipped before the release, behind a feature that is on by
   default in `onde` and off in `ln-embed`. The permission gate is the one the release already
@@ -224,9 +225,9 @@ docs before the feature ships, not after.
 
 | Measurement | Value |
 |---|---:|
-| per-call overhead, declared symbol | 4.4–4.6 µs |
-| per-call overhead, `fn()` | 5.5–5.6 µs |
-| per-call overhead, undeclared `call()` | 4.3 µs |
+| per-call overhead, declared symbol | ~0.6 µs |
+| per-call overhead, `fn()` | ~0.6 µs |
+| per-call overhead, undeclared `call()` | ~0.8 µs |
 | binary-size delta, `ffi` feature | +173,632 bytes (+2.2%) |
 
 ### Implementation notes (2026-11-27)
@@ -244,7 +245,7 @@ three this ADR's design had to adjust:
   deallocator does not block a close.
 
 The suite is `test/ffi/run.sh`: a C fixture with 35 functions and one data symbol, a layout oracle
-compared for five structs, and seven JavaScript files with 84 cases, plus the feature-off build
+compared for five structs, and seven JavaScript files with 87 cases, plus the feature-off build
 check and the `ffi.load` permission gate.
 
 ## 9. What would change this decision

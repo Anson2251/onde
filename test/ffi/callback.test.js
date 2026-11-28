@@ -19,6 +19,7 @@ const lib = ffi.dlopen(path, {
     args: [ffi.Callback.of([ffi.Ptr.of(ffi.i32), ffi.Ptr.of(ffi.i32)], ffi.i32), ffi.i32, ffi.i32],
     ret: ffi.i32,
   },
+  fixture_call_cb_thread: { args: [ffi.Callback.of([ffi.i32], ffi.i32), ffi.i32], ret: ffi.i32 },
   fixture_add_i32: { args: [ffi.i32, ffi.i32], ret: ffi.i32 },
 });
 
@@ -157,6 +158,26 @@ test("closing a callback from inside itself is refused", () => {
     equal(closeCode, "ERR_FFI_LIVE_REFERENCES");
   } finally {
     holder.callback.close();
+  }
+});
+
+test("a callback invoked from a foreign thread does not enter the engine", () => {
+  let entered = false;
+  const foreign = new ffi.Callback(
+    (value) => {
+      entered = true;
+      return value + 1;
+    },
+    { args: [ffi.i32], ret: ffi.i32 },
+  );
+  try {
+    // The trampoline refuses to enter QuickJS off the isolate thread and zeroes the return.
+    equal(lib.symbols.fixture_call_cb_thread(foreign, 41), 0);
+    equal(entered, false);
+    // The isolate is still healthy.
+    equal(lib.symbols.fixture_add_i32(2, 3), 5);
+  } finally {
+    foreign.close();
   }
 });
 

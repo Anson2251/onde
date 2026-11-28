@@ -32,6 +32,16 @@ impl Plan {
     pub fn arg_count(&self) -> usize {
         self.arg_entries.len()
     }
+
+    /// The argument entries a fast path converts against, without a registry lookup.
+    pub fn arg_entries(&self) -> &[Arc<TypeEntry>] {
+        &self.arg_entries
+    }
+
+    /// The return entry, kept for the same reason.
+    pub fn ret_entry(&self) -> &Arc<TypeEntry> {
+        &self.ret_entry
+    }
 }
 
 /// Build a plan, refusing layouts the ABI cannot carry.

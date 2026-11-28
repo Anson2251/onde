@@ -116,6 +116,14 @@ test("buffer_length without its buffer is rejected at dlopen", () => {
   );
 });
 
+test("a plain number is not a pointer argument", () => {
+  // The lab report's D1: a bare number in a pointer slot used to be passed through as an address.
+  throwsCode(() => lib.call("fixture_cstrlen", [5]), "ERR_INVALID_ARG_TYPE");
+  throwsCode(() => lib.call("fixture_ident_ptr", [1]), "ERR_INVALID_ARG_TYPE");
+  // `read` and `toArrayBuffer` still accept numeric addresses for convenience.
+  equal(ffi.read.i32(ffi.ptr(new Int32Array([7])), 0), 7);
+});
+
 test("a missing symbol", () => {
   throwsCode(() => lib.call("fixture_no_such_symbol", []), "ERR_FFI_SYMBOL_NOT_FOUND");
 });

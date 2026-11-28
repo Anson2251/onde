@@ -16,7 +16,7 @@ oracle). The M3–M5 rows and D35–D53 are green: `fs`, `fs/promises`, `stream`
 `test/conformance/sqlite/` (thirteen Node-recorded cases, including user-defined functions, the
 authorizer, sessions/changesets, virtual tables and extension gating) and
 `test/js/lib/sqlite.test.js`. `onde:ffi` is exercised by `test/ffi/run.sh`: a C fixture, a layout
-oracle and an 84-case JavaScript matrix, plus the feature-off build and the `ffi.load` gate. The M6
+oracle and an 87-case JavaScript matrix, plus the feature-off build and the `ffi.load` gate. The M6
 rows (`async_hooks`, `AsyncLocalStorage`) are exercised by `test/async/run.sh` (a 96-cell
 propagation matrix, hook semantics and a 1M-promise retention check) and
 `test/conformance/async_hooks/`.
