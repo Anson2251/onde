@@ -33,6 +33,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: libffi (onde:ffi)
+        # `ln-ffi` links the system libffi. It ships with the macOS SDK; Ubuntu images do not
+        # guarantee the development package, so install it before the Rust build.
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libffi-dev
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -51,6 +56,11 @@ jobs:
         # The archive is built for this cell and a real app is linked, run, and checked after its
         # sources are deleted. This is the matrix's first real cell check, not a unit test.
         run: ./test/standalone/run.sh
+      - name: onde:ffi (fixture, layout oracle, inference/struct/callback/lifetime matrix)
+        # Builds the C fixture and the layout oracle with the system compiler, then checks the
+        # build-feature gate (a --no-default-features binary has no onde:ffi) and the ffi.load
+        # permission gate.
+        run: ./test/ffi/run.sh
       - name: conformance corpus
         run: ./test/conformance/run.sh
       - name: permissions (CLI matrix, inventory, deny-all sweep, race)

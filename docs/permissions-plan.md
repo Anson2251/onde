@@ -56,6 +56,11 @@ runs before "M8" would make the map read out of order. So:
 | M9 | Permissions (4.5 w, 1.1) | **1.0 hardening (2.5 w)** |
 | M10 | FFI (4 w, 1.1) | unchanged label, still FFI in 1.1 |
 
+> **Update 2026-11-27:** FFI moved into 1.0 as M10, ordered between M8 and M9 ([roadmap.md](roadmap.md)).
+> The table above records the M8 move as it stood; the 1.0 total is now ≈43 eng-weeks and there is
+> no named 1.1 milestone. The permission model shipping first is what made this possible: `ffi.load`
+> is the runtime gate, and the `ffi` build feature is inert without it.
+
 Consequences:
 
 * The 1.0 total in [roadmap.md](roadmap.md) moves from ≈34 to **≈39 eng-weeks** (34 + 4.8); the

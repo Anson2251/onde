@@ -8,6 +8,7 @@ members = [
     "crates/ln-sched",
     "crates/ln-modules",
     "crates/ln-error",
+    "crates/ln-ffi",
     "crates/ln-perm",
     "crates/ln-http",
     "crates/ln-zlib",

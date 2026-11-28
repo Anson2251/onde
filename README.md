@@ -8,13 +8,14 @@ the plugin layer inside another tool. It speaks Node's module system (`require`,
 `dns`, `zlib`, `sqlite`, `child_process`, `worker_threads`) and its globals, and installs as a
 7.6 MB binary (3.7 MB with every optional module compiled out).
 
-Status: M0–M8 are done; M9, the 1.0 compatibility sweep, packaging and publish, is next.
+Status: M0–M8 and M10 (`onde:ffi`) are done; M9, the 1.0 compatibility sweep, packaging and
+publish, is next.
 
 Contents: [Quick start](#quick-start) · [Permissions](#permissions-opt-in) · [Building](#building) ·
 [What's in the box](#whats-in-the-box) · [Footprint](#footprint) ·
 [Performance](#performance) · [One executable](#one-executable) ·
 [Milestones](#milestones) · [Compatibility](#compatibility) · [Tuckbox](#tuckbox) ·
-[Why](#why) · [Licensing](#licensing) · [Docs](#where-to-read-next)
+[Why](#why) · [Credits](#credits) · [Licensing](#licensing) · [Docs](#where-to-read-next)
 
 ## Quick start
 
@@ -90,7 +91,7 @@ The file and the `--allow-*` flags are mutually exclusive: a reviewed policy can
 wrapper appending an argument. A policy file must be a regular file, no larger than 1 MiB, and not
 group- or world-writable; onde refuses to start rather than fall back to allow-all. The nine capabilities are `fs.read`, `fs.write`, `net.connect`,
 `net.listen`, `net.resolve`, `child.spawn`, `worker.spawn`, `env.read` and `ffi.load` (native-code
-loading, including SQLite extensions).
+loading, including SQLite extensions and `onde:ffi`'s `dlopen`).
 
 A denied call throws an ordinary `Error` with `code: "ERR_ACCESS_DENIED"`, naming the capability,
 the resource and the rule that denied it:
@@ -110,7 +111,7 @@ if (process.permission.has("fs.read", "/data/report.csv")) {
 ### What it covers, and what it does not
 
 Covered: `fs` and JSON/data-module reads; TCP and Unix sockets and DNS; child processes and
-`process.kill`; worker threads; `process.env`; SQLite databases and native extensions.
+`process.kill`; worker threads; `process.env`; SQLite databases, SQLite extensions and `onde:ffi`.
 
 Not covered:
 
@@ -127,7 +128,7 @@ The full grammar, every flag and all limits are in
 
 ## Building
 
-Every optional Node module is a Cargo feature, and all of them are on by default:
+Every optional module is a Cargo feature, and all of them are on by default:
 
 | feature | module(s) it compiles in | what it links |
 |---|---|---|
@@ -135,6 +136,7 @@ Every optional Node module is a Cargo feature, and all of them are on by default
 | `node-tls` | `tls`, `https` (implies `node-net`) | rustls over `ring`, with the bundled Mozilla roots |
 | `node-crypto` | `crypto` | RustCrypto MD5/SHA-1/SHA-2, HMAC and HKDF |
 | `node-sqlite` | `node:sqlite` | the bundled SQLite 3.53.2 amalgamation |
+| `ffi` | `onde:ffi` | the system libffi (`-lffi`) through `libloading` |
 | `node-zlib` | `zlib` | zlib |
 
 `zlib-payload` and `zstd-payload` are not modules: they carry the payload decoders a compiled app
@@ -176,9 +178,10 @@ the release cost of each flag; the numbers are in [Footprint](#footprint).
 | M6 async context | `async_hooks`, `AsyncLocalStorage`, `AsyncResource`, `--async-stack-traces` |
 | M7 diagnostics | bootstrap snapshot, `--trace-events`/`--timing`/`--trace-gc`, `--max-old-space-size`, `node:test` |
 | storage (after M7) | `sqlite`/`node:sqlite`: bundled SQLite 3.53.2, `Database`, `Statement`, `Session`/changesets, `SQLTagStore`, user-defined functions/aggregates, authorizer, virtual tables, extensions, `backup`, limits, serialize/deserialize |
+| native interop (M10) | `onde:ffi`: `dlopen` + libffi, declared or inferred calls, structs, callbacks, JSON envelopes; gated by `ffi.load` |
 | next | compatibility sweep and packaging (M9) |
 
-Per-module detail and all 77 deliberate divergences are in [docs/compat.md](docs/compat.md). The
+Per-module detail and all 79 deliberate divergences are in [docs/compat.md](docs/compat.md). The
 full inventory, repo layout and every harness are in [docs/internals.md](docs/internals.md).
 
 ## Footprint
@@ -218,15 +221,19 @@ The baseline is the minimal release build, `--no-default-features` at 3.7 MB; th
 | `node-net` | `net`, `http`, `dns` | +220 KB | the socket layer and the `ln-http` HTTP/1.1 codec |
 | `node-tls` | `tls`, `https` | +1.4 MB | rustls, tokio-rustls, `ring`, `webpki-roots`, `rustls-pemfile` |
 | `node-sqlite` | `node:sqlite` | +2.1 MB | the bundled SQLite 3.53.2 amalgamation |
+| `ffi` | `onde:ffi` | +170 KB | the system libffi (`-lffi`) |
 
-The costs add up to the full build, and each is measured as a step on the ladder rather than by
-subtracting from the full build, so they are what a size-trimmed build actually pays when the
-module comes back. Measured on the same machine and system as the table above (M3 MacBook Air,
+The measured costs add up to the full build, and each is measured as a step on the ladder rather
+than by subtracting from the full build, so they are what a size-trimmed build actually pays when
+the module comes back. Measured on the same machine and system as the table above (M3 MacBook Air,
 macOS arm64), on 2026-11-25, release profile with thin LTO. The byte-level figures move with the
 toolchain and the linker; the deltas are the part worth comparing, and
 `./test/features/size.sh` re-measures them on the machine it runs on.
 
-`node-tls` is where the weight is, and `https` is its only other consumer in the stdlib.
+`node-tls` is where the weight is, and `https` is its only other consumer in the stdlib. `ffi` was
+measured on 2026-11-27 the same way: 7,957,984 bytes with it and 7,784,352 without, on an otherwise
+identical feature set: +173,632 bytes (≈ +170 KB, 2.2%). It links the system libffi (`-lffi`), so
+the figure moves with the platform package rather than with our code.
 
 `node-net` does **not** remove tokio, and the table does not claim it does: the fs offload pool,
 child-process IPC and signals use tokio whatever the module flags say, so tokio and `mio` stay in
@@ -339,6 +346,13 @@ The payload format, the cell matrix and the parts still open are in
   [docs/sqlite-plan.md](docs/sqlite-plan.md) has the contract and the gap.
 - M8 added an opt-in sandbox for code you do not fully trust, off unless `--permission` is asked
   for. See [Permissions](#permissions-opt-in).
+- M10 added `onde:ffi` before 1.0: a `dlopen`/libffi extension with declared or inferred calls,
+  decoded structs, same-thread callbacks and JSON envelopes. It is gated by M8's `ffi.load` and
+  compiled in by the `ffi` feature. The optional-declaration calling model is inspired by aardio's
+  `raw` library ([Credits](#credits)). Types are explicit because the ABI is target-specific:
+  struct passing, alignment and register assignment differ by target, and `long`/`size_t` change
+  width off LP64. [docs/ffi-plan.md](docs/ffi-plan.md) is the record;
+  [docs/ffi-guide.md](docs/ffi-guide.md) is the usage guide.
 - One measured gap is recorded rather than closed: HTTP throughput is 0.45x of Node in a single
   isolate. The tail and the single-isolate ceiling are 1.1 work; see [Performance](#performance)
   and [docs/m4-plan.md](docs/m4-plan.md) §8.
@@ -354,6 +368,7 @@ The payload format, the cell matrix and the parts still open are in
 | M6, done | `async_hooks`/`AsyncLocalStorage` on a host-owned job queue; the engine is vendored |
 | M7, done | bootstrap snapshot, diagnostics flags, heap limits, `node:test`, the idle-socket fix |
 | M8, done | opt-in sandbox ([Permissions](#permissions-opt-in)) |
+| M10, done | native interop: `onde:ffi` (`dlopen` + libffi, structs, callbacks) |
 | M9 | compatibility sweep, packaging, publish (1.0) |
 
 Exit criteria and sequencing for every milestone are in [docs/roadmap.md](docs/roadmap.md).
@@ -427,6 +442,16 @@ microtask queue has to be re-hosted carefully. Those are what this repository bu
 The decisions behind the structure (scheduler, event loop, module system, handles, HTTP codec) are
 in [docs/adr/](docs/adr/), and [internals.md](docs/internals.md) §5 gives the reading order.
 
+## Credits
+
+`onde:ffi` is inspired by [aardio](https://aardio.com/)'s FFI design, in particular the calling model of its `raw` library:
+load a module, then call an exported symbol with or without a prototype and let the values carry
+their C types. aardio calls this the declaration-free route and recommends it unless a specific
+data type requires a declaration. onde keeps that shape and adds typed boxers and an explicit
+refusal when a value's C type is ambiguous. The aardio documentation is the reference for
+[direct calls](https://aardio.com/zh-cn/docs/library-guide/builtin/raw/directCall.html) and for
+[`raw.loadDll` and `dll.api`](https://aardio.com/zh-cn/docs/library-guide/builtin/raw/api.html).
+
 ## Licensing
 
 onde is free for commercial use under both of its licenses. The split is by crate, and the rule is
@@ -439,10 +464,11 @@ are yours to license as you like. Distributing an unmodified build only asks tha
 reach the source, which for this repository is a URL.
 
 **MIT — the reusable bricks and the JavaScript surface:** `ln-abi`, `ln-payload`, `ln-crypto`,
-`ln-error`, `ln-http`, `ln-sched`, `ln-sqlite`, `ln-zlib`, `ln-modules`, plus everything under
-`js/` and the `tuckbox` demo. Take them anywhere, including into closed-source products, as long as
-the copyright notice travels with them. The `js/` files are embedded into the binary at build time,
-so a shipped `onde` is a mixed work: MPL-2.0 for the Rust crates, MIT for the JavaScript.
+`ln-error`, `ln-ffi`, `ln-http`, `ln-sched`, `ln-sqlite`, `ln-zlib`, `ln-modules`, plus everything
+under `js/` and the `tuckbox` demo. Take them anywhere, including into closed-source products, as
+long as the copyright notice travels with them. The `js/` files are embedded into the binary at
+build time, so a shipped `onde` is a mixed work: MPL-2.0 for the Rust crates, MIT for the
+JavaScript.
 
 The full texts are [LICENSE](LICENSE) (MPL-2.0, canonical copy from mozilla.org) and
 [LICENSE-MIT](LICENSE-MIT).
@@ -459,4 +485,3 @@ Contributions are accepted under the license of the crate being touched, with a 
 line (DCO). Copyright stays with each author; this project takes no assignment, and there is no CLA.
 
 The name and logo are covered by neither license.
-

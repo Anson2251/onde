@@ -47,6 +47,7 @@ pub(crate) fn builtin_unavailable_message(name: &str) -> Option<String> {
         "crypto" if !cfg!(feature = "node-crypto") => "node-crypto",
         "net" | "http" | "dns" if !cfg!(feature = "node-net") => "node-net",
         "tls" | "https" if !cfg!(feature = "node-tls") => "node-tls",
+        "onde:ffi" if !cfg!(feature = "ffi") => "ffi",
         _ => return None,
     };
     Some(disabled_builtin_message(name, feature))
@@ -108,6 +109,9 @@ pub(crate) fn builtin_source(name: &str) -> Option<&'static str> {
         "zlib" => bundled_js!("lib/zlib.js"),
         #[cfg(feature = "node-sqlite")]
         "sqlite" => bundled_js!("lib/sqlite.js"),
+        // The `onde:` namespace is deliberately not in `BUILTINS`: bare `ffi` must not resolve.
+        #[cfg(feature = "ffi")]
+        "onde:ffi" => bundled_js!("lib/ffi.js"),
         "internal/loader" | "loader" => bundled_js!("lib/loader.js"),
         "internal/errors" => bundled_js!("lib/internal/errors.js"),
         "internal/bytes" => bundled_js!("lib/internal/bytes.js"),
@@ -267,6 +271,7 @@ impl js::loader::Resolver for EsmResolver {
             .resolve(name, Path::new(base), Kind::Import)
         {
             Ok(Resolution::Builtin(builtin)) => Ok(format!("node:{builtin}")),
+            Ok(Resolution::Onde(module)) => Ok(format!("onde:{module}")),
             Ok(resolution @ Resolution::File { .. }) => {
                 let path = resolution.path().expect("file resolution has a path");
                 let canonical = file_url::path_to_file_url(path);
@@ -301,6 +306,10 @@ impl js::loader::Loader for EsmLoader {
         if let Some(resolution) = resolution {
             return match resolution {
                 Resolution::Builtin(builtin) => load_builtin(ctx, name, builtin),
+                Resolution::Onde(module) => {
+                    let canonical = format!("onde:{module}");
+                    load_builtin(ctx, name, &canonical)
+                }
                 Resolution::File { path, format } => match format {
                     Format::CommonJs => load_cjs_facade(ctx, name, &path, self.state.permit()),
                     Format::Json => load_json_module(ctx, name, &path, self.state.permit()),
@@ -322,6 +331,9 @@ impl js::loader::Loader for EsmLoader {
         // handled here from the name alone.
         if let Some(builtin) = name.strip_prefix("node:") {
             return load_builtin(ctx, name, builtin);
+        }
+        if name.starts_with("onde:") {
+            return load_builtin(ctx, name, name);
         }
         let path = file_url::file_url_to_path(name)
             .map_err(|message| throw_node_error(ctx, "ERR_INVALID_FILE_URL_PATH", &message))?;
@@ -546,11 +558,7 @@ fn load_builtin<'js>(
     // Load the CJS implementation now so the facade can export its names. This runs during
     // linking, which is legal: the builtin sources are synchronous and side-effect free.
     let mut lines = String::new();
-    let names: js::Array = call_global(
-        ctx,
-        "__ln_builtin_export_names",
-        (format!("node:{builtin}"),),
-    )?;
+    let names: js::Array = call_global(ctx, "__ln_builtin_export_names", (canonical.to_owned(),))?;
     for name in names.iter::<String>() {
         let name = name?;
         // Underscore-prefixed helpers are onde internals, not part of the builtin's API.
@@ -566,7 +574,7 @@ fn load_builtin<'js>(
 
     let source = format!(
         "const ns = __ln_builtin_exports({});\nexport default ns;\n{lines}",
-        js_string_literal(&format!("node:{builtin}"))
+        js_string_literal(canonical)
     );
     let module = js::Module::declare(ctx.clone(), canonical, source)?;
     meta(ctx, &module, canonical, None)?;
@@ -763,6 +771,24 @@ mod tests {
             assert!(
                 builtin_source(name).is_some(),
                 "BUILTINS lists {name} but modules::builtin_source has no arm for it"
+            );
+        }
+    }
+
+    /// The `onde:` namespace has its own drift check: it is not in `BUILTINS`, so the loop above
+    /// would not notice a missing source arm.
+    #[test]
+    fn onde_modules_have_an_embedded_source_when_enabled() {
+        if cfg!(feature = "ffi") {
+            assert!(
+                builtin_source("onde:ffi").is_some(),
+                "the ffi feature is on but modules::builtin_source has no arm for onde:ffi"
+            );
+            assert_eq!(ln_modules::lookup_builtin("ffi"), None);
+            assert_eq!(
+                ln_modules::builtin::lookup_onde("onde:ffi"),
+                Some("ffi"),
+                "the resolver and the source arm must agree on the canonical name"
             );
         }
     }

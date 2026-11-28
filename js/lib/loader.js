@@ -135,6 +135,8 @@ function createRequire(fromFile, parentModule) {
     switch (resolution.type) {
       case "builtin":
         return requireBuiltin(resolution.name);
+      case "onde":
+        return requireBuiltin(resolution.name);
       case "json":
         return loadJsonFile(resolution.path, parentModule || null);
       case "esm":
@@ -155,6 +157,7 @@ function createRequire(fromFile, parentModule) {
       throw invalidArgType("request", "string", specifier);
     }
     const resolution = privileged.resolve(specifier, fromFile, "require");
+    if (resolution.type === "onde") return resolution.name;
     if (resolution.type !== "builtin") return resolution.path;
     // Node preserves the spelling the caller used: `require.resolve("node:path")` is
     // "node:path", while `require.resolve("path")` is "path".
@@ -165,7 +168,9 @@ function createRequire(fromFile, parentModule) {
       throw invalidArgType("request", "string", specifier);
     }
     const resolution = privileged.resolve(specifier, fromFile, "require");
-    return resolution.type === "builtin" ? null : nodeModulePaths(dirname(fromFile));
+    return resolution.type === "builtin" || resolution.type === "onde"
+      ? null
+      : nodeModulePaths(dirname(fromFile));
   };
   require.cache = moduleCache;
   Object.defineProperty(require, "main", {
@@ -291,7 +296,8 @@ function requireBuiltin(specifier) {
     );
   }
 
-  const filename = `<onde:${name}>`;
+  // `onde:` extension names already carry their namespace: `<onde:ffi>`, not `<onde:onde:ffi>`.
+  const filename = name.startsWith("onde:") ? `<${name}>` : `<onde:${name}>`;
   const module = makeModule(filename, null);
   module.id = name;
   builtinCache[name] = module;

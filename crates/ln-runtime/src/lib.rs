@@ -457,6 +457,9 @@ pub struct Isolate {
     /// SQLite connections, statements and backups (`node:sqlite`).
     #[cfg(feature = "node-sqlite")]
     sqlite: Rc<host::sqlite::SqliteState>,
+    /// `onde:ffi` libraries, closures and the type registry.
+    #[cfg(feature = "ffi")]
+    ffi: Rc<host::ffi::FfiState>,
     /// async_hooks ids and the execution context (M6).
     async_hooks: Rc<AsyncTracker>,
     /// The forked child's IPC channel, if this process has one.
@@ -594,6 +597,8 @@ impl Isolate {
         }
         #[cfg(feature = "node-sqlite")]
         let sqlite = Rc::new(host::sqlite::SqliteState::new());
+        #[cfg(feature = "ffi")]
+        let ffi = host::ffi::FfiState::new();
         let async_hooks = AsyncTracker::new();
         // A worker gets no diagnostics of its own: one trace file per process is the contract, and
         // a worker's turns would need a lane in the main isolate's file (m7-plan §3.4).
@@ -633,6 +638,8 @@ impl Isolate {
             procs,
             #[cfg(feature = "node-sqlite")]
             sqlite,
+            #[cfg(feature = "ffi")]
+            ffi,
             async_hooks,
             ipc,
             ipc_fd,
@@ -692,6 +699,8 @@ impl Isolate {
             handles: self.handles.clone(),
             #[cfg(feature = "node-sqlite")]
             sqlite: self.sqlite.clone(),
+            #[cfg(feature = "ffi")]
+            ffi: self.ffi.clone(),
             async_hooks: self.async_hooks.clone(),
             async_forced: self.async_hooks.is_started(),
         };
@@ -1504,6 +1513,10 @@ impl Isolate {
         // function must not outlive the context that owns its callback.
         #[cfg(feature = "node-sqlite")]
         self.sqlite.shutdown();
+        // Drop closures and close every library while the engine is alive: a closure holds a
+        // persistent reference to a JavaScript function.
+        #[cfg(feature = "ffi")]
+        self.ffi.shutdown();
         // No completion may be delivered after shutdown (O4); release the refs of the parked
         // results the loop will never dispatch.
         let dropped = self.ops.discard_pending();
@@ -1714,6 +1727,8 @@ impl Drop for Isolate {
         // function must not outlive the context that owns its callback.
         #[cfg(feature = "node-sqlite")]
         self.sqlite.shutdown();
+        #[cfg(feature = "ffi")]
+        self.ffi.shutdown();
         // The pinned dispatcher must not outlive the runtime it belongs to.
         self.async_hooks.forget_dispatch();
     }

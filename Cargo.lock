@@ -1214,6 +1214,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ln-ffi"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libloading",
+]
+
+[[package]]
 name = "ln-http"
 version = "0.1.0"
 dependencies = [
@@ -1272,6 +1280,7 @@ dependencies = [
  "ln-crypto",
  "ln-engine",
  "ln-error",
+ "ln-ffi",
  "ln-http",
  "ln-io",
  "ln-modules",

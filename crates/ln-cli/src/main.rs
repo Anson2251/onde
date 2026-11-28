@@ -121,7 +121,7 @@ struct Cli {
     #[arg(long = "allow-worker")]
     allow_worker: bool,
 
-    /// Grant loading native code (sqlite extensions today, process.dlopen in M10)
+    /// Grant loading native code (`onde:ffi` and sqlite extensions)
     #[arg(long = "allow-ffi")]
     allow_ffi: bool,
 

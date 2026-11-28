@@ -1,14 +1,15 @@
 # FFI (`onde:ffi`) — implementation plan
 
 This is the working contract for `dlopen`-based FFI: where it lives, what the public surface is,
-what the inference rules are, and what is deliberately left out. The decision record is
+what the inference rules are, and what is deliberately left out. [ffi-guide.md](ffi-guide.md) is the
+task-oriented usage guide. The decision record is
 [ADR-0010](adr/0010-ffi-dlopen.md). [roadmap.md](roadmap.md) keeps N-API and native addons out of
-1.0; this work is M10 (1.1), after the M8 permissions model, and does not sit on the M0–M9
-critical path.
+1.0; this work ships before 1.0, after M8, behind `ffi.load`.
 
-Status: **design, 2026-11-24. Not implemented. Target: M10.** No `ln-ffi` crate, module or CLI
-flag exists yet. Where this document and the code disagree later, this document is the intent and
-the code is the truth; update this file with the code in the same change.
+Status: **implemented, 2026-11-27 (in 1.0, M10).** `crates/ln-ffi`, the `onde:ffi` module, the
+`ffi` build feature and `--allow-ffi` exist. Where this document and the code disagree, the code is
+the truth; §17 records where the implementation departed from the plan, and the same change updates
+this file.
 
 ## 1. What ships, in one table
 
@@ -19,7 +20,7 @@ the code is the truth; update this file with the code in the same change.
 | Calls | declared signatures, inferred arguments, optional per-call return type (default `i32`), variadics, out-params via `ref` | async or nonblocking calls; cross-thread synchronous callbacks |
 | Structs | class definitions, host layout, accessors, `bytes`/`align`/`offsets`/`offsetOf`/`fieldOf`, typed views, JSON | by-value unions, header parsing or bindgen, zero-copy instances |
 | JSON | `$onde` envelopes, codec registry, `toJSON`/`toPlain`/`fromJSON`/`revive` | reviving a standalone struct without its class |
-| Gates | build feature `ffi`, `Config::ffi`, `--allow-ffi` | a sandbox: FFI is unrestricted native code |
+| Gates | build feature `ffi`, the `ffi.load` permission (ADR-0011), `--allow-ffi` | a sandbox: FFI is unrestricted native code |
 | Portability | macOS and Linux, x86_64 and aarch64 | Windows (v1), musl static (untested) |
 
 ## 2. Public surface
@@ -34,6 +35,10 @@ const {
 ```
 
 `voidType` rather than `void` because `void` is an operator, not an identifier.
+
+`onde:ffi` is the only spelling. Bare `require("ffi")` does not resolve, `node:ffi` is not claimed,
+and `module.builtinModules` does not list the module — deliberately, so the extension cannot be
+mistaken for Node's runtime surface.
 
 ### 2.1 `dlopen`
 
@@ -86,8 +91,8 @@ produces a typed value, `f64.bytes` is 8, and `args: [f64]` uses the type itself
 | `u8`, `u16`, `u32` | `uint8_t` … `uint32_t` | 1/2/4 | 1/2/4 | number | integer in range |
 | `i64` | `int64_t` | 8 | 8 | BigInt | BigInt, or a safe integer number |
 | `u64` | `uint64_t` | 8 | 8 | BigInt | BigInt in `[0, 2^64)`, or a safe integer number |
-| `isize`, `usize` | `intptr_t`, `uintptr_t` | 8 | 8 | BigInt | as `i64`/`u64` on the 64-bit targets |
-| `cLong` | `long` | 8 | 8 | BigInt | alias of `i64`; LLP64 (Windows) needs its own 32-bit token |
+| `isize`, `usize` | `intptr_t`, `uintptr_t` | pointer width | pointer align | BigInt | as `i64`/`u64` on the supported 64-bit targets |
+| `cLong` | `long` | `sizeof(long)` | `_Alignof(long)` | BigInt | 8 on LP64, 4 on LLP64; the host supplies the width |
 | `f32` | `float` | 4 | 4 | number | number; `NaN`/`±Infinity`/`-0` are JSON-special |
 | `f64` | `double` | 8 | 8 | number | number |
 | `bool` | `bool` | 1 | 1 | boolean | boolean only |
@@ -148,7 +153,7 @@ that is ABI-identical — and anything else throws `ERR_FFI_SIGNATURE_CONFLICT`.
 | `i8`/`u8`/`bool` | any of them | one-byte integer, signedness is interpretation |
 | `i16`/`u16` | either | |
 | `i32`/`u32` | either | |
-| `i64`/`u64`/`isize`/`usize`/`cLong` | any 8-byte integer | |
+| `i64`/`u64`/`isize`/`usize`/`cLong` | any integer of the same width | |
 | `f32` | `f32` only | separate register class |
 | `f64` | `f64` only | |
 | struct class | itself only | by-value layout is not interchangeable |
@@ -488,7 +493,7 @@ values produced by `toJSON` rather than arbitrary user JSON.
 
 | Code | Raised by | When |
 |---|---|---|
-| `ERR_FFI_NOT_ALLOWED` | host | `Config::ffi` is `Deny`; a build without the feature has no module at all |
+| `ERR_ACCESS_DENIED` | host (ADR-0011) | `--permission` without a `ffi.load` grant; the error carries `capability: "ffi.load"`. A build without the feature has no module at all |
 | `ERR_FFI_DLOPEN` | host | `dlopen` failed; the message carries the loader's text |
 | `ERR_FFI_SYMBOL_NOT_FOUND` | host | the symbol is absent from the library |
 | `ERR_FFI_CLOSED` | host | a call through a handle or callback that was closed |
@@ -499,6 +504,10 @@ values produced by `toJSON` rather than arbitrary user JSON.
 | `ERR_FFI_SHAPE_LIMIT` | host | a symbol exceeded four inferred plans |
 | `ERR_FFI_RECURSIVE_STRUCT` | host | a by-value struct contains itself |
 | `ERR_FFI_UNSUPPORTED_LAYOUT` | host | a `CArray` used as a parameter or return, or a by-value struct containing one |
+| `ERR_FFI_UNSUPPORTED_THREADSAFE` | JS | a `Callback` asked for `threadsafe: true`; v1 is same-thread only |
+| `ERR_FFI_CALLBACK_ALLOC` | host | `ffi_closure_alloc` failed (for example, no executable-memory entitlement) |
+| `ERR_FFI_INVALID_ADDRESS` | host | an address argument is not one the host can use |
+| `ERR_FFI_UNKNOWN_TYPE` | host | a type name or token is not in the registry |
 | `ERR_FFI_UNKNOWN_CODEC` | JS | `revive` met a `$onde.t` with no registered codec |
 | `ERR_FFI_NOT_REVIVABLE` | JS | a pointer envelope reached a decoder |
 | `ERR_INVALID_ARG_TYPE`, `ERR_INVALID_ARG_VALUE` | JS | coercion failure, unknown field, bad definition |
@@ -549,19 +558,20 @@ cmp.close();
   throws. GC never frees a closure: only `close()` does, so a dropped JS reference leaks the
   trampoline rather than letting C call freed memory, and freeing one while C may still call it is
   undefined, because neither libffi nor the runtime can know. A closure invoked on a foreign thread
-  must not enter JavaScript; that is what `threadsafe: true` exists for.
+  must not enter JavaScript, which is why `threadsafe` is refused in v1.
 * Invocation on the isolate thread runs inline. QuickJS re-enters safely there, and a callback may
   call back into FFI.
 * If the JS callback throws, the exception is caught at the trampoline (`ctx.catch()`), the
   C-visible return is the zero value of `ret`, and the exception is rethrown after the outer FFI
   call returns. Leaving it pending would make every later `JS_Call` fail in the same C function.
-* `threadsafe: true` defers the invocation to the isolate thread and requires `ret: voidType`: from
-  C's point of view the call is asynchronous and there is no return value. Arguments are copied
-  before deferral; the callback runs at an isolate turn, not inside the C call.
+* `threadsafe: true` is **refused** with `ERR_FFI_UNSUPPORTED_THREADSAFE`. A closure invoked on a
+  foreign thread cannot enter QuickJS, and v1 does not offer a deferred mode: same-thread
+  invocation, exception parking and reentrancy are the contract. Cross-thread callbacks are v1.1
+  design work, not a hidden option.
 * The trampoline must not panic. The release profile is `panic = "abort"`
   ([Cargo.toml](../Cargo.toml#L28)), so `catch_unwind` is a no-op: no `unwrap`, no `try_borrow`
-  failure path, no allocation that can abort. A debug/test profile with unwinding plus an ASAN job
-  covers what release cannot.
+  failure path, no allocation that can abort. The suite runs on a debug build with unwinding, which
+  covers what release cannot; there is no ASAN job yet (§15 item 5).
 
 ## 10. Host boundary and file map
 
@@ -570,25 +580,30 @@ cmp.close();
 | `crates/ln-ffi` | `libloading` + `libffi`; handle and symbol registries; call plans; `ffi_type` trees; layout; callback trampolines; external buffers | know the engine, hold a `JSValue`, decide Node or JSON policy |
 | `ln-runtime/src/host/ffi.rs` | JS value ↔ `ln_ffi::Value` conversion, exception parking, per-isolate codec and struct registries, the `host.ffi` object | implement layout or calling conventions |
 | `js/lib/ffi.js` | public API, type objects, `Struct`, inference order, JSON codecs | call `libffi` directly |
-| `ln-runtime/src/lib.rs` | `Config::ffi` and feature wiring | make per-call decisions |
-| `ln-cli/src/main.rs` | `--allow-ffi` | contain FFI semantics |
-| `ln-embed` | policy default (`Deny`) and the C ABI entry point's stance | assume FFI is enabled |
+| `ln-runtime/src/lib.rs` | `ffi` feature wiring and module registration | make per-call decisions |
+| `ln-cli/src/main.rs` | `--allow-ffi` (which requires `--permission`) | contain FFI semantics |
+| `ln-embed` | does not enable `ffi`; its C ABI entry point has no FFI surface | assume FFI is enabled |
 
 `host.ffi` is one more submodule of `__ln_host`; the invariant in
 [host/mod.rs](../crates/ln-runtime/src/host/mod.rs#L1) — "if a capability is not here, JavaScript
 cannot perform it" — gains exactly one reviewed capability, and the review surface is the single
 file that installs it.
 
-The host surface is deliberately small: `dlopen`, `dlsym`, `structType`, `call`, `read`, `write`,
-`errno`, `alloc`, `free`, `toArrayBuffer`, `callback`, `close`. Everything else is JavaScript over
-those.
+The host surface is deliberately small: `load`, `close`, `declare`, `address`, `typeRegister`,
+`typeInfo`, `structType`, `call`, `callAt`, `read`, `write`, `pointer`, `alloc`, `allocZeroed`,
+`free`, `toArrayBuffer`, `errno`, `numberTag`, `cstring`, `callback` and `callbackClose`.
+Everything else is JavaScript over those.
 
-Build feature: `ffi`, off by default everywhere through 1.0 and enabled in the M10 `onde` build; off
-in `ln-embed` and compiled apps unless the embedder enables it. The dependency floor is libffi ≥ 3.3,
-for `ffi_get_struct_offsets`; the Rust `libffi-sys` crate vendors a newer one. `Config::ffi` defaults
-to `Deny`; `--allow-ffi` flips it for the CLI. A binary built without the feature has no `onde:ffi` module at all — resolution reports
+Build feature: `ffi`, enabled in `onde`'s default features and off in `ln-embed`, so an embedded
+runtime and a compiled app have no `onde:ffi` unless the embedder turns it on. The build links the
+**system** libffi (`-lffi`; ≥ 3.3 for `ffi_get_struct_offsets`) instead of vendoring `libffi-sys`,
+so the platform package must be present: `libffi-dev` on Linux (CI installs it) and the SDK on
+macOS. There is no `Config::ffi`: the runtime gate is the `ffi.load` capability from ADR-0011,
+spelled `--allow-ffi` on the CLI, and `--allow-ffi` is only accepted with `--permission`. With
+`--permission` and no grant, `dlopen` throws `ERR_ACCESS_DENIED` with `capability: "ffi.load"`. A
+binary built without the feature has no `onde:ffi` module at all — resolution reports
 `ERR_UNKNOWN_BUILTIN_MODULE`, like any other absent builtin — so it cannot be tricked into loading a
-library. `ERR_FFI_NOT_ALLOWED` is only for a runtime whose policy is `Deny`.
+library.
 
 Adding the module is not only a JS file. `ln-modules` resolves `node:`-prefixed and bare builtins
 (`crates/ln-modules/src/builtin.rs`), and `ln-runtime` asserts that every `BUILTINS` entry has an
@@ -597,63 +612,62 @@ separate from `BUILTINS` (so bare `ffi` cannot resolve), a source arm, the ESM p
 test mirroring the existing one. `node:ffi` is not an option: it would claim a Node namespace we do
 not implement.
 
-FFI is one capability in the permissions model rather than a standalone switch: [ADR-0011](adr/0011-permissions.md)
-gives it the id `ffi.load`, granted from the same policy file as `fs` and `net` (and spelled
-`--allow-ffi` on the command line). Until that model
-lands, a build without the `ffi` feature has no `onde:ffi` module at all, which is the narrower gate.
+FFI is one capability in the permissions model rather than a standalone switch:
+[ADR-0011](adr/0011-permissions.md) gives it the id `ffi.load`, granted from the same policy file as
+`fs` and `net` (and spelled `--allow-ffi` on the command line). That is the only runtime gate. The
+build feature remains the structural one: a `--no-default-features` binary has no `onde:ffi` module
+at all.
 
 ## 11. Testing
 
-* **Fixture library**: `test/ffi/fixture/` is a `cdylib` with exports for every scalar round-trip,
-  nine-argument calls, `f32`/`f64`, null pointers, `i64` minimum and `u64` maximum, a callback
-  invoked N times, a callback that throws, reentrancy (a callback calling another FFI function),
-  errno setting and reading, a pointer return, an allocation returned to JS, a struct by value, a
-  struct out-param, and a variadic sum.
-* **Layout oracle**: `test/ffi/layout.c` prints `sizeof` and `offsetof` for mixed structs
-  (`char`/`short`/`int`/`long long`/`double`/pointer/array/nested). The test compares the host's
-  layout with the compiler's on both target platforms. This is the only way to trust `bytes` and
-  `offsetOf`; the compiler is needed in CI anyway for `libffi`.
-* **Inference matrix**: one case per row of §4.2, including every throw, `ERR_FFI_SHAPE_LIMIT`, the
-  shape-cache warning, `w * 0.5` refused where `Math.trunc(w * 0.5)` is accepted, exact `w / 2`
-  accepted as `i32` while `w / 3` throws, and an omitted `ret` deferring to the declaration.
-* **Signature refinements**: declared `Ptr` called with `Ptr.of(T)` or `Callback.of(…)` succeeds;
-  declared `i64` with `u64` succeeds; `i32` with `i64` throws; a different struct class throws; a
-  declaration that omitted `ret` still means `i32`, so an explicit incompatible `ret` conflicts;
-  the `dlsym` example in §4.1 works.
-* **Cast**: `Ptr.of(T).from(ptr)` and `.from(address)` yield the same address with a new pointee;
-  the `sockaddr`/`sockaddr_in` tag path works; `Ptr.address` is a BigInt that survives a high-bit
-  (arm64e-style) address, while `Number(address)` rounds it.
-* **Arrays**: a top-level `CArray` parameter or return throws `ERR_FFI_UNSUPPORTED_LAYOUT`; a
-  by-value struct containing an inline array throws; the same struct passed by pointer works.
-* **JSON**: round-trip `toJSON`/`fromJSON` for every type, `toPlain` for humans, `revive` for
-  envelopes, pointer-revive throws, unknown codec throws.
-* **Lifetime**: `close()` invalidates symbols (a later call throws `ERR_FFI_CLOSED`) and refuses
-  while a deallocator-backed external buffer is live; callbacks and refs do not block; detaching
-  such a buffer releases it immediately. GC stress over external buffers and callbacks; the realloc
-  contract (free exactly once).
-* **ASAN**: a debug-profile job runs the fixture matrix with `-Zsanitizer=address`; release
-  coverage cannot catch a use-after-free.
-* **Mutation**: break the marshalling deliberately (wrong width, wrong signedness, off-by-one
-  offset) and confirm the matrix fails, the way the buffer codecs were validated.
+The suite is `test/ffi/run.sh`. CI runs it as its own step and installs `libffi-dev` on Linux.
+
+* **Fixture library** — `test/ffi/fixture/fixture.c` plus `fixture.h` is a plain C `cdylib` with 35
+  functions and one data symbol: every scalar round-trip, nine-argument calls, `f32`/`f64`, null
+  pointers, `i64` minimum and `u64` maximum, a callback invoked N times, a callback that throws,
+  reentrancy (a callback calling another FFI function), errno setting and reading, a pointer
+  return, an allocation returned to JS, a struct by value, a struct out-param, and a variadic sum.
+* **Layout oracle** — `test/ffi/layout.c` prints the compiler's `sizeof`/`_Alignof`/`offsetof`.
+  `struct.test.js` compares the host's layout with it for five structs (`FixturePair`,
+  `FixtureMixed`, `FixtureNested`, `FixtureArray`, `FixtureBig`); the values are identical on the
+  dev cell. A second platform cell is measured by the same program, not compared with those
+  numbers.
+* **JavaScript matrix** — seven files, 84 cases: `inference.test.js`, `call.test.js`,
+  `struct.test.js`, `callback.test.js`, `memory.test.js`, `json.test.js` and `sqlite.test.js`.
+  They cover every row of §4.2 including the throws, the signature refinements, the `Ptr` cast, the
+  `CArray` refusals, JSON round-trips, and the lifetime rules.
+* **Feature-off gate** — `run.sh` builds `--no-default-features` and asserts
+  `ERR_UNKNOWN_BUILTIN_MODULE` for `onde:ffi` and `node:ffi`, so the module is absent rather than
+  disabled.
+* **Permission gate** — `--permission` without `--allow-ffi` must produce
+  `ERR_ACCESS_DENIED ffi.load`; `--allow-ffi` must make the same `dlopen` work.
+* **SQLite example** — `sqlite.test.js` is the §2.1 example; it skips when the host has no system
+  `libsqlite3`.
+* **Bench** — `test/ffi/bench.js` prints per-call overhead for a declared symbol, `fn()` and an
+  undeclared `call()`. It is not part of `run.sh` and asserts nothing.
+* **Inventory** — `run.sh` also runs `test/perm/cases/inventory.js`, which must classify the new
+  `ffi` host surface, so a capability added without a permission class fails there first.
 
 ## 12. Work packages
 
-| WP | Work | Exit criterion |
-|---|---|---|
-| WP0 | `ln-ffi` skeleton, `libloading` + `libffi` build, feature gate, fixture `cdylib`, `onde:` module registration (CJS + ESM + drift test), `dlopen`/`dlsym`/`call` for declared scalars, `cstring` and `usize` returns, `close` | `getpid`, `strlen` and a fixture `f64` symbol pass; a feature-off build has no module; the drift test sees `onde:ffi` |
-| WP1 | inference, shape cache, boxed scalars, variadics, error codes | §4.2 matrix green; `ERR_FFI_SHAPE_LIMIT` test |
-| WP2 | `Ptr`, `read`, `toArrayBuffer`, `buffer_length`, `ref`, `CString`, alloc/free | sqlite3-shaped `T**` out-param reads back; external buffer freed once |
-| WP3 | `Struct`: layout, registration, accessors, statics, `define`, `fromJSON`/`toJSON`/`toPlain`, views | layout oracle equal on macOS and Linux; `struct stat` and an array of structs via `bytes` |
-| WP4 | `Callback`: closure allocation and entitlement failure, same-thread invocation, exception parking, `threadsafe`, `close`; by-value struct arguments and returns | `qsort` comparator; thrown callback surfaces after the call; threadsafe requires `voidType` |
-| WP5 | gates, docs, ASAN, performance, `compat.md` D67, architecture crate row, roadmap M10 entry | ADR accepted; `--allow-ffi` denial test; ASAN clean; size delta recorded |
+| WP | Work | Exit criterion | Status |
+|---|---|---|---|
+| WP0 | `ln-ffi` skeleton, `libloading` + `libffi` build, feature gate, fixture `cdylib`, `onde:` module registration (CJS + ESM + drift test), `dlopen`/`dlsym`/`call` for declared scalars, `cstring` and `usize` returns, `close` | `getpid`, `strlen` and a fixture `f64` symbol pass; a feature-off build has no module; the drift test sees `onde:ffi` | done |
+| WP1 | inference, shape cache, boxed scalars, variadics, error codes | §4.2 matrix green; `ERR_FFI_SHAPE_LIMIT` test | done |
+| WP2 | `Ptr`, `read`, `toArrayBuffer`, `buffer_length`, `ref`, `CString`, alloc/free | sqlite3-shaped `T**` out-param reads back; external buffer freed once | done |
+| WP3 | `Struct`: layout, registration, accessors, statics, `define`, `fromJSON`/`toJSON`/`toPlain`, views | layout oracle equal on the dev cell; `struct stat` and an array of structs via `bytes` | done |
+| WP4 | `Callback`: closure allocation and entitlement failure, same-thread invocation, exception parking, `threadsafe` refusal, `close`; by-value struct arguments and returns | `qsort` comparator; thrown callback surfaces after the call; threadsafe refused with `ERR_FFI_UNSUPPORTED_THREADSAFE` | done |
+| WP5 | gates, docs, performance, `compat.md` D81, architecture crate row, roadmap M10 entry | ADR accepted; `--allow-ffi` denial test; suite green; size delta +170 KiB | done |
 
 ## 13. Deliberate limits
 
 * No N-API and no `process.dlopen`:
   [roadmap.md](roadmap.md#0-definition-of-v10) excludes addons from 1.0 and ADR-0010 keeps them out
-  of 1.1.
-* No Windows in v1. `cLong` is an `i64` alias because every supported target is LP64; LLP64 needs
-  its own token, and `LoadLibrary` needs a `libloading` path that has not been exercised.
+  of scope; FFI is not a route to them.
+* No Windows in v1. `cLong` follows the host's `sizeof(long)`, so an LLP64 build would get a
+  32-bit token without a source change; the remaining Windows work is the `LoadLibrary` path and an
+  exercised build. `ln-ffi` stops at compile time on an untested OS or architecture (`compile_error`
+  for anything outside macOS/Linux and aarch64/x86_64) rather than guessing an ABI.
 * No unions, bitfields, flexible array members, `long double`, `__int128`, or packed layouts in
   v1. Each is a known follow-up with a stated place in the type grammar.
 * No array-by-value parameters or returns: `CArray` is a struct-field layout type only, and a
@@ -661,44 +675,101 @@ lands, a build without the `ffi` feature has no `onde:ffi` module at all, which 
 * No header parsing or bindgen. `Struct.define` is the target format for a generator; the generator
   is a separate project.
 * No async or nonblocking calls. Sync only, with the blocking cost documented in §8.
-* No cross-thread synchronous callbacks. `threadsafe: true` is deferred and void.
+* No cross-thread callbacks. `threadsafe: true` is refused with
+  `ERR_FFI_UNSUPPORTED_THREADSAFE`; same-thread callbacks are the v1 contract.
 * No C++ ABI: C calling convention and C symbols only.
 
-## 14. Open questions
+## 14. Resolved questions
 
-* `--allow-ffi` default in the `onde` binary. Opt-in (Deno-style) is the least-privilege answer;
-  Node-compatible ergonomics argue for on. Current proposal: deny everywhere, one flag.
-* Module name: `onde:ffi` (proposal) versus `onde:ffi` given the binary's old name.
-* Whether `linkSymbols`-style raw-pointer-to-callable is needed for interop, or `CFunction` covers
-  it.
+* `--allow-ffi` default: deny. It requires `--permission`, and a policy grants `ffi.load`
+  explicitly; there is no separate `Config::ffi`.
+* Module name: `onde:ffi` only. Bare `ffi` and `node:ffi` do not resolve, and the module is absent
+  from `module.builtinModules`.
+* Whether a `linkSymbols`-style raw-pointer-to-callable is needed is still open; `Callback.of`
+  covers reading a C function pointer, not wrapping a JS function under a symbol name.
 
 ## 15. Acceptance
 
-FFI is done when all of the following hold in CI on macOS arm64 and Linux x86_64:
+Status of each item. The dev cell is macOS arm64; CI also runs the same `test/ffi/run.sh` on Linux
+x86_64:
 
-1. The fixture matrix passes, including every inference throw and every lifetime test.
-2. The layout oracle reports identical `sizeof`/`offsetof` values.
-3. The sqlite3 example in §2.1 opens and closes, with the system library or a skipped test when it
-   is absent.
-4. `close()` invalidates symbols and refuses while a deallocator-backed buffer is still live.
-5. The ASAN job is clean.
-6. A feature-off build has no `onde:ffi` module (resolution error), and a `Deny` runtime throws
-   `ERR_FFI_NOT_ALLOWED`.
-7. `compat.md` records the module as an extension (D67, added with the implementation; D66 is the
-   current last row), `architecture.md` lists `ln-ffi` in the crate graph, and the roadmap names FFI
-   as M10.
-8. Per-call overhead and binary-size delta are measured and written down here.
+1. **Done** — the fixture matrix passes, including every inference throw and every lifetime test
+   (84 cases).
+2. **Done on the dev cell** — the layout oracle's `sizeof`/`_Alignof`/`offsetof` values are
+   identical for five structs. Linux is measured by the same program, not compared with those
+   numbers.
+3. **Done** — the §2.1 sqlite example runs in `sqlite.test.js`, and skips when no system libsqlite3
+   is present.
+4. **Done** — `close()` invalidates symbols, and refuses only while the deallocator maps to the
+   handle being closed (deviation 4 in §17).
+5. **Open.** There is no ASAN job. The suite runs on a debug build; this item is not claimed.
+6. **Done** — a `--no-default-features` build has no `onde:ffi` (resolution reports
+   `ERR_UNKNOWN_BUILTIN_MODULE`), and `--permission` without a grant throws `ERR_ACCESS_DENIED`
+   (`capability: "ffi.load"`); `--allow-ffi` grants it.
+7. **Done** — `compat.md` records the module as an extension (D81), `architecture.md` lists
+   `ln-ffi` in the crate graph, and the roadmap names M10 as pre-1.0.
+8. **Done** — `test/ffi/bench.js` on a release build (macOS arm64, 100k calls): a declared
+   symbol is 4.4–4.6 µs/call, `fn()` 5.5–5.6 µs, an undeclared `call()` 4.3 µs (a plain JS `add`
+   is 33–39 ns). The `ffi` feature costs +173,632 bytes (+2.2%) on an otherwise identical release
+   build: 7,957,984 against 7,784,352. Marshalling and the two host crossings dominate, not
+   `ffi_call`.
+
+| Measurement | Value |
+|---|---:|
+| per-call overhead, declared symbol (`test/ffi/bench.js`) | 4.4–4.6 µs |
+| per-call overhead, `fn()` | 5.5–5.6 µs |
+| per-call overhead, undeclared `call()` | 4.3 µs |
+| binary-size delta, `ffi` feature | +173,632 bytes (+2.2%) |
 
 ## 16. File map
 
 ```
 crates/ln-ffi/                      handles, symbols, plans, layout, ffi_type trees, trampolines
 crates/ln-runtime/src/host/ffi.rs   value conversion, exception parking, registries
+crates/ln-runtime/src/host/mod.rs   installs `host.ffi`
 crates/ln-modules/src/builtin.rs    `onde:` namespace and resolution
 crates/ln-runtime/src/modules.rs    embedded source arm and drift test
 crates/ln-error/src/lib.rs          `ERR_FFI_*` construction
 js/lib/ffi.js                       public API, types, Struct, inference, JSON
 test/ffi/fixture/                   cdylib exercising every type and callback rule
 test/ffi/layout.c                   sizeof/offsetof oracle
+test/ffi/run.sh                     fixture build, oracle, matrix, gates
+test/ffi/harness.js                 the case runner and assertions
+test/ffi/bench.js                   per-call overhead, not asserted
 test/ffi/*.test.js                  the matrix
+docs/compat.md                      D81 and the extension entry
 ```
+
+## 17. Implementation deviations
+
+Recorded when M10 closed (2026-11-27). Each is deliberate; the implementation notes in
+[ADR-0010](adr/0010-ffi-dlopen.md) §8 summarise the ones that changed its design.
+
+1. **System libffi, not a vendored `libffi-sys`.** `ln-ffi` links `-lffi`; the floor is libffi 3.3
+   for `ffi_get_struct_offsets`. The platform package must be installed (`libffi-dev` on Linux CI,
+   part of the macOS SDK), which a vendored build would not have required. libffi stays MIT.
+2. **No `Config::ffi`.** The only runtime gate is the `ffi.load` capability from ADR-0011. A denial
+   is `ERR_ACCESS_DENIED` with `capability: "ffi.load"`, not the `ERR_FFI_NOT_ALLOWED` this plan
+   originally listed.
+3. **`threadsafe: true` is refused** with `ERR_FFI_UNSUPPORTED_THREADSAFE`. Same-thread callbacks,
+   exception parking and reentrancy ship; cross-thread callbacks are v1.1 work.
+4. **`close()` maps the deallocator to its image with `dladdr`.** `ERR_FFI_LIVE_REFERENCES` blocks
+   exactly the handle whose loaded image owns the deallocator; a foreign or unresolvable deallocator
+   does not block a close.
+5. **Callback closures allocate 128 bytes.** `sizeof(ffi_closure)` is 40 on arm64 and at most 64 on
+   x86_64; `ffi_closure_alloc` allocates and does not validate the size.
+6. **An inline `u8` array field** reads back as a JS array from the host, and as a `Uint8Array` when
+   one is assigned. The JSON codec uses the `u8array` envelope for `u8` element arrays.
+7. **A pointer or callback return of 0 becomes JS `null`.** A callback-typed return is callable and
+   carries `.address`/`.ptr`.
+8. **`CArray` remains layout-only.** A by-value struct containing an inline array is refused with
+   `ERR_FFI_UNSUPPORTED_LAYOUT`.
+9. **`void`'s `ffi_type` reports size 1** — libffi's own value — even though the logical size is 0.
+10. **The registry, tabular surface and error codes** are the ones in §3, §5.3 and §7.1. The host
+    surface is `host.ffi`: `load`, `close`, `declare`, `address`, `typeRegister`, `typeInfo`,
+    `structType`, `call`, `callAt`, `read`, `write`, `pointer`, `alloc`, `allocZeroed`, `free`,
+    `toArrayBuffer`, `errno`, `numberTag`, `target`, `cstring`, `callback`, `callbackClose`.
+
+The four error codes that go beyond this plan's original list are
+`ERR_FFI_UNSUPPORTED_THREADSAFE`, `ERR_FFI_CALLBACK_ALLOC`, `ERR_FFI_INVALID_ADDRESS` and
+`ERR_FFI_UNKNOWN_TYPE`; all are in §7.1.

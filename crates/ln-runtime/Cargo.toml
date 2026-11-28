@@ -32,6 +32,9 @@ ln-zlib = { path = "../ln-zlib", optional = true }
 # `node:sqlite` (host/sqlite.rs). Optional so a size-sensitive build can drop the bundled SQLite
 # with the `node-sqlite` feature; it is in `default` so the normal binary is complete.
 ln-sqlite = { path = "../ln-sqlite", optional = true }
+# `onde:ffi` (host/ffi.rs). Optional so an embedder can ship a binary that cannot load native
+# code at all; it is in `default` so the normal `onde` build has the module.
+ln-ffi = { path = "../ln-ffi", optional = true }
 # The payload format a compiled app carries: parsed here, encoded by `ondec`.
 ln-payload = { path = "../ln-payload" }
 # A compiled app's `--compress zstd` payload. Optional because it is the only payload decoder
@@ -59,8 +62,12 @@ default = [
     "node-tls",
     "node-crypto",
     "zlib-payload",
+    "ffi",
 ]
 node-sqlite = ["dep:ln-sqlite"]
+# `onde:ffi` (`dlopen` + libffi). The build feature is the structural gate: without it there is
+# no `onde:ffi` module and no libffi linkage. The runtime gate is the `ffi.load` permission.
+ffi = ["dep:ln-ffi"]
 node-zlib = ["dep:ln-zlib"]
 zlib-payload = ["dep:ln-zlib"]
 # `node:net`, `node:http` and `node:dns` (host/net.rs, host/dns.rs, handles.rs). Dropping it also

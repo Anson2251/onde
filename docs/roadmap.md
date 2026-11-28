@@ -25,9 +25,12 @@ v1.0 ships when all of the following hold:
 | 8 | macOS + Linux x86_64/aarch64 first-class; Windows best-effort |
 | 9 | Publishable binaries + install script; docs for every supported module |
 | 10 | Opt-in permissions: `--permission` with a policy file and `--allow-*`; allow-lists over fs/net/child_process/env/worker/ffi; `ERR_ACCESS_DENIED`; `process.permission` |
+| 11 | `onde:ffi`: `dlopen` + libffi, declared or inferred calls, structs, callbacks, JSON envelopes; behind the `ffi` build feature and the `ffi.load` capability |
 
 Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
-`Intl` (beyond what we can afford), `WebAssembly`, `fetch` (candidate for 1.1).
+`Intl` (beyond what we can afford), `WebAssembly`, `fetch` (candidate for 1.1). N-API/native
+addons remain a non-goal and FFI is not a stepping stone to them
+([ADR-0010](adr/0010-ffi-dlopen.md) §2).
 
 ---
 
@@ -44,11 +47,12 @@ Explicit non-goals for 1.0: N-API/native addons, `vm`, `cluster`, `inspector`,
 | M6 | **Engine patch + async context** ★ | host-owned job queue, `async_hooks`, ALS everywhere | 4 | M1, M2 |
 | M7 | Performance & diagnostics | bytecode snapshot, profiling, memory caps, async stacks | 4 | M4, M6 |
 | M8 | Permissions model | opt-in `--permission` + `--permission-file` + `--allow-*`, allow-lists over fs/net/child_process/env/worker/ffi (ADR-0011) | 4.8 | M7 |
-| M9 | 1.0 hardening | compat sweep, docs, packaging, release | 2.5 | all |
-| M10 | Native interop (FFI) | `onde:ffi`: `dlopen`, `libffi`, structs, callbacks, JSON codecs | 4 | M9 |
+| M10 | Native interop (FFI) — pre-1.0 | `onde:ffi`: `dlopen`, `libffi`, structs, callbacks, JSON codecs | 4 | M8 |
+| M9 | 1.0 hardening | compat sweep, docs, packaging, release | 2.5 | all, incl. M10 |
 
-Total for 1.0 ≈ **39 eng-weeks**. One engineer: ~9 months. Three engineers: ~5 months wall-clock
-with the parallelization in §4. The 1.1 milestone, M10, adds ~4 eng-weeks after the release.
+Total for 1.0 ≈ **43 eng-weeks**. One engineer: ~9.5–10 months. Three engineers: ~5 months
+wall-clock with the parallelization in §4. FFI moved into 1.0 because M8's permissions model landed
+first and the feature is inert without a grant.
 
 ---
 
@@ -574,32 +578,60 @@ scheduled.
 
 ---
 
+## M10 — Native interop (FFI), in 1.0 (4 w)
+
+**Complete 2026-11-27.** `onde:ffi` ships in 1.0: [ffi-plan.md](ffi-plan.md) is the contract,
+[ffi-guide.md](ffi-guide.md) is the usage guide and [ADR-0010](adr/0010-ffi-dlopen.md) the
+decision. A script `dlopen`s a library, declares symbols or lets typed values resolve them, calls
+through libffi, and reads and writes structs, pointers, buffers and callbacks; JSON envelopes keep
+64-bit values, special floats and pointers lossless.
+The milestone was moved ahead of M9 because M8's permissions model landed first and `ffi.load` is
+the grant that makes the feature inert without a policy.
+
+What shipped: the `onde:ffi` module (`dlopen` → `{ path, symbols, call, fn, close }`); the scalar
+type surface plus `Ptr`, `CArray`, `Struct`, `Callback`, `ref`, `read.*`, `ptr`, `toArrayBuffer`,
+`CString`, `errno()` and `revive()`; inference with a four-plan-per-symbol shape cache; variadic
+calls with C default promotions; the `ffi` build feature (on in `onde`, off in `ln-embed`); and a
+new engine-free `ln-ffi` crate with one `host.ffi` submodule. It links the system libffi (`-lffi`,
+≥ 3.3); Linux CI installs `libffi-dev`.
+
+What the exit criteria ask for and where it is proven:
+
+| Criterion | Evidence |
+|---|---|
+| fixture matrix: every scalar, struct, callback, buffer and JSON path | `test/ffi/run.sh`: a C fixture (35 functions + one data symbol) and 7 JS files, 84 cases |
+| struct layout is the compiler's | `test/ffi/layout.c` compared for 5 structs, identical on the dev cell |
+| the §2.1 sqlite example works | `test/ffi/sqlite.test.js`, skipped when no system libsqlite3 is present |
+| the build feature is a structural gate | a `--no-default-features` build has no `onde:ffi` (`ERR_UNKNOWN_BUILTIN_MODULE`) and `node:ffi` does not resolve; bare `ffi` is never a builtin in any build |
+| `ffi.load` is the runtime gate | `--permission` without `--allow-ffi` throws `ERR_ACCESS_DENIED` (`capability: "ffi.load"`); `--allow-ffi` grants it |
+| docs | [ffi-plan.md](ffi-plan.md) §17, [compat.md](compat.md) D81, the ADR and this entry; the M9 module reference is the remaining doc task |
+
+Deviations from the plan are recorded in [ffi-plan.md](ffi-plan.md) §17 and [compat.md](compat.md)
+D81. The four that matter most: system libffi instead of a vendored `libffi-sys`; no `Config::ffi`
+(the only runtime gate is `ffi.load`); `threadsafe` callbacks refused; and `close()` using `dladdr`
+to block only the handle whose loaded image owns a live deallocator.
+
+`--allow-ffi` is the M8 spelling of the grant and requires `--permission`; passing it without that
+flag is a CLI error, not a silent allow.
+
+---
+
 ## M9 — 1.0 hardening (2.5 w)
 
 - Full compat sweep against [compat.md](compat.md); every "partial" either finished or
   documented as a divergence with a test asserting the divergence.
 - Install: `curl | sh`, Homebrew tap, npm wrapper package (`onde` with prebuilt binaries).
 - Docs: module reference generated from the JS stdlib, error-code index, migration notes
-  ("coming from Node"), and the permission flags/error code from M8.
+  ("coming from Node"), and the permission flags/error code from M8. The `onde:ffi` reference is
+  part of the sweep too: the module spelling, the `--allow-ffi` permission flag, the `ffi` build
+  feature and the system libffi dependency.
 - Release checklist: reproducible builds, SBOM, license audit, security notes (1.0 ships
   `--permission`, off by default; child processes and compiled apps are outside it).
 
 **Exit criteria**
 
-- The 10 v1.0 criteria in §0 all green on a clean machine with no dev toolchain.
+- The 11 v1.0 criteria in §0 all green on a clean machine with no dev toolchain.
 - A stranger can install and run a script from the README in under 2 minutes.
-
----
-
-## M10 — 1.1: native interop (4 w)
-
-Post-1.0. `onde:ffi` ([ffi-plan.md](ffi-plan.md), [ADR-0010](adr/0010-ffi-dlopen.md)) is the first
-consumer of M8's `ffi.load`: `process.dlopen` is another route to that grant rather than a bespoke
-`--allow-ffi` switch, and the sqlite extension loader already exercises it in 1.0.
-
-FFI is not in 1.0. The `ffi` feature is off in release builds through M9 and turns on for M10; a
-build without it has no `onde:ffi` module at all. WP0 can start behind the non-default feature
-during M9, as standalone builds landed ahead of M7, without moving the milestone.
 
 ---
 
@@ -607,13 +639,15 @@ during M9, as standalone builds landed ahead of M7, without moving the milestone
 
 ```
 M0 ── M1 ── M2 ── M3 ─┬─ M4 ──┐
-                      └─ M5 ──┴─ M7 ── M8 ── M9
+                      └─ M5 ──┴─ M7 ── M8 ── M10 ── M9
                 └─ M6 spike at end of M1, integration after M3
 ```
 
 Critical path: **M1 → M2 → M3 → M4**. M5 and M6 are parallelizable against M4 once the op
-bridge (M3) is stable. M7 needs M4 and M6. M8 (permissions) needs M7 and must land before M9
-(hardening), because the release docs and the compat sweep have to describe the model 1.0 ships.
+bridge (M3) is stable. M7 needs M4 and M6. M8 (permissions) needs M7 and hands its `ffi.load`
+grant to M10 (FFI), which is off the critical path: it follows M8 and runs parallel to the late M9
+docs, but its own docs land before the release, so M9 closes after it. M8 must still land before
+M9, because the release docs and the compat sweep have to describe the model 1.0 ships.
 
 ## 3. First six weeks (concrete)
 
@@ -633,7 +667,7 @@ running with output identical to Node.
 
 | Engineers | Shape | Wall clock |
 |---|---|---|
-| 1 | sequential M0→M9 | ~9 months |
+| 1 | sequential M0→M10→M9 | ~9.5–10 months |
 | 2 | one on M1→M2→M3, one on M3/M4 net+http after week 6 | ~6.5 months |
 | 3 | + one on M5/M6 (workers, engine patch, async context) | ~5 months |
 
@@ -667,13 +701,14 @@ it is 150 LOC of C plus binding regeneration, and the cost is in the rebase disc
 | [0007](adr/0007-http-codec.md) | HTTP/1.1 as a sans-io `httparse`-based state machine, outbound heads authored in JS | accepted |
 | [0008](adr/0008-processes-and-threads.md) | Threads and processes: nested isolate per worker, engine-serialized messages with a SAB table, proc/worker handle families, cooperative termination | accepted (M5) |
 | [0009](adr/0009-async-context.md) | Async context: host-owned job queue, per-job tags, engine hooks | accepted (M6) |
-| [0010](adr/0010-ffi-dlopen.md) | `dlopen` FFI: `libffi`, optional declarations, decoded structs; gated; M10 | proposed (M10) |
+| [0010](adr/0010-ffi-dlopen.md) | `dlopen` FFI: `libffi`, optional declarations, decoded structs; gated | accepted (M10, in 1.0) |
 | [0011](adr/0011-permissions.md) | Permissions: opt-in policy file and `--allow-*` flags, allow-lists only, enforced at the host boundary; 1.0 ships it off by default | accepted (M8) |
 
 ## 7. What we are explicitly not doing
 
 - A JIT, or a bytecode compiler of our own.
 - npm-compatible install (`node_modules` resolution yes, package management no).
-- N-API. If it is ever needed, it is a separate project with its own ABI shim.
+- N-API. If it is ever needed, it is a separate project with its own ABI shim. FFI is not a
+  stepping stone to it: `onde:ffi` calls C symbols, not `napi_*` entry points.
 - Browser APIs beyond the small set Node also exposes (`fetch`, `WebStreams`, `WebCrypto`
   are 1.1 candidates).

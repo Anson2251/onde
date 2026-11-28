@@ -38,6 +38,7 @@ ln-cli ──▶ ln-runtime ──┬─▶ ln-sched           (pure policy, no 
                         ├─▶ ln-modules          (resolution, no engine)
                         ├─▶ ln-io ──▶ ln-http   (net/TLS, child processes, signals)
                         ├─▶ ln-crypto
+                        ├─▶ ln-ffi ──▶ libffi/libloading (dlopen; behind the `ffi` feature)
                         └─▶ js/                 (bootstrap + node: modules)
 
 ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps)
@@ -52,6 +53,7 @@ ln-io, ln-http, ln-crypto ──▶ ln-error          (Node error model, no deps
 | `ln-io` | fs syscalls, the tokio offload pool, net transports (TCP/Unix/TLS) with their connection tasks, child processes with pipes/IPC, and signal delivery; `Op` and handle execution | hold a `JSValue`, call into JS, decide HTTP or Node policy |
 | `ln-http` | HTTP/1.1 framing: head parsing, chunked codec, limits, the peer's keep-alive intent | own a socket, depend on tokio, decide JS-visible policy |
 | `ln-crypto` | hash/HMAC/HKDF state and random generation | do I/O, depend on `tokio`, hold a `JSValue` |
+| `ln-ffi` | `dlopen` handles and symbols, `ffi_type` trees, struct layout, call plans, closures, errno | know the engine, hold a `JSValue`, decide JSON or Node policy |
 | `ln-error` | `NodeError`, errno→code and message tables, argument-error constructors | know about QuickJS or any runtime policy |
 | `js/` | the user-visible Node API where JS is expressive enough | reach into engine internals |
 
@@ -225,6 +227,14 @@ M5 adds two more handle families and one singleton:
 The completion router is therefore: reserved ids (IPC, signals) → ops → net handles → proc →
 worker. Every id comes from the one `RequestIdAllocator`, so the order is only a lookup
 convenience, not a type tag.
+
+### FFI
+
+`onde:ffi` is not an op: its calls run synchronously on the isolate thread and block the loop. The
+capability is one reviewed submodule, `host.ffi`, installed alongside the other host primitives;
+`ln-ffi` owns loading, layout and calling and knows nothing about QuickJS, while `js/lib/ffi.js`
+owns the public types, inference and JSON. The layer table is [ffi-plan.md](ffi-plan.md) §10 and
+the gates are [ADR-0010](adr/0010-ffi-dlopen.md) §7.
 
 ## 6. Module system
 

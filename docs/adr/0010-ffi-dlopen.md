@@ -1,9 +1,10 @@
 # ADR-0010: `dlopen` FFI — libffi, optional declarations, decoded structs
 
-Status: **proposed (2026-11-24).** M10 (1.1), after the M9 permissions model; not implemented. The
-work breakdown, the inference rules and the `Struct` reference are in [ffi-plan.md](../ffi-plan.md).
-This decision does not touch 1.0: [roadmap.md](../roadmap.md#0-definition-of-v10) already excludes
-N-API and native addons from the first release.
+Status: **accepted (2026-11-27), implemented in M10 before 1.0.** The work breakdown, the inference
+rules, the `Struct` reference and the recorded deviations are in
+[ffi-plan.md](../ffi-plan.md) (§17 is the implementation account). This decision does not open the
+door to native addons: [roadmap.md](../roadmap.md#0-definition-of-v10) still excludes N-API from the
+first release, and §2 explains why FFI is not a route to it.
 
 onde runs CLIs, build steps, config loaders and plugin hosts. Sooner or later one of those needs a
 native library: sqlite3, libgit2, a system framework, libc itself. Node's answer is N-API; Bun's is
@@ -35,8 +36,8 @@ values that are unambiguous; the per-call return type may be omitted, in which c
 declaration's, or `i32` for an undeclared symbol. Structs
 are JavaScript values whose layout is computed by the host.
 
-FFI ships in M10 (1.1), behind a build feature and the M9 permission model, whose policy defaults
-to deny.
+FFI ships in M10, before 1.0, behind the `ffi` build feature and M8's `ffi.load` permission, whose
+policy defaults to deny.
 
 ## 1. Why not A
 
@@ -107,7 +108,9 @@ knows its class. So the design has three tiers, in order:
 
 The rule that makes this safe is the last clause. A wrong marshalling decision is not a wrong
 answer, it is memory corruption, so the runtime refuses to guess where the value does not settle
-the question. Concretely, it never infers a float. QuickJS normalizes integral doubles built
+the question. Portability is the other half of the same rule: struct classification, register
+assignment, alignment and variadic handling differ by ABI, and `long`/`size_t` change width on
+LLP64, so a declaration or a typed value is the only description that survives a target change. Concretely, it never infers a float. QuickJS normalizes integral doubles built
 through `js_number()` ([quickjs.c](../../vendor/rquickjs-sys/quickjs/quickjs.c#L1640)) — literals,
 `Math.*` rounding — into an int tag; mixed add/sub/mul keeps the float tag via `js_float64`, while
 division normalizes on every path, so `w / 2` is accepted when exact and refused when fractional.
@@ -170,9 +173,13 @@ Two gates, plus one structural rule that keeps the surface reviewable:
 * **Build feature `ffi`.** A binary built without it has no `libffi`, no `libloading` and no
   `onde:ffi`; the module is not merely disabled, it is absent. This lets an embedder ship a binary
   that *cannot* load native code, which is a property worth having even when the binary is trusted.
-* **`Config::ffi`, default `Deny`.** The embedding application decides. The CLI flips it with
-  `--allow-ffi`, one permission in the M9 model (whether the CLI should default to allow is an open
-  question in the plan).
+  The feature is in `onde`'s default build and off in `ln-embed`.
+* **The `ffi.load` permission.** The runtime gate is the capability M8 defined in
+  [ADR-0011](0011-permissions.md), granted by a policy file or `--allow-ffi` (which requires
+  `--permission`). With `--permission` and no grant, `dlopen` throws `ERR_ACCESS_DENIED` with
+  `capability: "ffi.load"`; a build without the feature has no module at all. The originally
+  proposed **`Config::ffi` was not added**: M8 shipped the single gate, and a second switch would
+  have been a second policy to keep in sync.
 * **One reviewed host submodule.** `host/ffi.rs` is the only new capability surface; the codec
   registry, inference and `Struct` are JavaScript policy over it.
 
@@ -182,12 +189,15 @@ docs before the feature ships, not after.
 
 ## 8. Consequences
 
-* **Build.** `libffi-sys` vendors C and needs a target toolchain; `libloading` is Rust. The floor is
-  libffi ≥ 3.3 (`ffi_get_struct_offsets`); the crate vendors a newer one. Cross compilation and
-  `cargo deny` gain a dependency to audit (MIT). The feature is off in 1.0 release builds and turns
-  on for M10; the binary-size delta is measured in WP5 and recorded in the plan.
-* **Platform.** macOS and Linux, x86_64 and aarch64, are the v1 targets. Windows needs an LLP64
-  `cLong` token and an exercised `LoadLibrary` path; deferring it costs nothing in the design.
+* **Build.** The implementation links the **system** libffi (`-lffi`, ≥ 3.3 for
+  `ffi_get_struct_offsets`) plus `libloading`, rather than vendoring `libffi-sys` as first sketched.
+  The platform package must therefore be present: `libffi-dev` on Linux (`test/ffi/run.sh` runs in
+  CI, which installs it) and the SDK on macOS. libffi is MIT, and `cargo deny` / the license audit
+  gain one dependency. The `ffi` feature is on in `onde`'s default build and off in `ln-embed`; the
+  binary-size delta is +173,632 bytes (+2.2%) on an otherwise identical release build (below).
+* **Platform.** macOS and Linux, x86_64 and aarch64, are the v1 targets. `cLong` follows the
+  host's `sizeof(long)`, so an LLP64 build would get a 32-bit token; the remaining Windows work is
+  an exercised `LoadLibrary` path.
 * **Panic discipline.** The release profile is `panic = "abort"` ([Cargo.toml](../../Cargo.toml#L28)),
   so callback trampolines must be panic-free by construction and `catch_unwind` is not a safety
   net. A debug/test profile with unwinding plus an ASAN CI job covers what release cannot.
@@ -195,18 +205,47 @@ docs before the feature ships, not after.
   resolved through a registry, never through globals; `close()` invalidates symbols and refuses
   while a deallocator-backed buffer is live. None of this protects against a malicious library,
   which is out of scope for an FFI.
-* **Compatibility.** `onde:ffi` is an extension, not a Node module. `compat.md` records it as such
-  (D67, added with the implementation; D66 is the current last row) and the `node-addons` condition
-  stays unimplemented; npm packages that ship prebuilds
-  remain unsupported, as they are today.
+* **Compatibility.** `onde:ffi` is an extension, not a Node module: the namespace is `onde:`, it is
+  absent from `module.builtinModules`, and bare `ffi` and `node:ffi` do not resolve. `compat.md`
+  records it as D81; the `node-addons` condition stays unimplemented, and npm packages that ship
+  prebuilds remain unsupported.
 * **Maintenance.** `libffi` is a dependency we do not own and cannot patch casually; struct layout
-  is verified against a compiled C oracle on every CI run, which is the only way to catch an
-  alignment disagreement before a user does.
+  is verified against a compiled C oracle in CI (`test/ffi/layout.c`, five structs), which is the
+  only way to catch an alignment disagreement before a user does.
 * **Performance.** Per-call overhead is dominated by argument marshalling and the 103 ns host-call
-  baseline, not by `ffi_call`. FFI calls are synchronous and block the isolate; the plan documents
+  baseline, not by `ffi_call`. `test/ffi/bench.js` prints per-call numbers for a declared symbol,
+  `fn()` and an undeclared `call()`. On a release build (macOS arm64): 4.4–4.6 µs for a declared
+  symbol, 5.5–5.6 µs through `fn()`, 4.3 µs undeclared; marshalling and the two host crossings
+  dominate, not `ffi_call`. FFI calls are synchronous and block the isolate; the plan documents
   this and does not pretend a timeout can preempt C.
-* **1.0 is unaffected.** This is M10 (1.1) scope, behind a feature that stays off in 1.0 release
-  builds, with no milestone dependency in [roadmap.md](../roadmap.md).
+* **1.0 includes it.** FFI is M10 scope, shipped before the release, behind a feature that is on by
+  default in `onde` and off in `ln-embed`. The permission gate is the one the release already
+  documents; [roadmap.md](../roadmap.md) now sequences M8 → M10 → M9.
+
+| Measurement | Value |
+|---|---:|
+| per-call overhead, declared symbol | 4.4–4.6 µs |
+| per-call overhead, `fn()` | 5.5–5.6 µs |
+| per-call overhead, undeclared `call()` | 4.3 µs |
+| binary-size delta, `ffi` feature | +173,632 bytes (+2.2%) |
+
+### Implementation notes (2026-11-27)
+
+The full list of deviations is [ffi-plan.md §17](../ffi-plan.md#17-implementation-deviations); the
+three this ADR's design had to adjust:
+
+* No `Config::ffi`. The runtime gate is `ffi.load` from [ADR-0011](0011-permissions.md); a denial is
+  `ERR_ACCESS_DENIED` (`capability: "ffi.load"`), not the `ERR_FFI_NOT_ALLOWED` this ADR sketched.
+* `threadsafe: true` callbacks are refused with `ERR_FFI_UNSUPPORTED_THREADSAFE`. Same-thread
+  callbacks, exception parking and reentrancy ship; a callback invoked on a foreign thread cannot
+  enter QuickJS, and v1 does not pretend otherwise.
+* `close()`'s `ERR_FFI_LIVE_REFERENCES` maps a live deallocator to its loaded image with `dladdr`,
+  so only the handle whose library owns the deallocator is blocked. A foreign or unresolvable
+  deallocator does not block a close.
+
+The suite is `test/ffi/run.sh`: a C fixture with 35 functions and one data symbol, a layout oracle
+compared for five structs, and seven JavaScript files with 84 cases, plus the feature-off build
+check and the `ffi.load` permission gate.
 
 ## 9. What would change this decision
 

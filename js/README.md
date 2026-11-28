@@ -41,7 +41,11 @@ js/
     readline.js       line-oriented Interface + ANSI helpers
     readline-promises.js readline/promises
     sqlite.js         Database, Statement, SQLTagStore, constants, backup
+    ffi.js            onde:ffi: types, Ptr, Struct, Callback, JSON codecs
 ```
+
+`ffi.js` is the one module under the `onde:` namespace rather than `node:`. It is registered by
+`ln-modules`'s `onde:` table, not by `BUILTINS`, so bare `require("ffi")` does not reach it.
 
 Each `lib/*.js` is a **CommonJS module**: `"use strict";`, `module.exports = ...`, no top-level
 `await`, no import syntax. Stdlib modules may `require()` other stdlib modules by bare name
@@ -90,6 +94,7 @@ it at load time. It is an internal seam, not API: user code must not depend on i
 | `buffer.decodeHex` | `(text) => Uint8Array` | fresh array; stops at the first non-hex pair and drops an odd trailing digit |
 | `text.decodeStream` | `(data, start, end, pending, fatal) => { text, pending } \| null` | UTF-8 streaming split for `StringDecoder`; `null` means the prefix was invalid under `fatal` |
 | `sqlite` | object of primitives | `node:sqlite` handles: `open`, `close`, `exec`, `prepare`, `finalize`, `bind`, `run`, `all`, `first`, `begin`, `next`, `finish`, `columns`, `stat`, `resetStats`, `sourceSQL`, `expandedSQL`, `isOpen`, `isTransaction`, `location`, `serialize`, `deserialize`, `limit`, `setLimit`, `enableDefensive`, `backupInit`/`backupStep`/`backupFinish`, `version`, and the callback/session/extension entry points (`createFunction`, `createAggregate`, `setAuthorizer`, `createSession`, `sessionChangeset`, `sessionPatchset`, `sessionClose`, `applyChangeset`, `createModule`, `enableLoadExtension`, `loadExtension`); installed only when the `node-sqlite` feature is on |
+| `ffi` | object of primitives | `onde:ffi` handles: `load`, `close`, `declare`, `address`, `typeRegister`, `typeInfo`, `structType`, `call`, `callAt`, `read`, `write`, `pointer`, `alloc`, `allocZeroed`, `free`, `toArrayBuffer`, `errno`, `numberTag`, `target`, `cstring`, `callback`, `callbackClose`; installed only when the `ffi` feature is on. `target()` returns `{ pointerBits, longBits }`, which is how `isize`, `usize`, `cLong` and `buffer_length` follow the host's widths instead of hardcoding LP64 |
 
 `buffer` and `text` are nested members (`__ln_host.buffer.*`, `__ln_host.text.*`), installed only
 when the runtime provides the native codec; `internal/bytes.js` and `textcodec.js` fall back to

@@ -1,0 +1,15 @@
+[package]
+name = "ln-ffi"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "dlopen and libffi for onde's onde:ffi, engine-free and synchronous"
+publish = false
+
+[dependencies]
+# The loader. A thin wrapper over dlopen/dlsym; the `Library` value keeps the mapping alive
+# until the handle is closed.
+libloading = "0.8"
+# errno access (`__error` on macOS, `__errno_location` on Linux) and the deallocator ABI types.
+libc = "0.2"

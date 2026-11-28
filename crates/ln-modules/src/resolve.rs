@@ -66,8 +66,10 @@ impl Format {
 /// A successful resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
-    /// A builtin module, canonical name without the `node:` prefix.
+    /// A `node:` builtin, canonical name without the prefix.
     Builtin(&'static str),
+    /// An `onde:` extension module, canonical name without the prefix.
+    Onde(&'static str),
     /// A file on disk.
     File { path: PathBuf, format: Format },
 }
@@ -76,14 +78,14 @@ impl Resolution {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Resolution::File { path, .. } => Some(path),
-            Resolution::Builtin(_) => None,
+            Resolution::Builtin(_) | Resolution::Onde(_) => None,
         }
     }
 
     pub fn format(&self) -> Option<Format> {
         match self {
             Resolution::File { format, .. } => Some(*format),
-            Resolution::Builtin(_) => None,
+            Resolution::Builtin(_) | Resolution::Onde(_) => None,
         }
     }
 }
@@ -128,6 +130,17 @@ impl Resolver {
             return Err(ResolveFailure::new(
                 "ERR_INVALID_MODULE_SPECIFIER",
                 "The specifier is empty",
+                specifier,
+            ));
+        }
+
+        if let Some(name) = builtin::lookup_onde(specifier) {
+            return Ok(Resolution::Onde(name));
+        }
+        if builtin::is_onde_prefixed(specifier) {
+            return Err(ResolveFailure::new(
+                "ERR_UNKNOWN_BUILTIN_MODULE",
+                format!("No such built-in module: {specifier}"),
                 specifier,
             ));
         }

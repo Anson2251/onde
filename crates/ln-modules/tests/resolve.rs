@@ -66,6 +66,7 @@ fn assert_file(resolution: Resolution, expected: &Path, format: Format) {
             assert_eq!(actual, format, "format");
         }
         Resolution::Builtin(name) => panic!("expected a file, got builtin {name}"),
+        Resolution::Onde(name) => panic!("expected a file, got onde module {name}"),
     }
 }
 
@@ -73,6 +74,9 @@ fn assert_file(resolution: Resolution, expected: &Path, format: Format) {
 fn assert_builtin(resolution: Resolution, expected: &str) {
     match resolution {
         Resolution::Builtin(name) => assert_eq!(name, expected),
+        Resolution::Onde(name) => {
+            panic!("expected node builtin {expected}, got onde module {name}")
+        }
         Resolution::File { path, .. } => {
             panic!("expected builtin {expected}, got {}", path.display())
         }

@@ -50,6 +50,8 @@ mod codec;
 mod crypto;
 #[cfg(feature = "node-net")]
 mod dns;
+#[cfg(feature = "ffi")]
+pub(crate) mod ffi;
 mod fs;
 #[cfg(feature = "node-net")]
 mod net;
@@ -102,6 +104,9 @@ pub(crate) struct HostState {
     /// SQLite handles: connections, statements and in-flight backups (`node:sqlite`).
     #[cfg(feature = "node-sqlite")]
     pub sqlite: Rc<sqlite::SqliteState>,
+    /// `onde:ffi` handles, closures and the type registry.
+    #[cfg(feature = "ffi")]
+    pub ffi: Rc<ffi::FfiState>,
     /// async_hooks ids and the execution context (M6).
     pub async_hooks: Rc<crate::async_hooks::AsyncTracker>,
     /// True when `--async-stack-traces` started tracking before the bootstrap ran, so the
@@ -659,6 +664,12 @@ pub(crate) fn install<'js>(
                             object.set("type", "builtin")?;
                             object.set("name", name)?;
                         }
+                        Resolution::Onde(name) => {
+                            // The `onde:` namespace is its own resolution type so the JS loader
+                            // never mistakes it for a Node builtin in `builtinModules`.
+                            object.set("type", "onde")?;
+                            object.set("name", format!("onde:{name}"))?;
+                        }
                         Resolution::File { path, format } => {
                             // Names the JS loader branches on: "file" is a CJS file, "esm" must
                             // be rejected by require(), "json"/"addon" have dedicated errors.
@@ -693,6 +704,7 @@ pub(crate) fn install<'js>(
                         })?;
                     Ok(match resolution {
                         Resolution::Builtin(name) => format!("node:{name}"),
+                        Resolution::Onde(name) => format!("onde:{name}"),
                         Resolution::File { path, .. } => file_url::path_to_file_url(&path),
                     })
                 },
@@ -818,6 +830,11 @@ pub(crate) fn install<'js>(
 
     #[cfg(feature = "node-sqlite")]
     sqlite::install(ctx, &host, state)?;
+
+    // --- native code (onde:ffi, ADR-0010) ----------------------------------------------------
+
+    #[cfg(feature = "ffi")]
+    ffi::install(ctx, &host, state)?;
     text::install(ctx, &host, state)?;
     buffer::install(ctx, &host, state)?;
 

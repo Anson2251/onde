@@ -8,15 +8,18 @@ Two things are tracked separately:
 A module is only "✅" when its tests are green; "🟡" means the common path works and the gaps are
 listed. Status: 🟢 engine provides · 🔵 we build (small) · 🟠 we build (substantial) · ⚪ absent.
 
-**Last verified: M7 plus `node:sqlite`, 2026-11-24** (`node v26.12.1` as the oracle). The M3–M5
-rows and D35–D53 are green: `fs`, `fs/promises`, `stream`, `crypto`, `perf_hooks`, `tty`, `net`,
-`http`/`https`, `tls`, `dns`, `zlib`, `child_process`, `worker_threads` and `readline` are exercised
-by the corpus, the JS suites, `test/programs/run.sh`, `test/net/run.sh` and `test/proc/run.sh`.
-The `sqlite` row is exercised by `test/conformance/sqlite/` (thirteen Node-recorded cases,
-including user-defined functions, the authorizer, sessions/changesets, virtual tables and
-extension gating) and `test/js/lib/sqlite.test.js`. The M6 rows (`async_hooks`, `AsyncLocalStorage`) are exercised by
-`test/async/run.sh` (a 96-cell propagation matrix, hook semantics and a 1M-promise retention check)
-and `test/conformance/async_hooks/`.
+**Last verified: M7 plus `node:sqlite` and `onde:ffi`, 2026-11-27** (`node v26.12.1` as the
+oracle). The M3–M5 rows and D35–D53 are green: `fs`, `fs/promises`, `stream`, `crypto`,
+`perf_hooks`, `tty`, `net`, `http`/`https`, `tls`, `dns`, `zlib`, `child_process`,
+`worker_threads` and `readline` are exercised by the corpus, the JS suites,
+`test/programs/run.sh`, `test/net/run.sh` and `test/proc/run.sh`. The `sqlite` row is exercised by
+`test/conformance/sqlite/` (thirteen Node-recorded cases, including user-defined functions, the
+authorizer, sessions/changesets, virtual tables and extension gating) and
+`test/js/lib/sqlite.test.js`. `onde:ffi` is exercised by `test/ffi/run.sh`: a C fixture, a layout
+oracle and an 84-case JavaScript matrix, plus the feature-off build and the `ffi.load` gate. The M6
+rows (`async_hooks`, `AsyncLocalStorage`) are exercised by `test/async/run.sh` (a 96-cell
+propagation matrix, hook semantics and a 1M-promise retention check) and
+`test/conformance/async_hooks/`.
 
 ## 1. What quickjs-ng 0.17.0 gives us
 
@@ -128,6 +131,12 @@ Measured on the pinned engine (2026-11-13):
 |---|---|---|
 | `sqlite` | 🟡 | `node:sqlite` over a bundled SQLite 3.53.2. `Database`/`DatabaseSync` (open, close, exec, prepare, location, isOpen, isTransaction, limits, serialize, deserialize, enableDefensive, `function`, `aggregate`, `setAuthorizer`, `createSession`, `applyChangeset`, `loadExtension`/`enableLoadExtension`, `createModule` for JavaScript-backed virtual tables, `[Symbol.dispose]`), `Statement`/`StatementSync` (run, get, all, iterate, columns, stat, resetStats, the four `set*` policies, sourceSQL, expandedSQL, close, `[Symbol.dispose]`), `Session` (changeset, patchset, close, dispose), `SQLTagStore`, `backup()`, the 45 `constants`, Node's type conversion (numbers bind `REAL`, BigInts `INTEGER`, booleans `1`/`0`, byte views `BLOB`, `undefined`/`NaN` `NULL`) and binding rules (bare named parameters, unknown names, `?`/`?NNN` positional slots), foreign keys on and double-quoted strings off by default, null-prototype result objects, original JavaScript exceptions propagating out of user functions and authorizers. `require("node:sqlite")` only — `module.builtinModules` omits it and `isBuiltin("sqlite")` is false, as in Node. Not implemented: `diagnostics_channel` `'sqlite.db.query'` events (D77). `--no-default-features` drops the module entirely (D76–D79) |
 
+### Extensions — after M10
+
+| Module | Status | Notes |
+|---|---|---|
+| `onde:ffi` | 🟠 M10 | `dlopen` over libffi. Not a Node module and not in `module.builtinModules`: reached only as `onde:ffi` (through `require` or `import`), absent from a `--no-default-features` build, and gated at run time by `ffi.load`. Surface: `dlopen(path, declarations?)` → `{ path, symbols, call, fn, close }`, the scalar type tokens plus `Ptr`/`CArray`/`Struct`/`Callback`, `ref`, `read.*`, `ptr`, `toArrayBuffer`, `CString`, `voidType`, `errno()`, `revive()` and JSON envelopes. Test: `test/ffi/run.sh` |
+
 ## 3. Divergences (deliberate, tested)
 
 | ID | Divergence | Rationale | Test |
@@ -220,6 +229,7 @@ this document applies unchanged; these are the differences a compiled app can ob
 | D78 | A `Database`/`Statement` that is never closed is not closed by a GC finalizer; it stays open until the isolate tears down, where the registry finalizes statements and closes connections. `db.close()` and `statement.close()` are explicit, and `[Symbol.dispose]` is the `using`-friendly spelling | QuickJS 0.17 does not deliver `FinalizationRegistry` cleanup callbacks reliably, and a finalizer must not run SQLite calls | `test/js/lib/sqlite.test.js` |
 | D79 | The bundled SQLite is 3.53.2, not Node 26.12.1's 3.54.1; `process.versions.sqlite` reports the bundled version, and the corpus never asserts version-dependent behaviour | one self-contained binary, no system libsqlite3, and no drift with a host's SQLite features | `test/conformance/sqlite/` |
 | D80 | The permission model is an opt-in onde extension: `--permission`, `--permission-file` and `--allow-*`; `ERR_ACCESS_DENIED` carries `capability`, `resource` and `policy`; `process.permission` is present even when nothing is enforced and `has` then answers `true` (unknown scopes answer `false`); `child`/`worker` are aliases for `child.spawn`/`worker.spawn`. `fs.write` does not imply `fs.read`, a shell `exec` is checked as `/bin/sh`, a sqlite write grant covers exactly the database's three side files, a `file:` URI is refused under a policy, and a name is checked before DNS resolution | Node's `--permission` is a different, narrower model (no policy file, no network) and its `process.permission` is absent without the flag; ADR-0011 is the authority for onde's shape | `test/perm/`, `crates/ln-runtime/tests/permissions_scan.rs` |
+| D81 | `onde:ffi` is an onde extension, not a Node module: the namespace is `onde:`, it is absent from `module.builtinModules`, and bare `ffi`/`node:ffi` do not resolve. It is behind the `ffi` build feature (on in `onde`, off in `ln-embed`) and the `ffi.load` capability (`--allow-ffi`, which requires `--permission`); a denial is `ERR_ACCESS_DENIED` with `capability: "ffi.load"`, not `ERR_FFI_NOT_ALLOWED`. There is no N-API and no `process.dlopen`; `threadsafe` callbacks are refused in v1; the build needs the system libffi (≥ 3.3); and a pointer or callback return of `0` is JS `null` | ADR-0010 and ADR-0011: one extension namespace, one existing runtime capability, no second policy switch, and no native-addon ABI | `test/ffi/run.sh` |
 
 How a compiled app is produced, what the payload contains and why the engine stamp exists is
 `docs/standalone-build.md`; this section only records what a user can notice.

@@ -49,6 +49,25 @@ pub const BUILTINS: &[&str] = &[
     "zlib",
 ];
 
+/// The `onde:` extension namespace.
+///
+/// Deliberately separate from [`BUILTINS`]: a bare `require("ffi")` must fall through to
+/// `node_modules` and end as `MODULE_NOT_FOUND`, and `module.builtinModules` must not list an
+/// extension as a Node builtin. `node:` is not an option either — that would claim a Node
+/// namespace onde does not implement ([ffi-plan.md](../../../docs/ffi-plan.md) §10).
+pub const ONDE_MODULES: &[&str] = &["ffi"];
+
+/// Resolve an `onde:` specifier to its canonical name (without the prefix).
+pub fn lookup_onde(specifier: &str) -> Option<&'static str> {
+    let name = specifier.strip_prefix("onde:")?;
+    ONDE_MODULES.iter().copied().find(|module| *module == name)
+}
+
+/// True when the specifier names the extension namespace, even an unknown member.
+pub fn is_onde_prefixed(specifier: &str) -> bool {
+    specifier.starts_with("onde:")
+}
+
 /// Builtins that exist only under the `node:` scheme, as in Node.
 ///
 /// `require("sqlite")` must fall through to `node_modules` and end as `MODULE_NOT_FOUND`;
@@ -95,6 +114,16 @@ mod tests {
         assert_eq!(lookup("path"), Some("path"));
         assert_eq!(lookup("node:path"), Some("path"));
         assert_eq!(lookup("node:path/win32"), Some("path/win32"));
+    }
+
+    #[test]
+    fn onde_namespace_is_separate() {
+        assert_eq!(lookup_onde("onde:ffi"), Some("ffi"));
+        assert_eq!(lookup_onde("onde:nope"), None);
+        assert_eq!(lookup_onde("ffi"), None);
+        // A bare name must not reach the extension through the Node table either.
+        assert_eq!(lookup("ffi"), None);
+        assert_eq!(lookup("node:ffi"), None);
     }
 
     #[test]

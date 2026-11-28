@@ -179,6 +179,7 @@ RUN=node ./test/conformance/run.sh              # prove the expectations still d
 ./test/js/run.sh                                # 85 stdlib suites under node and onde + oracles
 ./test/proc/run.sh                              # M5 acceptance: children, workers, signals
 ./test/async/run.sh                             # M6 acceptance: ALS matrix, hooks, 1M promises
+./test/ffi/run.sh                               # M10 acceptance: C fixture, layout oracle, JS matrix, gates
 FULL=1 ./test/proc/run.sh                       # the 1M worker round-trip benchmark
 ./test/programs/run.sh                          # cat, wc -l, cp -r (M3 acceptance)
 ./test/stress/run.sh                            # RSS flat across 200k timer create/clear
@@ -213,6 +214,9 @@ both node and onde (see [tuckbox/README.md](../tuckbox/README.md)).
   which is the mode CI uses.
 - **proc/** is the M5 acceptance set: every case runs under node and under onde; the worker echo
   case runs 20k round-trips by default and 1M with `FULL=1`.
+- **ffi/** builds a C shared library and a layout oracle with the system compiler, runs the
+  `onde:ffi` matrix (there is no Node equivalent, so nothing is diffed), and checks the
+  `--no-default-features` and `ffi.load` gates. It needs `libffi-dev` on Linux.
 
 ### Why the corpus compares stdout and the exit code, not stderr
 
@@ -236,7 +240,7 @@ differential, smoke and stdlib harnesses.
 
 1. [roadmap.md](roadmap.md) — milestones, exit criteria, sequencing, risks.
 2. [m4-plan.md](m4-plan.md) — the milestone just closed: host boundary, WP ownership,
-   exit criteria.
+   exit criteria. [ffi-guide.md](ffi-guide.md) is the user-facing `onde:ffi` guide.
 3. [m5-plan.md](m5-plan.md) — the milestone being planned: process/worker host boundary, work
    packages, tests, divergences.
 4. [adr/0008-processes-and-threads.md](adr/0008-processes-and-threads.md) — the M5 structural
