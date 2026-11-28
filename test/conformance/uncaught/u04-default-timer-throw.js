@@ -1,1 +1,3 @@
-setTimeout(() => { throw new Error('boom'); }, 0);
+setTimeout(() => {
+    throw new Error("boom");
+}, 0);

@@ -6,14 +6,18 @@ let failures = 0;
 
 const worker = new Worker(path.join(__dirname, "fixtures", "worker-busy.js"));
 worker.on("online", () => {
-  worker.terminate().then((code) => {
-    if (code !== 1) { failures += 1; console.log(`not ok terminate code ${code}`); }
-    else console.log("ok terminate code 1");
-  });
+    worker.terminate().then((code) => {
+        if (code !== 1) {
+            failures += 1;
+            console.log(`not ok terminate code ${code}`);
+        } else console.log("ok terminate code 1");
+    });
 });
 worker.on("exit", (code) => {
-  if (code !== 1) { failures += 1; console.log(`not ok exit code ${code}`); }
-  else console.log("ok exit code 1");
-  console.log(failures === 0 ? "terminate: ok" : `terminate: ${failures} failed`);
-  process.exitCode = failures === 0 ? 0 : 1;
+    if (code !== 1) {
+        failures += 1;
+        console.log(`not ok exit code ${code}`);
+    } else console.log("ok exit code 1");
+    console.log(failures === 0 ? "terminate: ok" : `terminate: ${failures} failed`);
+    process.exitCode = failures === 0 ? 0 : 1;
 });

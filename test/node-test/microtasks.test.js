@@ -14,51 +14,51 @@ const test = require("node:test");
 const assert = require("node:assert");
 
 function afterImmediate() {
-  return new Promise((resolve) => setImmediate(resolve));
+    return new Promise((resolve) => setImmediate(resolve));
 }
 
 test.describe("microtasks", () => {
-  test("queueMicrotask and promise reactions share one FIFO", async () => {
-    const order = [];
-    queueMicrotask(() => order.push("qm1"));
-    Promise.resolve().then(() => order.push("then1"));
-    Promise.resolve().then(() => {
-      order.push("then2");
-      queueMicrotask(() => order.push("qm-from-then2"));
+    test("queueMicrotask and promise reactions share one FIFO", async () => {
+        const order = [];
+        queueMicrotask(() => order.push("qm1"));
+        Promise.resolve().then(() => order.push("then1"));
+        Promise.resolve().then(() => {
+            order.push("then2");
+            queueMicrotask(() => order.push("qm-from-then2"));
+        });
+        queueMicrotask(() => order.push("qm2"));
+        order.push("sync");
+
+        await afterImmediate();
+
+        // C12's expected order: sync qm1 then1 then2 qm2 qm-from-then2
+        assert.deepStrictEqual(order, ["sync", "qm1", "then1", "then2", "qm2", "qm-from-then2"]);
     });
-    queueMicrotask(() => order.push("qm2"));
-    order.push("sync");
 
-    await afterImmediate();
+    test("await enqueues its continuation before a later then", async () => {
+        const order = [];
+        async function f() {
+            order.push("f-start");
+            await null;
+            order.push("f-after");
+        }
+        f();
+        Promise.resolve().then(() => order.push("then"));
+        queueMicrotask(() => order.push("qm"));
+        order.push("sync");
 
-    // C12's expected order: sync qm1 then1 then2 qm2 qm-from-then2
-    assert.deepStrictEqual(order, ["sync", "qm1", "then1", "then2", "qm2", "qm-from-then2"]);
-  });
+        await afterImmediate();
 
-  test("await enqueues its continuation before a later then", async () => {
-    const order = [];
-    async function f() {
-      order.push("f-start");
-      await null;
-      order.push("f-after");
-    }
-    f();
-    Promise.resolve().then(() => order.push("then"));
-    queueMicrotask(() => order.push("qm"));
-    order.push("sync");
-
-    await afterImmediate();
-
-    // C9's expected order: f-start sync f-after then qm
-    assert.deepStrictEqual(order, ["f-start", "sync", "f-after", "then", "qm"]);
-  });
+        // C9's expected order: f-start sync f-after then qm
+        assert.deepStrictEqual(order, ["f-start", "sync", "f-after", "then", "qm"]);
+    });
 });
 
 test("a callback test completes on done()", (t, done) => {
-  t.plan(1);
-  t.diagnostic("callback style");
-  setImmediate(() => {
-    t.assert.strictEqual(typeof done, "function");
-    done();
-  });
+    t.plan(1);
+    t.diagnostic("callback style");
+    setImmediate(() => {
+        t.assert.strictEqual(typeof done, "function");
+        done();
+    });
 });

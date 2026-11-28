@@ -11,10 +11,26 @@ fs.writeFileSync(path.join(dir, "sub/inner/deep.txt"), "");
 fs.symlinkSync(path.join(dir, "a.txt"), path.join(dir, "link"));
 
 console.log("names", fs.readdirSync(dir).sort().join(","));
-const dirents = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-console.log("dirents", dirents.map((entry) => `${entry.name}:${entry.isFile() ? "f" : entry.isDirectory() ? "d" : entry.isSymbolicLink() ? "l" : "?"}`).join(","));
-console.log("parent", dirents.every((entry) => entry.parentPath === dir));
+const dirents = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name));
+console.log(
+    "dirents",
+    dirents
+        .map(
+            (entry) =>
+                `${entry.name}:${entry.isFile() ? "f" : entry.isDirectory() ? "d" : entry.isSymbolicLink() ? "l" : "?"}`,
+        )
+        .join(","),
+);
+console.log(
+    "parent",
+    dirents.every((entry) => entry.parentPath === dir),
+);
 console.log("recursive", fs.readdirSync(dir, { recursive: true }).sort().join(","));
-console.log("buffer", fs.readdirSync(dir, { encoding: "buffer" }).every((name) => Buffer.isBuffer(name)));
+console.log(
+    "buffer",
+    fs.readdirSync(dir, { encoding: "buffer" }).every((name) => Buffer.isBuffer(name)),
+);
 
 fs.rmSync(dir, { recursive: true, force: true });

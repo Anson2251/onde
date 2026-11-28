@@ -7,8 +7,8 @@
 // covers the surface we own: validation, error codes, class shape, and the documented divergences.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: onde host unavailable");
-  process.exit(0);
+    console.log("skip: onde host unavailable");
+    process.exit(0);
 }
 
 const sqlite = require("../../../js/lib/sqlite.js");
@@ -21,33 +21,30 @@ let failed = 0;
 const failures = [];
 
 function record(condition, detail) {
-  if (condition) {
-    passed += 1;
-  } else {
-    failed += 1;
-    failures.push(detail);
-  }
+    if (condition) {
+        passed += 1;
+    } else {
+        failed += 1;
+        failures.push(detail);
+    }
 }
 
 function eq(actual, expected, message) {
-  record(
-    actual === expected,
-    `${message} (expected ${String(expected)}, got ${String(actual)})`,
-  );
+    record(actual === expected, `${message} (expected ${String(expected)}, got ${String(actual)})`);
 }
 
 function throwsCode(fn, code, message) {
-  try {
-    fn();
-    record(false, `${message} (expected a throw)`);
-    return undefined;
-  } catch (error) {
-    record(
-      error !== null && error !== undefined && error.code === code,
-      `${message} (code was ${error && error.code})`,
-    );
-    return error;
-  }
+    try {
+        fn();
+        record(false, `${message} (expected a throw)`);
+        return undefined;
+    } catch (error) {
+        record(
+            error !== null && error !== undefined && error.code === code,
+            `${message} (code was ${error && error.code})`,
+        );
+        return error;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -91,14 +88,14 @@ eq(Object.getPrototypeOf(row), null, "row is null-prototype");
 
 throwsCode(() => new sqlite.Database(42), "ERR_INVALID_ARG_TYPE", "path type");
 throwsCode(
-  () => new sqlite.Database(":memory:", { readOnly: 1 }),
-  "ERR_INVALID_ARG_TYPE",
-  "boolean option type",
+    () => new sqlite.Database(":memory:", { readOnly: 1 }),
+    "ERR_INVALID_ARG_TYPE",
+    "boolean option type",
 );
 throwsCode(
-  () => new sqlite.Database(":memory:", { timeout: -1 }),
-  "ERR_OUT_OF_RANGE",
-  "negative timeout",
+    () => new sqlite.Database(":memory:", { timeout: -1 }),
+    "ERR_OUT_OF_RANGE",
+    "negative timeout",
 );
 throwsCode(() => db.prepare(), "ERR_INVALID_ARG_TYPE", "prepare needs a string");
 throwsCode(() => db.prepare(""), "ERR_INVALID_ARG_VALUE", "empty SQL");
@@ -106,9 +103,9 @@ throwsCode(() => db.prepare("SELECT FROM"), "ERR_SQLITE_ERROR", "syntax error");
 
 const syntax = throwsCode(() => db.prepare("SELECT FROM"), "ERR_SQLITE_ERROR", "syntax error code");
 if (syntax !== undefined) {
-  eq(syntax.errcode, 1, "syntax errcode");
-  eq(syntax.errstr, "SQL logic error", "syntax errstr");
-  eq(typeof syntax.message, "string", "syntax message");
+    eq(syntax.errcode, 1, "syntax errcode");
+    eq(syntax.errstr, "SQL logic error", "syntax errstr");
+    eq(typeof syntax.message, "string", "syntax message");
 }
 
 const named = db.prepare("SELECT :a AS a, $b AS b");
@@ -118,17 +115,17 @@ if (unknown !== undefined) eq(unknown.message, "Unknown named parameter 'z'", "u
 const ambiguous = db.prepare("SELECT $k AS a, @k AS b");
 const conflict = throwsCode(() => ambiguous.get({ k: 1 }), "ERR_INVALID_STATE", "ambiguous name");
 if (conflict !== undefined) {
-  eq(
-    conflict.message,
-    "Cannot create bare named parameter 'k' because of conflicting names '$k' and '@k'.",
-    "ambiguous message",
-  );
+    eq(
+        conflict.message,
+        "Cannot create bare named parameter 'k' because of conflicting names '$k' and '@k'.",
+        "ambiguous message",
+    );
 }
 
 const big = db.prepare("SELECT ? AS v");
 const tooLarge = throwsCode(() => big.get(2n ** 64n), "ERR_INVALID_ARG_VALUE", "bigint range");
 if (tooLarge !== undefined) {
-  eq(tooLarge.message, "BigInt value is too large to bind.", "bigint message");
+    eq(tooLarge.message, "BigInt value is too large to bind.", "bigint message");
 }
 
 eq(db.prepare("SELECT ? AS v").get(null).v, null, "null binds NULL");
@@ -165,15 +162,23 @@ throwsCode(() => select.stat("autoIndex"), "ERR_INVALID_ARG_VALUE", "stat name i
 // Limits
 // ---------------------------------------------------------------------------------------------
 
-eq(Object.keys(db.limits).join(","),
-  "length,sqlLength,column,exprDepth,compoundSelect,vdbeOp,functionArg,attach,likePatternLength,variableNumber,triggerDepth",
-  "limit names");
+eq(
+    Object.keys(db.limits).join(","),
+    "length,sqlLength,column,exprDepth,compoundSelect,vdbeOp,functionArg,attach,likePatternLength,variableNumber,triggerDepth",
+    "limit names",
+);
 record(db.limits.length >= 1_000_000, "default length limit");
 db.limits.sqlLength = 100000;
 eq(db.limits.sqlLength, 100000, "set limit");
 db.limits.sqlLength = Infinity;
 record(db.limits.sqlLength >= 100000, "Infinity resets");
-throwsCode(() => { db.limits.column = -1; }, "ERR_OUT_OF_RANGE", "negative limit");
+throwsCode(
+    () => {
+        db.limits.column = -1;
+    },
+    "ERR_OUT_OF_RANGE",
+    "negative limit",
+);
 
 // ---------------------------------------------------------------------------------------------
 // Transactions, serialization, tag store
@@ -217,14 +222,22 @@ eq(functions.prepare("SELECT typeof(identity(1)) AS t").get().t, "real", "number
 functions.function("big", () => 2n ** 40n);
 eq(functions.prepare("SELECT typeof(big()) AS t").get().t, "integer", "bigint returns INTEGER");
 functions.function("bad", () => true);
-throwsCode(() => functions.prepare("SELECT bad()").get(), "ERR_SQLITE_ERROR", "boolean return is rejected");
+throwsCode(
+    () => functions.prepare("SELECT bad()").get(),
+    "ERR_SQLITE_ERROR",
+    "boolean return is rejected",
+);
 functions.function("boom", () => {
-  throw new TypeError("function failed");
+    throw new TypeError("function failed");
 });
-const thrown = throwsCode(() => functions.prepare("SELECT boom()").get(), undefined, "function throw");
+const thrown = throwsCode(
+    () => functions.prepare("SELECT boom()").get(),
+    undefined,
+    "function throw",
+);
 if (thrown !== undefined) {
-  eq(thrown.name, "TypeError", "function throw keeps the error type");
-  eq(thrown.message, "function failed", "function throw keeps the message");
+    eq(thrown.name, "TypeError", "function throw keeps the error type");
+    eq(thrown.message, "function failed", "function throw keeps the message");
 }
 functions.function("type_of_arg", { useBigIntArguments: true }, (value) => typeof value);
 eq(functions.prepare("SELECT type_of_arg(42) AS v").get().v, "bigint", "useBigIntArguments");
@@ -233,26 +246,26 @@ eq(functions.prepare("SELECT arg_count(1, 2, 3) AS v").get().v, 3, "varargs");
 
 functions.aggregate("my_sum", { start: 0, step: (state, value) => state + value });
 eq(
-  functions.prepare("SELECT my_sum(x) AS v FROM (SELECT 1 AS x UNION ALL SELECT 2)").get().v,
-  3,
-  "aggregate",
+    functions.prepare("SELECT my_sum(x) AS v FROM (SELECT 1 AS x UNION ALL SELECT 2)").get().v,
+    3,
+    "aggregate",
 );
 functions.aggregate("window_sum", {
-  start: 0,
-  step: (state, value) => state + value,
-  result: (state) => state,
-  inverse: (state, value) => state - value,
+    start: 0,
+    step: (state, value) => state + value,
+    result: (state) => state,
+    inverse: (state, value) => state - value,
 });
 eq(
-  functions
-    .prepare(
-      "SELECT window_sum(x) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS v FROM (SELECT 1 AS x UNION ALL SELECT 2)",
-    )
-    .all()
-    .map((row) => row.v)
-    .join(","),
-  "1,2",
-  "window function",
+    functions
+        .prepare(
+            "SELECT window_sum(x) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS v FROM (SELECT 1 AS x UNION ALL SELECT 2)",
+        )
+        .all()
+        .map((row) => row.v)
+        .join(","),
+    "1,2",
+    "window function",
 );
 functions.close();
 
@@ -265,22 +278,30 @@ authorized.exec("CREATE TABLE data(a)");
 authorized.exec("INSERT INTO data VALUES (1)");
 const actions = [];
 authorized.setAuthorizer((action) => {
-  actions.push(action);
-  return sqlite.constants.SQLITE_OK;
+    actions.push(action);
+    return sqlite.constants.SQLITE_OK;
 });
 authorized.prepare("SELECT 1 AS v").get();
 record(actions.includes(sqlite.constants.SQLITE_SELECT), "authorizer observes SELECT");
 authorized.setAuthorizer((action) =>
-  action === sqlite.constants.SQLITE_READ ? sqlite.constants.SQLITE_IGNORE : sqlite.constants.SQLITE_OK,
+    action === sqlite.constants.SQLITE_READ
+        ? sqlite.constants.SQLITE_IGNORE
+        : sqlite.constants.SQLITE_OK,
 );
 eq(authorized.prepare("SELECT a FROM data").get().a, null, "authorizer IGNORE");
 authorized.setAuthorizer((action) =>
-  action === sqlite.constants.SQLITE_CREATE_TABLE ? sqlite.constants.SQLITE_DENY : sqlite.constants.SQLITE_OK,
+    action === sqlite.constants.SQLITE_CREATE_TABLE
+        ? sqlite.constants.SQLITE_DENY
+        : sqlite.constants.SQLITE_OK,
 );
 throwsCode(() => authorized.exec("CREATE TABLE blocked(a)"), "ERR_SQLITE_ERROR", "authorizer DENY");
 authorized.setAuthorizer(null);
 authorized.exec("CREATE TABLE allowed(a)");
-eq(authorized.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'allowed'").get().n, 1, "authorizer cleared");
+eq(
+    authorized.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'allowed'").get().n,
+    1,
+    "authorizer cleared",
+);
 authorized.close();
 
 // ---------------------------------------------------------------------------------------------
@@ -290,7 +311,7 @@ authorized.close();
 const sessionSource = new sqlite.Database(":memory:");
 const sessionTarget = new sqlite.Database(":memory:");
 for (const database of [sessionSource, sessionTarget]) {
-  database.exec("CREATE TABLE data(key INTEGER PRIMARY KEY, value TEXT)");
+    database.exec("CREATE TABLE data(key INTEGER PRIMARY KEY, value TEXT)");
 }
 sessionTarget.exec("INSERT INTO data VALUES (1, 'old')");
 const session = sessionSource.createSession();
@@ -298,11 +319,19 @@ sessionSource.exec("INSERT INTO data VALUES (1, 'new')");
 const changeset = session.changeset();
 record(changeset instanceof Uint8Array, "changeset is a Uint8Array");
 eq(sessionTarget.applyChangeset(changeset), false, "default conflict aborts");
-eq(sessionTarget.applyChangeset(changeset, { onConflict: () => sqlite.constants.SQLITE_CHANGESET_OMIT }), true, "conflict OMIT");
 eq(
-  sessionTarget.applyChangeset(changeset, { onConflict: () => sqlite.constants.SQLITE_CHANGESET_REPLACE }),
-  true,
-  "conflict REPLACE",
+    sessionTarget.applyChangeset(changeset, {
+        onConflict: () => sqlite.constants.SQLITE_CHANGESET_OMIT,
+    }),
+    true,
+    "conflict OMIT",
+);
+eq(
+    sessionTarget.applyChangeset(changeset, {
+        onConflict: () => sqlite.constants.SQLITE_CHANGESET_REPLACE,
+    }),
+    true,
+    "conflict REPLACE",
 );
 eq(sessionTarget.prepare("SELECT value FROM data").get().value, "new", "replaced row");
 record(session.patchset() instanceof Uint8Array, "patchset is a Uint8Array");
@@ -320,39 +349,59 @@ sessionTarget.close();
 
 const virtual = new sqlite.Database(":memory:");
 virtual.createModule("series", {
-  columns: [
-    { name: "value", type: "INTEGER" },
-    { name: "start", type: "INTEGER", hidden: true },
-    { name: "stop", type: "INTEGER", hidden: true },
-  ],
-  *rows(start, stop) {
-    start ??= 1;
-    stop ??= 3;
-    for (let value = start; value <= stop; value += 1) yield [value];
-  },
+    columns: [
+        { name: "value", type: "INTEGER" },
+        { name: "start", type: "INTEGER", hidden: true },
+        { name: "stop", type: "INTEGER", hidden: true },
+    ],
+    *rows(start, stop) {
+        start ??= 1;
+        stop ??= 3;
+        for (let value = start; value <= stop; value += 1) yield [value];
+    },
 });
 eq(
-  virtual.prepare("SELECT value FROM series(2, 4)").all().map((row) => row.value).join(","),
-  "2,3,4",
-  "virtual table with hidden arguments",
+    virtual
+        .prepare("SELECT value FROM series(2, 4)")
+        .all()
+        .map((row) => row.value)
+        .join(","),
+    "2,3,4",
+    "virtual table with hidden arguments",
 );
 virtual.createModule("counter", {
-  columns: [{ name: "value", type: "INTEGER" }],
-  *rows() {
-    yield [1];
-    yield [2n];
-  },
+    columns: [{ name: "value", type: "INTEGER" }],
+    *rows() {
+        yield [1];
+        yield [2n];
+    },
 });
-eq(virtual.prepare("SELECT typeof(value) AS t FROM counter").all()[1].t, "integer", "virtual table bigint");
-throwsCode(
-  () => virtual.createModule("empty", { columns: [], rows() { return []; } }),
-  "ERR_INVALID_ARG_VALUE",
-  "empty column list",
+eq(
+    virtual.prepare("SELECT typeof(value) AS t FROM counter").all()[1].t,
+    "integer",
+    "virtual table bigint",
 );
 throwsCode(
-  () => virtual.createModule("bad_type", { columns: [{ name: "x", type: "WEIRD" }], rows() { return []; } }),
-  "ERR_INVALID_ARG_VALUE",
-  "invalid column type",
+    () =>
+        virtual.createModule("empty", {
+            columns: [],
+            rows() {
+                return [];
+            },
+        }),
+    "ERR_INVALID_ARG_VALUE",
+    "empty column list",
+);
+throwsCode(
+    () =>
+        virtual.createModule("bad_type", {
+            columns: [{ name: "x", type: "WEIRD" }],
+            rows() {
+                return [];
+            },
+        }),
+    "ERR_INVALID_ARG_VALUE",
+    "invalid column type",
 );
 virtual.close();
 
@@ -361,20 +410,24 @@ virtual.close();
 // ---------------------------------------------------------------------------------------------
 
 const closedExtensions = new sqlite.Database(":memory:");
-throwsCode(() => closedExtensions.enableLoadExtension(true), "ERR_INVALID_STATE", "extension loading is opt-in");
+throwsCode(
+    () => closedExtensions.enableLoadExtension(true),
+    "ERR_INVALID_STATE",
+    "extension loading is opt-in",
+);
 closedExtensions.close();
 const extensions = new sqlite.Database(":memory:", { allowExtension: true });
 extensions.enableLoadExtension(true);
 throwsCode(
-  () => extensions.loadExtension("/definitely-not-a-real-extension.dylib"),
-  "ERR_LOAD_SQLITE_EXTENSION",
-  "missing extension",
+    () => extensions.loadExtension("/definitely-not-a-real-extension.dylib"),
+    "ERR_LOAD_SQLITE_EXTENSION",
+    "missing extension",
 );
 extensions.enableLoadExtension(false);
 throwsCode(
-  () => extensions.loadExtension("/definitely-not-a-real-extension.dylib"),
-  "ERR_INVALID_STATE",
-  "disabled extension loading",
+    () => extensions.loadExtension("/definitely-not-a-real-extension.dylib"),
+    "ERR_INVALID_STATE",
+    "disabled extension loading",
 );
 extensions.close();
 
@@ -399,28 +452,28 @@ record(true, "dispose after close is a no-op");
 // ---------------------------------------------------------------------------------------------
 
 (async () => {
-  const source = new sqlite.Database(":memory:");
-  source.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1), (2)");
-  const target = path.join(os.tmpdir(), `ln-sqlite-test-${process.pid}.db`);
-  const progress = [];
-  try {
-    const pages = await sqlite.backup(source, target, {
-      rate: 1,
-      progress: (entry) => progress.push(entry.totalPages >= entry.remainingPages),
-    });
-    record(typeof pages === "number" && pages > 0, "backup resolves with a page count");
-    record(progress.length > 0 && progress.every(Boolean), "backup reports progress");
-    const copy = new sqlite.Database(target);
-    eq(copy.prepare("SELECT COUNT(*) AS n FROM t").get().n, 2, "backup copies rows");
-    copy.close();
-  } finally {
-    source.close();
-    fs.rmSync(target, { force: true });
-  }
+    const source = new sqlite.Database(":memory:");
+    source.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1), (2)");
+    const target = path.join(os.tmpdir(), `ln-sqlite-test-${process.pid}.db`);
+    const progress = [];
+    try {
+        const pages = await sqlite.backup(source, target, {
+            rate: 1,
+            progress: (entry) => progress.push(entry.totalPages >= entry.remainingPages),
+        });
+        record(typeof pages === "number" && pages > 0, "backup resolves with a page count");
+        record(progress.length > 0 && progress.every(Boolean), "backup reports progress");
+        const copy = new sqlite.Database(target);
+        eq(copy.prepare("SELECT COUNT(*) AS n FROM t").get().n, 2, "backup copies rows");
+        copy.close();
+    } finally {
+        source.close();
+        fs.rmSync(target, { force: true });
+    }
 
-  console.log(`${passed} passed, ${failed} failed`);
-  if (failed !== 0) {
-    for (const failure of failures) console.log(`  fail: ${failure}`);
-    process.exitCode = 1;
-  }
+    console.log(`${passed} passed, ${failed} failed`);
+    if (failed !== 0) {
+        for (const failure of failures) console.log(`  fail: ${failure}`);
+        process.exitCode = 1;
+    }
 })();

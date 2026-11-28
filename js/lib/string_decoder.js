@@ -19,9 +19,9 @@
 
 let textcodec;
 try {
-  textcodec = require("textcodec");
+    textcodec = require("textcodec");
 } catch (_) {
-  textcodec = require("./textcodec.js");
+    textcodec = require("./textcodec.js");
 }
 const decodeUTF8 = textcodec.decodeUTF8;
 
@@ -30,31 +30,28 @@ const EMPTY = new Uint8Array(0);
 // One call per `write` finds the held suffix and decodes the rest in Rust. The JavaScript loop in
 // `_writeUtf8` remains the reference path for the node leg, where `__ln_host` has no `text`.
 const hostText = (() => {
-  const host = globalThis.__ln_host;
-  return host === undefined || host === null || host.text === undefined ? null : host.text;
+    const host = globalThis.__ln_host;
+    return host === undefined || host === null || host.text === undefined ? null : host.text;
 })();
 const decodeStream = hostText === null ? null : hostText.decodeStream;
 
-const {
-  invalidArgType,
-  unknownEncoding,
-} = require("./internal/errors.js");
+const { invalidArgType, unknownEncoding } = require("./internal/errors.js");
 // The stateless codecs, the alias table and the two-byte concatenation live in
 // `internal/bytes.js`; the chunk-boundary state machines below stay here.
 const bytecodec = require("./internal/bytes.js");
 
 function normalizeEncoding(encoding) {
-  if (encoding === undefined || encoding === null || encoding === "") return "utf8";
-  if (typeof encoding !== "string") return null;
-  return bytecodec.canonicalEncoding(encoding);
+    if (encoding === undefined || encoding === null || encoding === "") return "utf8";
+    if (typeof encoding !== "string") return null;
+    return bytecodec.canonicalEncoding(encoding);
 }
 
 function toBytes(value) {
-  const bytes = bytecodec.byteView(value);
-  if (bytes === null) {
-    throw invalidArgType("buf", "an instance of Buffer, ArrayBuffer or ArrayBufferView", value);
-  }
-  return bytes;
+    const bytes = bytecodec.byteView(value);
+    if (bytes === null) {
+        throw invalidArgType("buf", "an instance of Buffer, ArrayBuffer or ArrayBufferView", value);
+    }
+    return bytes;
 }
 
 // Decode one chunk of UTF-8, holding back at most a single incomplete sequence at the end.
@@ -65,302 +62,297 @@ function toBytes(value) {
 // decoded. Matching that split point is what makes `lastNeed`/`lastTotal` agree with Node and
 // keeps invalid sequences reported as one replacement per maximal subpart.
 function utf8SequenceLength(lead) {
-  if (lead <= 0xdf) return 2;
-  if (lead <= 0xef) return 3;
-  return 4;
+    if (lead <= 0xdf) return 2;
+    if (lead <= 0xef) return 3;
+    return 4;
 }
 
 class StringDecoder {
-  constructor(encoding, options) {
-    const normalized = normalizeEncoding(encoding);
-    if (normalized === null) throw unknownEncoding(encoding);
-    this.encoding = normalized;
-    this.lastNeed = 0;
-    this.lastTotal = 0;
-    this._pending = EMPTY;
-    this._pendingByte = -1;
-    this._leadSurrogate = -1;
-    this._options = options === undefined || options === null ? {} : Object(options);
-  }
-
-  write(buffer) {
-    // Legacy Node behaviour: strings pass through untouched.
-    if (typeof buffer === "string") return buffer;
-    const bytes = toBytes(buffer);
-    if (bytes.length === 0) return "";
-
-    let text;
-    switch (this.encoding) {
-      case "utf8":
-        text = this._writeUtf8(bytes);
-        break;
-      case "utf16le":
-        text = this._writeUtf16le(bytes);
-        break;
-      case "base64":
-      case "base64url":
-        text = this._writeBase64(bytes);
-        break;
-      case "hex":
-        text = bytecodec.hexEncode(bytes, 0, bytes.length);
+    constructor(encoding, options) {
+        const normalized = normalizeEncoding(encoding);
+        if (normalized === null) throw unknownEncoding(encoding);
+        this.encoding = normalized;
         this.lastNeed = 0;
         this.lastTotal = 0;
-        break;
-      case "latin1":
-        text = bytecodec.decodeLatin1(bytes, 0, bytes.length);
-        this.lastNeed = 0;
-        this.lastTotal = 0;
-        break;
-      case "ascii":
-        text = bytecodec.decodeAscii(bytes, 0, bytes.length);
-        this.lastNeed = 0;
-        this.lastTotal = 0;
-        break;
-      default:
-        throw unknownEncoding(this.encoding);
-    }
-
-    return text;
-  }
-
-  // Legacy Node method: discard buffered bytes, then decode the rest of `buf`.
-  text(buf, offset) {
-    this._pending = EMPTY;
-    this._pendingByte = -1;
-    this._leadSurrogate = -1;
-    this.lastNeed = 0;
-    this.lastTotal = 0;
-    return this.write(offset === undefined ? buf : buf.slice(offset));
-  }
-
-  end(buffer) {
-    let text = "";
-    if (buffer !== undefined) text = this.write(buffer);
-
-    switch (this.encoding) {
-      case "utf8":
-        if (this._pending.length > 0) {
-          text += decodeUTF8(this._pending);
-          this._pending = EMPTY;
-        }
-        break;
-      case "utf16le":
-        if (this._leadSurrogate >= 0) {
-          text += String.fromCharCode(this._leadSurrogate);
-          this._leadSurrogate = -1;
-        }
-        // A lone trailing byte is dropped, matching Node's utf16le decoder.
+        this._pending = EMPTY;
         this._pendingByte = -1;
-        break;
-      case "base64":
-      case "base64url":
-        if (this._pending.length > 0) {
-          text += bytecodec.base64Encode(
-            this._pending,
-            0,
-            this._pending.length,
-            this.encoding === "base64url",
-          );
-          this._pending = EMPTY;
-        }
-        break;
-      default:
-        break;
+        this._leadSurrogate = -1;
+        this._options = options === undefined || options === null ? {} : Object(options);
     }
 
-    this.lastNeed = 0;
-    this.lastTotal = 0;
-    return text;
-  }
+    write(buffer) {
+        // Legacy Node behaviour: strings pass through untouched.
+        if (typeof buffer === "string") return buffer;
+        const bytes = toBytes(buffer);
+        if (bytes.length === 0) return "";
 
-  _writeUtf8(bytes) {
-    if (typeof decodeStream === "function") {
-      const result = decodeStream(bytes, 0, bytes.length, this._pending, false);
-      this._pending = result.pending;
-      const pending = result.pending;
-      if (pending.length > 0) {
-        this.lastNeed = utf8SequenceLength(pending[0]) - pending.length;
-        this.lastTotal = utf8SequenceLength(pending[0]);
-      } else {
+        let text;
+        switch (this.encoding) {
+            case "utf8":
+                text = this._writeUtf8(bytes);
+                break;
+            case "utf16le":
+                text = this._writeUtf16le(bytes);
+                break;
+            case "base64":
+            case "base64url":
+                text = this._writeBase64(bytes);
+                break;
+            case "hex":
+                text = bytecodec.hexEncode(bytes, 0, bytes.length);
+                this.lastNeed = 0;
+                this.lastTotal = 0;
+                break;
+            case "latin1":
+                text = bytecodec.decodeLatin1(bytes, 0, bytes.length);
+                this.lastNeed = 0;
+                this.lastTotal = 0;
+                break;
+            case "ascii":
+                text = bytecodec.decodeAscii(bytes, 0, bytes.length);
+                this.lastNeed = 0;
+                this.lastTotal = 0;
+                break;
+            default:
+                throw unknownEncoding(this.encoding);
+        }
+
+        return text;
+    }
+
+    // Legacy Node method: discard buffered bytes, then decode the rest of `buf`.
+    text(buf, offset) {
+        this._pending = EMPTY;
+        this._pendingByte = -1;
+        this._leadSurrogate = -1;
         this.lastNeed = 0;
         this.lastTotal = 0;
-      }
-      return result.text;
+        return this.write(offset === undefined ? buf : buf.slice(offset));
     }
 
-    const combined = bytecodec.concatBytes(this._pending, bytes);
-    let out = "";
-    let i = 0;
-    let pending = EMPTY;
-    const sequence = [];
+    end(buffer) {
+        let text = "";
+        if (buffer !== undefined) text = this.write(buffer);
 
-    while (i < combined.length) {
-      const byte = combined[i];
-
-      if (sequence.length === 0) {
-        if (byte < 0x80) {
-          out += String.fromCharCode(byte);
-          i++;
-          continue;
+        switch (this.encoding) {
+            case "utf8":
+                if (this._pending.length > 0) {
+                    text += decodeUTF8(this._pending);
+                    this._pending = EMPTY;
+                }
+                break;
+            case "utf16le":
+                if (this._leadSurrogate >= 0) {
+                    text += String.fromCharCode(this._leadSurrogate);
+                    this._leadSurrogate = -1;
+                }
+                // A lone trailing byte is dropped, matching Node's utf16le decoder.
+                this._pendingByte = -1;
+                break;
+            case "base64":
+            case "base64url":
+                if (this._pending.length > 0) {
+                    text += bytecodec.base64Encode(
+                        this._pending,
+                        0,
+                        this._pending.length,
+                        this.encoding === "base64url",
+                    );
+                    this._pending = EMPTY;
+                }
+                break;
+            default:
+                break;
         }
-        if (byte >= 0xc0 && byte <= 0xf7) {
-          sequence.push(byte);
-          i++;
-          continue;
-        }
-        // A bare continuation byte or an invalid start (0x80-0xBF, 0xF8-0xFF).
-        out += "\ufffd";
-        i++;
-        continue;
-      }
 
-      if (byte >= 0x80 && byte <= 0xbf) {
-        sequence.push(byte);
-        i++;
-        if (sequence.length === utf8SequenceLength(sequence[0])) {
-          out += decodeUTF8(Uint8Array.from(sequence));
-          sequence.length = 0;
-        }
-        continue;
-      }
-
-      // The sequence was interrupted by a non-continuation byte: flush it as an incomplete
-      // maximal subpart and reprocess this byte from scratch.
-      out += decodeUTF8(Uint8Array.from(sequence));
-      sequence.length = 0;
+        this.lastNeed = 0;
+        this.lastTotal = 0;
+        return text;
     }
 
-    if (sequence.length > 0) pending = Uint8Array.from(sequence);
+    _writeUtf8(bytes) {
+        if (typeof decodeStream === "function") {
+            const result = decodeStream(bytes, 0, bytes.length, this._pending, false);
+            this._pending = result.pending;
+            const pending = result.pending;
+            if (pending.length > 0) {
+                this.lastNeed = utf8SequenceLength(pending[0]) - pending.length;
+                this.lastTotal = utf8SequenceLength(pending[0]);
+            } else {
+                this.lastNeed = 0;
+                this.lastTotal = 0;
+            }
+            return result.text;
+        }
 
-    this._pending = pending;
-    if (pending.length > 0) {
-      this.lastNeed = utf8SequenceLength(pending[0]) - pending.length;
-      this.lastTotal = utf8SequenceLength(pending[0]);
-    } else {
-      this.lastNeed = 0;
-      this.lastTotal = 0;
-    }
-    return out;
-  }
+        const combined = bytecodec.concatBytes(this._pending, bytes);
+        let out = "";
+        let i = 0;
+        let pending = EMPTY;
+        const sequence = [];
 
-  _writeUtf16le(bytes) {
-    let out = "";
+        while (i < combined.length) {
+            const byte = combined[i];
 
-    // `lead` is a held high surrogate; `_pendingByte` is a byte waiting for its pair. Node's
-    // native UTF-16 decoder decodes a unit completed from a carried-over byte in isolation, so
-    // such a unit is emitted raw (no surrogate pairing).
-    if (this._leadSurrogate >= 0) {
-      let unit = -1;
-      let consumed = 0;
-      if (this._pendingByte >= 0) {
-        unit = this._pendingByte | (bytes[0] << 8);
-        consumed = 1;
-      } else if (bytes.length >= 2) {
-        unit = bytes[0] | (bytes[1] << 8);
-        consumed = 2;
-      }
+            if (sequence.length === 0) {
+                if (byte < 0x80) {
+                    out += String.fromCharCode(byte);
+                    i++;
+                    continue;
+                }
+                if (byte >= 0xc0 && byte <= 0xf7) {
+                    sequence.push(byte);
+                    i++;
+                    continue;
+                }
+                // A bare continuation byte or an invalid start (0x80-0xBF, 0xF8-0xFF).
+                out += "\ufffd";
+                i++;
+                continue;
+            }
 
-      if (unit < 0) {
-        // Still waiting for the low surrogate: remember the partial byte, if any.
-        if (bytes.length === 1) this._pendingByte = bytes[0];
-        this._setUtf16Counts(this._leadSurrogate, this._pendingByte);
+            if (byte >= 0x80 && byte <= 0xbf) {
+                sequence.push(byte);
+                i++;
+                if (sequence.length === utf8SequenceLength(sequence[0])) {
+                    out += decodeUTF8(Uint8Array.from(sequence));
+                    sequence.length = 0;
+                }
+                continue;
+            }
+
+            // The sequence was interrupted by a non-continuation byte: flush it as an incomplete
+            // maximal subpart and reprocess this byte from scratch.
+            out += decodeUTF8(Uint8Array.from(sequence));
+            sequence.length = 0;
+        }
+
+        if (sequence.length > 0) pending = Uint8Array.from(sequence);
+
+        this._pending = pending;
+        if (pending.length > 0) {
+            this.lastNeed = utf8SequenceLength(pending[0]) - pending.length;
+            this.lastTotal = utf8SequenceLength(pending[0]);
+        } else {
+            this.lastNeed = 0;
+            this.lastTotal = 0;
+        }
         return out;
-      }
-
-      this._pendingByte = -1;
-      if (unit >= 0xdc00 && unit <= 0xdfff) {
-        out += String.fromCharCode(this._leadSurrogate, unit);
-        this._leadSurrogate = -1;
-        return out + this._utf16Rest(bytes.subarray(consumed), -1);
-      }
-
-      out += String.fromCharCode(this._leadSurrogate);
-      this._leadSurrogate = -1;
-      const nextLead = unit >= 0xd800 && unit <= 0xdbff ? unit : -1;
-      if (nextLead < 0) out += String.fromCharCode(unit);
-      return out + this._utf16Rest(bytes.subarray(consumed), nextLead);
     }
 
-    if (this._pendingByte >= 0) {
-      // A standalone odd byte completed by the first byte of this chunk: emitted raw.
-      const unit = this._pendingByte | (bytes[0] << 8);
-      this._pendingByte = -1;
-      out += String.fromCharCode(unit);
-      return out + this._utf16Rest(bytes.subarray(1), -1);
-    }
+    _writeUtf16le(bytes) {
+        let out = "";
 
-    return out + this._utf16Rest(bytes, -1);
-  }
+        // `lead` is a held high surrogate; `_pendingByte` is a byte waiting for its pair. Node's
+        // native UTF-16 decoder decodes a unit completed from a carried-over byte in isolation, so
+        // such a unit is emitted raw (no surrogate pairing).
+        if (this._leadSurrogate >= 0) {
+            let unit = -1;
+            let consumed = 0;
+            if (this._pendingByte >= 0) {
+                unit = this._pendingByte | (bytes[0] << 8);
+                consumed = 1;
+            } else if (bytes.length >= 2) {
+                unit = bytes[0] | (bytes[1] << 8);
+                consumed = 2;
+            }
 
-  _utf16Rest(bytes, initialLead) {
-    let out = "";
-    let lead = initialLead;
-    let position = 0;
+            if (unit < 0) {
+                // Still waiting for the low surrogate: remember the partial byte, if any.
+                if (bytes.length === 1) this._pendingByte = bytes[0];
+                this._setUtf16Counts(this._leadSurrogate, this._pendingByte);
+                return out;
+            }
 
-    for (; position + 1 < bytes.length; position += 2) {
-      const unit = bytes[position] | (bytes[position + 1] << 8);
-      if (lead >= 0) {
-        if (unit >= 0xdc00 && unit <= 0xdfff) {
-          out += String.fromCharCode(lead, unit);
-          lead = -1;
-          continue;
+            this._pendingByte = -1;
+            if (unit >= 0xdc00 && unit <= 0xdfff) {
+                out += String.fromCharCode(this._leadSurrogate, unit);
+                this._leadSurrogate = -1;
+                return out + this._utf16Rest(bytes.subarray(consumed), -1);
+            }
+
+            out += String.fromCharCode(this._leadSurrogate);
+            this._leadSurrogate = -1;
+            const nextLead = unit >= 0xd800 && unit <= 0xdbff ? unit : -1;
+            if (nextLead < 0) out += String.fromCharCode(unit);
+            return out + this._utf16Rest(bytes.subarray(consumed), nextLead);
         }
-        out += String.fromCharCode(lead);
-        lead = -1;
-      }
-      if (unit >= 0xd800 && unit <= 0xdbff) {
-        lead = unit;
-        continue;
-      }
-      out += String.fromCharCode(unit);
+
+        if (this._pendingByte >= 0) {
+            // A standalone odd byte completed by the first byte of this chunk: emitted raw.
+            const unit = this._pendingByte | (bytes[0] << 8);
+            this._pendingByte = -1;
+            out += String.fromCharCode(unit);
+            return out + this._utf16Rest(bytes.subarray(1), -1);
+        }
+
+        return out + this._utf16Rest(bytes, -1);
     }
 
-    if (position < bytes.length) {
-      this._pendingByte = bytes[position];
-      // A trailing odd byte means a prior high surrogate can no longer pair: emit it raw.
-      if (lead >= 0) {
-        out += String.fromCharCode(lead);
-        lead = -1;
-      }
+    _utf16Rest(bytes, initialLead) {
+        let out = "";
+        let lead = initialLead;
+        let position = 0;
+
+        for (; position + 1 < bytes.length; position += 2) {
+            const unit = bytes[position] | (bytes[position + 1] << 8);
+            if (lead >= 0) {
+                if (unit >= 0xdc00 && unit <= 0xdfff) {
+                    out += String.fromCharCode(lead, unit);
+                    lead = -1;
+                    continue;
+                }
+                out += String.fromCharCode(lead);
+                lead = -1;
+            }
+            if (unit >= 0xd800 && unit <= 0xdbff) {
+                lead = unit;
+                continue;
+            }
+            out += String.fromCharCode(unit);
+        }
+
+        if (position < bytes.length) {
+            this._pendingByte = bytes[position];
+            // A trailing odd byte means a prior high surrogate can no longer pair: emit it raw.
+            if (lead >= 0) {
+                out += String.fromCharCode(lead);
+                lead = -1;
+            }
+        }
+
+        this._leadSurrogate = lead;
+        this._setUtf16Counts(lead, this._pendingByte);
+        return out;
     }
 
-    this._leadSurrogate = lead;
-    this._setUtf16Counts(lead, this._pendingByte);
-    return out;
-  }
-
-  _setUtf16Counts(lead, pending) {
-    if (lead >= 0) {
-      this.lastNeed = pending >= 0 ? 1 : 2;
-      this.lastTotal = 4;
-    } else if (pending >= 0) {
-      this.lastNeed = 1;
-      this.lastTotal = 2;
-    } else {
-      this.lastNeed = 0;
-      this.lastTotal = 0;
+    _setUtf16Counts(lead, pending) {
+        if (lead >= 0) {
+            this.lastNeed = pending >= 0 ? 1 : 2;
+            this.lastTotal = 4;
+        } else if (pending >= 0) {
+            this.lastNeed = 1;
+            this.lastTotal = 2;
+        } else {
+            this.lastNeed = 0;
+            this.lastTotal = 0;
+        }
     }
-  }
 
-  _writeBase64(bytes) {
-    const combined = bytecodec.concatBytes(this._pending, bytes);
-    const complete = combined.length - (combined.length % 3);
-    const text = bytecodec.base64Encode(
-      combined,
-      0,
-      complete,
-      this.encoding === "base64url",
-    );
-    this._pending = complete === combined.length ? EMPTY : combined.slice(complete);
-    if (this._pending.length > 0) {
-      this.lastNeed = 3 - this._pending.length;
-      this.lastTotal = 3;
-    } else {
-      this.lastNeed = 0;
-      this.lastTotal = 0;
+    _writeBase64(bytes) {
+        const combined = bytecodec.concatBytes(this._pending, bytes);
+        const complete = combined.length - (combined.length % 3);
+        const text = bytecodec.base64Encode(combined, 0, complete, this.encoding === "base64url");
+        this._pending = complete === combined.length ? EMPTY : combined.slice(complete);
+        if (this._pending.length > 0) {
+            this.lastNeed = 3 - this._pending.length;
+            this.lastTotal = 3;
+        } else {
+            this.lastNeed = 0;
+            this.lastTotal = 0;
+        }
+        return text;
     }
-    return text;
-  }
 }
 
 module.exports = { StringDecoder };

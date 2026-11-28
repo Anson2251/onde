@@ -8,8 +8,8 @@
 // onde.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: onde host unavailable");
-  process.exit(0);
+    console.log("skip: onde host unavailable");
+    process.exit(0);
 }
 
 const asyncHooks = require("async_hooks");
@@ -19,35 +19,35 @@ let failed = 0;
 const failures = [];
 
 function record(condition, detail) {
-  if (condition) {
-    passed += 1;
-  } else {
-    failed += 1;
-    failures.push(detail);
-  }
+    if (condition) {
+        passed += 1;
+    } else {
+        failed += 1;
+        failures.push(detail);
+    }
 }
 
 function codeOf(fn) {
-  try {
-    fn();
-  } catch (error) {
-    return error.code;
-  }
-  return null;
+    try {
+        fn();
+    } catch (error) {
+        return error.code;
+    }
+    return null;
 }
 
 // --- module surface --------------------------------------------------------------------------
 
 for (const name of [
-  "AsyncLocalStorage",
-  "AsyncResource",
-  "createHook",
-  "executionAsyncId",
-  "executionAsyncResource",
-  "triggerAsyncId",
-  "asyncWrapProviders",
+    "AsyncLocalStorage",
+    "AsyncResource",
+    "createHook",
+    "executionAsyncId",
+    "executionAsyncResource",
+    "triggerAsyncId",
+    "asyncWrapProviders",
 ]) {
-  record(typeof asyncHooks[name] !== "undefined", `export ${name}`);
+    record(typeof asyncHooks[name] !== "undefined", `export ${name}`);
 }
 
 record(asyncHooks.executionAsyncId() === 1, "root executionAsyncId is 1");
@@ -61,7 +61,10 @@ record(typeof hook.enable === "function", "hook.enable");
 record(typeof hook.disable === "function", "hook.disable");
 record(hook.enable() === hook, "enable returns the hook");
 record(hook.disable() === hook, "disable returns the hook");
-record(codeOf(() => asyncHooks.createHook({ init: 1 })) === "ERR_ASYNC_CALLBACK", "init validation");
+record(
+    codeOf(() => asyncHooks.createHook({ init: 1 })) === "ERR_ASYNC_CALLBACK",
+    "init validation",
+);
 record(codeOf(() => asyncHooks.createHook(null)) === "ERR_INVALID_ARG_TYPE", "options validation");
 
 // --- AsyncResource ---------------------------------------------------------------------------
@@ -72,15 +75,15 @@ record(resource.triggerAsyncId() === 1, "resource trigger");
 
 let scopeId = 0;
 const scoped = resource.runInAsyncScope(() => {
-  scopeId = asyncHooks.executionAsyncId();
-  return "value";
+    scopeId = asyncHooks.executionAsyncId();
+    return "value";
 });
 record(scoped === "value", "runInAsyncScope returns the value");
 record(scopeId === resource.asyncId(), "runInAsyncScope context");
 record(asyncHooks.executionAsyncId() === 1, "runInAsyncScope restores");
 
 const bound = resource.bind(function named(a, b) {
-  return [a, b, asyncHooks.executionAsyncId(), this && this.tag];
+    return [a, b, asyncHooks.executionAsyncId(), this && this.tag];
 });
 const boundResult = bound.call({ tag: "ignored" }, 1, 2);
 record(boundResult[0] === 1 && boundResult[1] === 2, "bind forwards arguments");
@@ -104,7 +107,7 @@ als.disable();
 record(als.getStore() === undefined, "disable clears");
 
 const scope = als.withScope("scoped", () => {
-  record(als.getStore() === "scoped", "withScope binds inside");
+    record(als.getStore() === "scoped", "withScope binds inside");
 });
 record(als.getStore() === "scoped", "withScope keeps the binding until dispose");
 scope.dispose();
@@ -116,9 +119,9 @@ record(codeOf(() => als.exit(1)) === "ERR_INVALID_ARG_TYPE" || true, "exit toler
 // --- report ----------------------------------------------------------------------------------
 
 if (failed === 0) {
-  console.log(`ok: ${passed} assertions`);
+    console.log(`ok: ${passed} assertions`);
 } else {
-  console.log(`not ok: ${failed} of ${passed + failed} assertions failed`);
-  for (const failure of failures) console.log(`  - ${failure}`);
-  process.exitCode = 1;
+    console.log(`not ok: ${failed} of ${passed + failed} assertions failed`);
+    for (const failure of failures) console.log(`  - ${failure}`);
+    process.exitCode = 1;
 }

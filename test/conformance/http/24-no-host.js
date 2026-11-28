@@ -8,26 +8,28 @@ const net = require("net");
 
 let requests = 0;
 const server = http.createServer((req, res) => {
-  requests += 1;
-  res.end("ok");
+    requests += 1;
+    res.end("ok");
 });
 
 function request(port, head) {
-  return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1", () => socket.write(head));
-    let data = "";
-    socket.setEncoding("latin1");
-    socket.on("data", (chunk) => {
-      data += chunk;
+    return new Promise((resolve) => {
+        const socket = net.connect(port, "127.0.0.1", () => socket.write(head));
+        let data = "";
+        socket.setEncoding("latin1");
+        socket.on("data", (chunk) => {
+            data += chunk;
+        });
+        socket.on("close", () => resolve(data.split("\r\n")[0]));
     });
-    socket.on("close", () => resolve(data.split("\r\n")[0]));
-  });
 }
 
 server.listen(0, "127.0.0.1", async () => {
-  const port = server.address().port;
-  console.log(`no-host:${await request(port, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n")}`);
-  console.log(`with-host:${await request(port, "GET / HTTP/1.1\r\nHost: example\r\nConnection: close\r\n\r\n")}`);
-  console.log(`requests:${requests}`);
-  server.close();
+    const port = server.address().port;
+    console.log(`no-host:${await request(port, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n")}`);
+    console.log(
+        `with-host:${await request(port, "GET / HTTP/1.1\r\nHost: example\r\nConnection: close\r\n\r\n")}`,
+    );
+    console.log(`requests:${requests}`);
+    server.close();
 });

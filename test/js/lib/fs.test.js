@@ -10,17 +10,17 @@
 // printed: failures name the assertion, not a path.
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: onde host unavailable");
-  process.exit(0);
+    console.log("skip: onde host unavailable");
+    process.exit(0);
 }
 
 // Prefer the registered builtin (the real path users take); fall back to the file for a
 // checkout run before the registry entry exists.
 let fs;
 try {
-  fs = require("fs");
+    fs = require("fs");
 } catch (_) {
-  fs = require("../../../js/lib/fs.js");
+    fs = require("../../../js/lib/fs.js");
 }
 const os = require("os");
 const path = require("path");
@@ -30,41 +30,38 @@ let failed = 0;
 const failures = [];
 
 function record(condition, detail) {
-  if (condition) {
-    passed += 1;
-  } else {
-    failed += 1;
-    failures.push(detail);
-  }
+    if (condition) {
+        passed += 1;
+    } else {
+        failed += 1;
+        failures.push(detail);
+    }
 }
 
 function ok(value, message) {
-  record(Boolean(value), `${message} (expected truthy, got ${String(value)})`);
+    record(Boolean(value), `${message} (expected truthy, got ${String(value)})`);
 }
 
 function eq(actual, expected, message) {
-  record(
-    actual === expected,
-    `${message} (expected ${String(expected)}, got ${String(actual)})`,
-  );
+    record(actual === expected, `${message} (expected ${String(expected)}, got ${String(actual)})`);
 }
 
 function throwsCode(fn, code, message) {
-  try {
-    fn();
-    record(false, `${message} (expected a throw)`);
-    return undefined;
-  } catch (error) {
-    record(
-      error !== null && typeof error === "object" && error.code === code,
-      `${message} (code was ${error && error.code})`,
-    );
-    return error;
-  }
+    try {
+        fn();
+        record(false, `${message} (expected a throw)`);
+        return undefined;
+    } catch (error) {
+        record(
+            error !== null && typeof error === "object" && error.code === code,
+            `${message} (code was ${error && error.code})`,
+        );
+        return error;
+    }
 }
 
 function basename(value) {
-  return value === undefined || value === null ? String(value) : path.basename(String(value));
+    return value === undefined || value === null ? String(value) : path.basename(String(value));
 }
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onde-fs-"));
@@ -109,9 +106,9 @@ fs.appendFileSync(file, "!");
 eq(fs.readFileSync(file, "utf8"), "bytes!", "appendFileSync appends");
 
 const missing = throwsCode(
-  () => fs.readFileSync(path.join(dir, "missing.txt")),
-  "ENOENT",
-  "readFileSync ENOENT is reproducible",
+    () => fs.readFileSync(path.join(dir, "missing.txt")),
+    "ENOENT",
+    "readFileSync ENOENT is reproducible",
 );
 ok(missing.errno < 0, "ENOENT errno is negative");
 eq(missing.syscall, "open", "ENOENT syscall is open");
@@ -119,27 +116,39 @@ eq(basename(missing.path), "missing.txt", "ENOENT path is the requested path");
 
 throwsCode(() => fs.readFileSync(dir), "EISDIR", "readFileSync on a directory throws EISDIR");
 throwsCode(
-  () => fs.writeFileSync(file, 123),
-  "ERR_INVALID_ARG_TYPE",
-  "writeFileSync rejects a non-buffer data argument",
+    () => fs.writeFileSync(file, 123),
+    "ERR_INVALID_ARG_TYPE",
+    "writeFileSync rejects a non-buffer data argument",
 );
 throwsCode(
-  () => fs.readFileSync(file, { encoding: "not-an-encoding" }),
-  "ERR_INVALID_ARG_VALUE",
-  "readFileSync rejects an unknown encoding",
+    () => fs.readFileSync(file, { encoding: "not-an-encoding" }),
+    "ERR_INVALID_ARG_VALUE",
+    "readFileSync rejects an unknown encoding",
 );
 
 // ---------------------------------------------------------------------------------------------
 // mkdir / mkdtemp
 
 const nested = path.join(dir, "one/two/three");
-eq(fs.mkdirSync(nested, { recursive: true }), path.join(dir, "one"), "mkdirSync recursive returns the first created path");
-eq(fs.mkdirSync(nested, { recursive: true }), undefined, "mkdirSync recursive returns undefined when it exists");
-eq(fs.mkdirSync(path.join(dir, "plain")), undefined, "mkdirSync returns undefined unless recursive");
+eq(
+    fs.mkdirSync(nested, { recursive: true }),
+    path.join(dir, "one"),
+    "mkdirSync recursive returns the first created path",
+);
+eq(
+    fs.mkdirSync(nested, { recursive: true }),
+    undefined,
+    "mkdirSync recursive returns undefined when it exists",
+);
+eq(
+    fs.mkdirSync(path.join(dir, "plain")),
+    undefined,
+    "mkdirSync returns undefined unless recursive",
+);
 throwsCode(
-  () => fs.mkdirSync(file, { recursive: true }),
-  "EEXIST",
-  "mkdirSync recursive on a file throws EEXIST",
+    () => fs.mkdirSync(file, { recursive: true }),
+    "EEXIST",
+    "mkdirSync recursive on a file throws EEXIST",
 );
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "onde-fs-tmp-"));
 ok(path.basename(temp).startsWith("onde-fs-tmp-"), "mkdtempSync returns a path under the prefix");
@@ -164,7 +173,10 @@ eq(byName.get("a.txt").parentPath, dir, "Dirent.parentPath is the directory");
 eq(byName.get("a.txt") instanceof fs.Dirent, true, "readdir returns Dirent instances");
 
 const recursiveNames = fs.readdirSync(dir, { recursive: true }).sort();
-ok(recursiveNames.includes(path.join("one", "two", "three")), "readdirSync recursive returns relative paths");
+ok(
+    recursiveNames.includes(path.join("one", "two", "three")),
+    "readdirSync recursive returns relative paths",
+);
 ok(recursiveNames.includes(path.join("subdir")), "readdirSync recursive includes directories");
 
 const iterated = fs.opendirSync(dir);
@@ -176,7 +188,11 @@ while (iterated.readSync() !== null) remaining += 1;
 eq(remaining, names.length, "Dir.readSync yields every entry");
 eq(iterated.readSync(), null, "Dir.readSync returns null at the end");
 iterated.closeSync();
-throwsCode(() => iterated.readSync(), "ERR_DIR_CLOSED", "Dir.readSync after close throws ERR_DIR_CLOSED");
+throwsCode(
+    () => iterated.readSync(),
+    "ERR_DIR_CLOSED",
+    "Dir.readSync after close throws ERR_DIR_CLOSED",
+);
 
 // ---------------------------------------------------------------------------------------------
 // stat / lstat / fstat / access / chmod / truncate / utimes
@@ -187,8 +203,16 @@ ok(statOfFile.size > 0, "statSync size");
 ok(statOfFile.atime instanceof Date, "Stats.atime is a Date");
 ok(statOfFile.mtime instanceof Date, "Stats.mtime is a Date");
 eq(fs.statSync(path.join(dir, "link")).isFile(), true, "statSync follows symlinks");
-eq(fs.lstatSync(path.join(dir, "link")).isSymbolicLink(), true, "lstatSync does not follow symlinks");
-eq(fs.statSync(path.join(dir, "nope"), { throwIfNoEntry: false }), undefined, "statSync throwIfNoEntry false returns undefined");
+eq(
+    fs.lstatSync(path.join(dir, "link")).isSymbolicLink(),
+    true,
+    "lstatSync does not follow symlinks",
+);
+eq(
+    fs.statSync(path.join(dir, "nope"), { throwIfNoEntry: false }),
+    undefined,
+    "statSync throwIfNoEntry false returns undefined",
+);
 throwsCode(() => fs.statSync(path.join(dir, "nope")), "ENOENT", "statSync throws ENOENT");
 
 const fd = fs.openSync(file, "r+");
@@ -199,7 +223,11 @@ eq(fs.fstatSync(fd).size, 2, "ftruncateSync truncates");
 fs.closeSync(fd);
 
 fs.accessSync(file);
-throwsCode(() => fs.accessSync(path.join(dir, "missing-again")), "ENOENT", "accessSync throws ENOENT");
+throwsCode(
+    () => fs.accessSync(path.join(dir, "missing-again")),
+    "ENOENT",
+    "accessSync throws ENOENT",
+);
 eq(fs.existsSync(file), true, "existsSync true for a file");
 eq(fs.existsSync(path.join(dir, "missing-again")), false, "existsSync false for a missing path");
 
@@ -246,19 +274,31 @@ fs.closeSync(wvFd);
 throwsCode(() => fs.closeSync(12345), "EBADF", "closeSync on an unknown descriptor throws EBADF");
 const doubleFd = fs.openSync(file, "r");
 fs.closeSync(doubleFd);
-throwsCode(() => fs.closeSync(doubleFd), "EBADF", "closing an already closed descriptor throws EBADF");
+throwsCode(
+    () => fs.closeSync(doubleFd),
+    "EBADF",
+    "closing an already closed descriptor throws EBADF",
+);
 
 // ---------------------------------------------------------------------------------------------
 // links / realpath
 
 const linkPath = path.join(dir, "hardlink");
 fs.linkSync(file, linkPath);
-eq(fs.readFileSync(linkPath, "utf8"), fs.readFileSync(file, "utf8"), "linkSync creates a hard link");
+eq(
+    fs.readFileSync(linkPath, "utf8"),
+    fs.readFileSync(file, "utf8"),
+    "linkSync creates a hard link",
+);
 
 const symlinkPath = path.join(dir, "sym");
 fs.symlinkSync(file, symlinkPath);
 eq(fs.readlinkSync(symlinkPath), file, "readlinkSync returns the target");
-eq(fs.readlinkSync(symlinkPath, { encoding: "buffer" }) instanceof Uint8Array, true, "readlinkSync encoding buffer returns bytes");
+eq(
+    fs.readlinkSync(symlinkPath, { encoding: "buffer" }) instanceof Uint8Array,
+    true,
+    "readlinkSync encoding buffer returns bytes",
+);
 const resolved = fs.realpathSync(symlinkPath);
 ok(path.isAbsolute(resolved), "realpathSync returns an absolute path");
 
@@ -271,9 +311,9 @@ fs.writeFileSync(copySource, "copy me");
 fs.copyFileSync(copySource, copyTarget);
 eq(fs.readFileSync(copyTarget, "utf8"), "copy me", "copyFileSync copies");
 throwsCode(
-  () => fs.copyFileSync(copySource, copyTarget, fs.constants.COPYFILE_EXCL),
-  "EEXIST",
-  "copyFileSync COPYFILE_EXCL refuses an existing destination",
+    () => fs.copyFileSync(copySource, copyTarget, fs.constants.COPYFILE_EXCL),
+    "EEXIST",
+    "copyFileSync COPYFILE_EXCL refuses an existing destination",
 );
 
 const cpSource = path.join(dir, "cp-src");
@@ -281,11 +321,15 @@ fs.mkdirSync(path.join(cpSource, "inner"), { recursive: true });
 fs.writeFileSync(path.join(cpSource, "inner", "x.txt"), "X");
 const cpTarget = path.join(dir, "cp-dst");
 fs.cpSync(cpSource, cpTarget, { recursive: true });
-eq(fs.readFileSync(path.join(cpTarget, "inner", "x.txt"), "utf8"), "X", "cpSync copies recursively");
+eq(
+    fs.readFileSync(path.join(cpTarget, "inner", "x.txt"), "utf8"),
+    "X",
+    "cpSync copies recursively",
+);
 throwsCode(
-  () => fs.cpSync(cpSource, path.join(cpSource, "inner", "self"), { recursive: true }),
-  "ERR_FS_CP_EINVAL",
-  "cpSync refuses to copy a directory into itself",
+    () => fs.cpSync(cpSource, path.join(cpSource, "inner", "self"), { recursive: true }),
+    "ERR_FS_CP_EINVAL",
+    "cpSync refuses to copy a directory into itself",
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -320,310 +364,343 @@ fs.rmSync(path.join(dir, "never-existed"), { force: true });
 // No test in this file ever targets ".", ".." or the process cwd.
 
 {
-  const target = path.join(dir, "meta.txt");
-  const link = path.join(dir, "meta-link");
-  fs.writeFileSync(target, "meta");
-  fs.symlinkSync(target, link);
+    const target = path.join(dir, "meta.txt");
+    const link = path.join(dir, "meta-link");
+    fs.writeFileSync(target, "meta");
+    fs.symlinkSync(target, link);
 
-  const targetBefore = fs.statSync(target).mtimeMs;
-  fs.lutimesSync(link, 1000000, 2000000);
-  eq(Math.round(fs.lstatSync(link).mtimeMs / 1000), 2000000, "lutimesSync changes the link mtime");
-  eq(fs.statSync(target).mtimeMs, targetBefore, "lutimesSync leaves the target alone");
+    const targetBefore = fs.statSync(target).mtimeMs;
+    fs.lutimesSync(link, 1000000, 2000000);
+    eq(
+        Math.round(fs.lstatSync(link).mtimeMs / 1000),
+        2000000,
+        "lutimesSync changes the link mtime",
+    );
+    eq(fs.statSync(target).mtimeMs, targetBefore, "lutimesSync leaves the target alone");
 
-  if (process.platform === "darwin") {
-    fs.lchmodSync(link, 0o600);
-    eq(fs.lstatSync(link).mode & 0o777, 0o600, "lchmodSync changes the link mode");
-  } else {
-    throwsCode(() => fs.lchmodSync(link, 0o600), "ENOSYS", "lchmodSync is ENOSYS off macOS");
-  }
+    if (process.platform === "darwin") {
+        fs.lchmodSync(link, 0o600);
+        eq(fs.lstatSync(link).mode & 0o777, 0o600, "lchmodSync changes the link mode");
+    } else {
+        throwsCode(() => fs.lchmodSync(link, 0o600), "ENOSYS", "lchmodSync is ENOSYS off macOS");
+    }
 
-  fs.lchownSync(link, process.getuid(), process.getgid());
-  eq(fs.lstatSync(link).isSymbolicLink(), true, "lchownSync keeps the link a link");
+    fs.lchownSync(link, process.getuid(), process.getgid());
+    eq(fs.lstatSync(link).isSymbolicLink(), true, "lchownSync keeps the link a link");
 
-  const stats = fs.statfsSync(dir);
-  eq(
-    Object.keys(stats).join(","),
-    "type,bsize,frsize,blocks,bfree,bavail,files,ffree",
-    "statfsSync keys match Node",
-  );
-  ok(stats.bsize > 0, "statfsSync bsize is positive");
-  ok(stats.blocks > 0, "statfsSync blocks is positive");
-  eq(stats.constructor.name, "StatsFs", "statfsSync returns StatsFs");
-  eq(typeof fs.statfsSync(dir, { bigint: true }).blocks, "bigint", "statfsSync bigint option");
+    const stats = fs.statfsSync(dir);
+    eq(
+        Object.keys(stats).join(","),
+        "type,bsize,frsize,blocks,bfree,bavail,files,ffree",
+        "statfsSync keys match Node",
+    );
+    ok(stats.bsize > 0, "statfsSync bsize is positive");
+    ok(stats.blocks > 0, "statfsSync blocks is positive");
+    eq(stats.constructor.name, "StatsFs", "statfsSync returns StatsFs");
+    eq(typeof fs.statfsSync(dir, { bigint: true }).blocks, "bigint", "statfsSync bigint option");
 
-  const disposable = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "onde-fs-disp-"));
-  ok(fs.existsSync(disposable.path), "mkdtempDisposableSync creates its directory");
-  eq(typeof disposable.remove, "function", "mkdtempDisposableSync has remove()");
-  disposable.remove();
-  eq(fs.existsSync(disposable.path), false, "mkdtempDisposableSync remove deletes it");
-  disposable.remove();
-  ok(true, "mkdtempDisposableSync remove is idempotent");
+    const disposable = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "onde-fs-disp-"));
+    ok(fs.existsSync(disposable.path), "mkdtempDisposableSync creates its directory");
+    eq(typeof disposable.remove, "function", "mkdtempDisposableSync has remove()");
+    disposable.remove();
+    eq(fs.existsSync(disposable.path), false, "mkdtempDisposableSync remove deletes it");
+    disposable.remove();
+    ok(true, "mkdtempDisposableSync remove is idempotent");
 }
 
 async function asyncChecks() {
-  // callback statfs/lutimes (the sync forms are covered above)
-  await new Promise((resolve) => {
-    fs.statfs(dir, (error, stats) => {
-      eq(error, null, "statfs callback error is null");
-      ok(stats !== undefined && stats.bsize > 0, "statfs callback returns StatsFs");
-      resolve();
+    // callback statfs/lutimes (the sync forms are covered above)
+    await new Promise((resolve) => {
+        fs.statfs(dir, (error, stats) => {
+            eq(error, null, "statfs callback error is null");
+            ok(stats !== undefined && stats.bsize > 0, "statfs callback returns StatsFs");
+            resolve();
+        });
     });
-  });
-  await new Promise((resolve) => {
-    fs.lutimes(path.join(dir, "meta-link"), 1000000, 2000000, (error) => {
-      eq(error, null, "lutimes callback error is null");
-      resolve();
+    await new Promise((resolve) => {
+        fs.lutimes(path.join(dir, "meta-link"), 1000000, 2000000, (error) => {
+            eq(error, null, "lutimes callback error is null");
+            resolve();
+        });
     });
-  });
 
-  // callback read: (err, bytesRead, buffer)
-  fs.writeFileSync(file, "0123456789");
-  await new Promise((resolve, reject) => {
-    fs.open(file, "r", (openError, openedFd) => {
-      if (openError) return reject(openError);
-      fs.read(openedFd, Buffer.alloc(4), 0, 2, 2, (error, count, buffer) => {
-        try {
-          eq(error, null, "read callback error is null");
-          eq(count, 2, "read callback bytesRead");
-          eq(buffer.toString("utf8", 0, 2), "23", "read callback returns the buffer");
-        } catch (failure) {
-          return reject(failure);
-        }
-        fs.close(openedFd, () => resolve());
-      });
+    // callback read: (err, bytesRead, buffer)
+    fs.writeFileSync(file, "0123456789");
+    await new Promise((resolve, reject) => {
+        fs.open(file, "r", (openError, openedFd) => {
+            if (openError) return reject(openError);
+            fs.read(openedFd, Buffer.alloc(4), 0, 2, 2, (error, count, buffer) => {
+                try {
+                    eq(error, null, "read callback error is null");
+                    eq(count, 2, "read callback bytesRead");
+                    eq(buffer.toString("utf8", 0, 2), "23", "read callback returns the buffer");
+                } catch (failure) {
+                    return reject(failure);
+                }
+                fs.close(openedFd, () => resolve());
+            });
+        });
     });
-  });
 
-  // callback write: (err, bytesWritten, buffer)
-  await new Promise((resolve, reject) => {
-    fs.open(file, "r+", (openError, openedFd) => {
-      if (openError) return reject(openError);
-      fs.write(openedFd, Buffer.from("AB"), 0, 2, 0, (error, count, buffer) => {
-        try {
-          eq(error, null, "write callback error is null");
-          eq(count, 2, "write callback bytesWritten");
-          eq(buffer instanceof Uint8Array, true, "write callback returns the buffer");
-        } catch (failure) {
-          return reject(failure);
-        }
-        fs.close(openedFd, () => resolve());
-      });
+    // callback write: (err, bytesWritten, buffer)
+    await new Promise((resolve, reject) => {
+        fs.open(file, "r+", (openError, openedFd) => {
+            if (openError) return reject(openError);
+            fs.write(openedFd, Buffer.from("AB"), 0, 2, 0, (error, count, buffer) => {
+                try {
+                    eq(error, null, "write callback error is null");
+                    eq(count, 2, "write callback bytesWritten");
+                    eq(buffer instanceof Uint8Array, true, "write callback returns the buffer");
+                } catch (failure) {
+                    return reject(failure);
+                }
+                fs.close(openedFd, () => resolve());
+            });
+        });
     });
-  });
-  eq(fs.readFileSync(file, "utf8").slice(0, 2), "AB", "callback write lands");
+    eq(fs.readFileSync(file, "utf8").slice(0, 2), "AB", "callback write lands");
 
-  // callback readv/writev
-  await new Promise((resolve, reject) => {
-    fs.open(file, "r", (openError, openedFd) => {
-      if (openError) return reject(openError);
-      fs.readv(openedFd, [Buffer.alloc(2), Buffer.alloc(2)], 0, (error, count, buffers) => {
-        try {
-          eq(error, null, "readv callback error is null");
-          eq(count, 4, "readv callback bytesRead");
-          eq(buffers.length, 2, "readv callback returns the buffers");
-        } catch (failure) {
-          return reject(failure);
-        }
-        fs.close(openedFd, () => resolve());
-      });
+    // callback readv/writev
+    await new Promise((resolve, reject) => {
+        fs.open(file, "r", (openError, openedFd) => {
+            if (openError) return reject(openError);
+            fs.readv(openedFd, [Buffer.alloc(2), Buffer.alloc(2)], 0, (error, count, buffers) => {
+                try {
+                    eq(error, null, "readv callback error is null");
+                    eq(count, 4, "readv callback bytesRead");
+                    eq(buffers.length, 2, "readv callback returns the buffers");
+                } catch (failure) {
+                    return reject(failure);
+                }
+                fs.close(openedFd, () => resolve());
+            });
+        });
     });
-  });
 
-  // readdir async
-  const asyncNames = await new Promise((resolve, reject) => {
-    fs.readdir(dir, { withFileTypes: true }, (error, entries) => {
-      if (error) return reject(error);
-      resolve(entries);
+    // readdir async
+    const asyncNames = await new Promise((resolve, reject) => {
+        fs.readdir(dir, { withFileTypes: true }, (error, entries) => {
+            if (error) return reject(error);
+            resolve(entries);
+        });
     });
-  });
-  ok(asyncNames.some((entry) => entry.name === "a.txt" && entry.isFile()), "readdir callback with Dirents");
+    ok(
+        asyncNames.some((entry) => entry.name === "a.txt" && entry.isFile()),
+        "readdir callback with Dirents",
+    );
 
-  // error delivery: invalid argument throws synchronously, syscall failure reaches the callback
-  let threw = false;
-  try {
-    fs.readFile(file, 123, () => {});
-  } catch (error) {
-    threw = error && error.code === "ERR_INVALID_ARG_TYPE";
-  }
-  eq(threw, true, "callback form throws synchronously on a bad argument");
-  let callbackError = null;
-  await new Promise((resolve) => {
-    fs.readFile(path.join(dir, "absent"), (error) => {
-      callbackError = error;
-      resolve();
+    // error delivery: invalid argument throws synchronously, syscall failure reaches the callback
+    let threw = false;
+    try {
+        fs.readFile(file, 123, () => {});
+    } catch (error) {
+        threw = error && error.code === "ERR_INVALID_ARG_TYPE";
+    }
+    eq(threw, true, "callback form throws synchronously on a bad argument");
+    let callbackError = null;
+    await new Promise((resolve) => {
+        fs.readFile(path.join(dir, "absent"), (error) => {
+            callbackError = error;
+            resolve();
+        });
     });
-  });
-  eq(callbackError && callbackError.code, "ENOENT", "callback form delivers ENOENT through the callback");
+    eq(
+        callbackError && callbackError.code,
+        "ENOENT",
+        "callback form delivers ENOENT through the callback",
+    );
 
-  // exists callback
-  const existsResults = [];
-  await new Promise((resolve) => fs.exists(file, (value) => { existsResults.push(value); resolve(); }));
-  await new Promise((resolve) => fs.exists(path.join(dir, "absent"), (value) => { existsResults.push(value); resolve(); }));
-  eq(existsResults.join(","), "true,false", "exists callback reports booleans");
+    // exists callback
+    const existsResults = [];
+    await new Promise((resolve) =>
+        fs.exists(file, (value) => {
+            existsResults.push(value);
+            resolve();
+        }),
+    );
+    await new Promise((resolve) =>
+        fs.exists(path.join(dir, "absent"), (value) => {
+            existsResults.push(value);
+            resolve();
+        }),
+    );
+    eq(existsResults.join(","), "true,false", "exists callback reports booleans");
 
-  // stat callback
-  const statValue = await new Promise((resolve, reject) => {
-    fs.stat(file, (error, value) => (error ? reject(error) : resolve(value)));
-  });
-  eq(statValue.isFile(), true, "stat callback returns a Stats");
-
-  // opendir callback
-  const dirHandle = await new Promise((resolve, reject) => {
-    fs.opendir(dir, (error, value) => (error ? reject(error) : resolve(value)));
-  });
-  ok((await dirHandle.read()) !== null, "opendir callback returns a readable Dir");
-  await dirHandle.close();
-
-  // streams
-  fs.writeFileSync(file, "stream-body");
-  const readChunks = [];
-  await new Promise((resolve, reject) => {
-    const stream = fs.createReadStream(file, { start: 0, end: 5 });
-    stream.on("data", (chunk) => readChunks.push(chunk.toString()));
-    stream.on("end", resolve);
-    stream.on("error", reject);
-  });
-  eq(readChunks.join(""), "stream", "createReadStream honours start/end");
-  ok(streamInstanceSeen(), "createReadStream returns a ReadStream");
-
-  await new Promise((resolve, reject) => {
-    const stream = fs.createWriteStream(path.join(dir, "stream-out.txt"));
-    stream.on("error", reject);
-    stream.on("close", resolve);
-    stream.end("written-by-stream");
-  });
-  eq(fs.readFileSync(path.join(dir, "stream-out.txt"), "utf8"), "written-by-stream", "createWriteStream writes");
-
-  // flow with a plain data listener (no manual read())
-  fs.writeFileSync(path.join(dir, "stream-big.txt"), "x".repeat(200000));
-  const big = await new Promise((resolve, reject) => {
-    let text = "";
-    const stream = fs.createReadStream(path.join(dir, "stream-big.txt"));
-    stream.on("data", (chunk) => (text += chunk));
-    stream.on("end", () => resolve(text));
-    stream.on("error", reject);
-  });
-  eq(big.length, 200000, "createReadStream reads a multi-chunk file to the end");
-
-  // watchFile / unwatchFile
-  const watched = path.join(dir, "watched.txt");
-  fs.writeFileSync(watched, "1");
-  let changes = 0;
-  fs.watchFile(watched, { interval: 10 }, () => {
-    changes += 1;
-  });
-  await delay(30);
-  fs.writeFileSync(watched, "22");
-  await delay(100);
-  fs.unwatchFile(watched);
-  ok(changes > 0, "watchFile reports a change");
-  const changesAfter = changes;
-  fs.writeFileSync(watched, "333");
-  await delay(60);
-  eq(changes, changesAfter, "unwatchFile stops reporting");
-
-  // watch
-  const watched2 = path.join(dir, "watch-event.txt");
-  fs.writeFileSync(watched2, "1");
-  const event = await new Promise((resolve, reject) => {
-    const watcher = fs.watch(watched2, { interval: 20 }, (eventType, name) => {
-      watcher.close();
-      resolve({ eventType, name });
+    // stat callback
+    const statValue = await new Promise((resolve, reject) => {
+        fs.stat(file, (error, value) => (error ? reject(error) : resolve(value)));
     });
-    watcher.on("error", reject);
-    setTimeout(() => fs.writeFileSync(watched2, "changed"), 30);
-  });
-  eq(event.eventType === "change" || event.eventType === "rename", true, "fs.watch emits a change event");
-  eq(path.basename(event.name), basename(watched2), "fs.watch reports the file name");
+    eq(statValue.isFile(), true, "stat callback returns a Stats");
 
-  // realpath.native callback form
-  await new Promise((resolve, reject) => {
-    fs.realpath.native(symlinkPath, (error, value) => {
-      try {
-        eq(error, null, "realpath.native callback error is null");
-        eq(value, resolved, "realpath.native resolves the same path");
-      } catch (failure) {
-        return reject(failure);
-      }
-      resolve();
+    // opendir callback
+    const dirHandle = await new Promise((resolve, reject) => {
+        fs.opendir(dir, (error, value) => (error ? reject(error) : resolve(value)));
     });
-  });
+    ok((await dirHandle.read()) !== null, "opendir callback returns a readable Dir");
+    await dirHandle.close();
 
-  // AbortSignal: promise form rejects with ABORT_ERR while the op is in flight
-  fs.writeFileSync(path.join(dir, "big.txt"), "y".repeat(4 * 1024 * 1024));
-  const controller = new AbortController();
-  const aborted = fs.promises.readFile(path.join(dir, "big.txt"), { signal: controller.signal });
-  controller.abort();
-  let abortError = null;
-  try {
-    await aborted;
-  } catch (error) {
-    abortError = error;
-  }
-  eq(abortError && abortError.code, "ABORT_ERR", "AbortSignal rejects with ABORT_ERR");
-  eq(abortError && abortError.name, "AbortError", "AbortSignal rejection is an AbortError");
+    // streams
+    fs.writeFileSync(file, "stream-body");
+    const readChunks = [];
+    await new Promise((resolve, reject) => {
+        const stream = fs.createReadStream(file, { start: 0, end: 5 });
+        stream.on("data", (chunk) => readChunks.push(chunk.toString()));
+        stream.on("end", resolve);
+        stream.on("error", reject);
+    });
+    eq(readChunks.join(""), "stream", "createReadStream honours start/end");
+    ok(streamInstanceSeen(), "createReadStream returns a ReadStream");
 
-  // callback form with an already-aborted signal
-  const preAborted = new AbortController();
-  preAborted.abort();
-  const callbackAbort = await new Promise((resolve) => {
-    fs.readFile(file, { signal: preAborted.signal }, (error) => resolve(error));
-  });
-  eq(callbackAbort && callbackAbort.code, "ABORT_ERR", "callback form delivers ABORT_ERR");
+    await new Promise((resolve, reject) => {
+        const stream = fs.createWriteStream(path.join(dir, "stream-out.txt"));
+        stream.on("error", reject);
+        stream.on("close", resolve);
+        stream.end("written-by-stream");
+    });
+    eq(
+        fs.readFileSync(path.join(dir, "stream-out.txt"), "utf8"),
+        "written-by-stream",
+        "createWriteStream writes",
+    );
 
-  // invalid callback
-  throwsCode(() => fs.readFile(file, "utf8"), "ERR_INVALID_ARG_TYPE", "readFile without a callback throws");
+    // flow with a plain data listener (no manual read())
+    fs.writeFileSync(path.join(dir, "stream-big.txt"), "x".repeat(200000));
+    const big = await new Promise((resolve, reject) => {
+        let text = "";
+        const stream = fs.createReadStream(path.join(dir, "stream-big.txt"));
+        stream.on("data", (chunk) => (text += chunk));
+        stream.on("end", () => resolve(text));
+        stream.on("error", reject);
+    });
+    eq(big.length, 200000, "createReadStream reads a multi-chunk file to the end");
+
+    // watchFile / unwatchFile
+    const watched = path.join(dir, "watched.txt");
+    fs.writeFileSync(watched, "1");
+    let changes = 0;
+    fs.watchFile(watched, { interval: 10 }, () => {
+        changes += 1;
+    });
+    await delay(30);
+    fs.writeFileSync(watched, "22");
+    await delay(100);
+    fs.unwatchFile(watched);
+    ok(changes > 0, "watchFile reports a change");
+    const changesAfter = changes;
+    fs.writeFileSync(watched, "333");
+    await delay(60);
+    eq(changes, changesAfter, "unwatchFile stops reporting");
+
+    // watch
+    const watched2 = path.join(dir, "watch-event.txt");
+    fs.writeFileSync(watched2, "1");
+    const event = await new Promise((resolve, reject) => {
+        const watcher = fs.watch(watched2, { interval: 20 }, (eventType, name) => {
+            watcher.close();
+            resolve({ eventType, name });
+        });
+        watcher.on("error", reject);
+        setTimeout(() => fs.writeFileSync(watched2, "changed"), 30);
+    });
+    eq(
+        event.eventType === "change" || event.eventType === "rename",
+        true,
+        "fs.watch emits a change event",
+    );
+    eq(path.basename(event.name), basename(watched2), "fs.watch reports the file name");
+
+    // realpath.native callback form
+    await new Promise((resolve, reject) => {
+        fs.realpath.native(symlinkPath, (error, value) => {
+            try {
+                eq(error, null, "realpath.native callback error is null");
+                eq(value, resolved, "realpath.native resolves the same path");
+            } catch (failure) {
+                return reject(failure);
+            }
+            resolve();
+        });
+    });
+
+    // AbortSignal: promise form rejects with ABORT_ERR while the op is in flight
+    fs.writeFileSync(path.join(dir, "big.txt"), "y".repeat(4 * 1024 * 1024));
+    const controller = new AbortController();
+    const aborted = fs.promises.readFile(path.join(dir, "big.txt"), { signal: controller.signal });
+    controller.abort();
+    let abortError = null;
+    try {
+        await aborted;
+    } catch (error) {
+        abortError = error;
+    }
+    eq(abortError && abortError.code, "ABORT_ERR", "AbortSignal rejects with ABORT_ERR");
+    eq(abortError && abortError.name, "AbortError", "AbortSignal rejection is an AbortError");
+
+    // callback form with an already-aborted signal
+    const preAborted = new AbortController();
+    preAborted.abort();
+    const callbackAbort = await new Promise((resolve) => {
+        fs.readFile(file, { signal: preAborted.signal }, (error) => resolve(error));
+    });
+    eq(callbackAbort && callbackAbort.code, "ABORT_ERR", "callback form delivers ABORT_ERR");
+
+    // invalid callback
+    throwsCode(
+        () => fs.readFile(file, "utf8"),
+        "ERR_INVALID_ARG_TYPE",
+        "readFile without a callback throws",
+    );
 }
 
 function streamInstanceSeen() {
-  const stream = fs.createReadStream(file);
-  const result = stream instanceof fs.ReadStream;
-  stream.destroy();
-  return result;
+    const stream = fs.createReadStream(file);
+    const result = stream instanceof fs.ReadStream;
+    stream.destroy();
+    return result;
 }
 
 function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function finish() {
-  // Safety: only ever remove the suite's own scratch directory. Compare real paths (macOS
-  // maps /tmp to /private/tmp) and refuse the cwd or any ancestor of it outright.
-  if (typeof dir !== "string" || !path.isAbsolute(dir)) {
-    throw new Error("refusing to clean a non-absolute scratch path");
-  }
-  const resolvedScratch = path.resolve(dir);
-  const resolvedCwd = process.cwd();
-  if (resolvedScratch === resolvedCwd || resolvedCwd.startsWith(resolvedScratch + path.sep)) {
-    throw new Error("refusing to clean the working directory");
-  }
-  let realScratch = resolvedScratch;
-  try {
-    realScratch = fs.realpathSync(resolvedScratch);
-  } catch (_) {
-    // The directory may already be gone; the lexical check above still holds.
-  }
-  const realTemp = fs.realpathSync(os.tmpdir());
-  if (!realScratch.startsWith(realTemp + path.sep)) {
-    throw new Error("refusing to clean a path outside the temp root");
-  }
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch (_) {
-    // A failed assertion may have removed part of the tree already.
-  }
-  if (failed > 0) {
-    console.log(`${failed} failed, ${passed} passed`);
-    for (const failure of failures) console.log(`  - ${failure}`);
-    process.exitCode = 1;
-    return;
-  }
-  console.log(`ok: ${passed} assertions`);
+    // Safety: only ever remove the suite's own scratch directory. Compare real paths (macOS
+    // maps /tmp to /private/tmp) and refuse the cwd or any ancestor of it outright.
+    if (typeof dir !== "string" || !path.isAbsolute(dir)) {
+        throw new Error("refusing to clean a non-absolute scratch path");
+    }
+    const resolvedScratch = path.resolve(dir);
+    const resolvedCwd = process.cwd();
+    if (resolvedScratch === resolvedCwd || resolvedCwd.startsWith(resolvedScratch + path.sep)) {
+        throw new Error("refusing to clean the working directory");
+    }
+    let realScratch = resolvedScratch;
+    try {
+        realScratch = fs.realpathSync(resolvedScratch);
+    } catch (_) {
+        // The directory may already be gone; the lexical check above still holds.
+    }
+    const realTemp = fs.realpathSync(os.tmpdir());
+    if (!realScratch.startsWith(realTemp + path.sep)) {
+        throw new Error("refusing to clean a path outside the temp root");
+    }
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_) {
+        // A failed assertion may have removed part of the tree already.
+    }
+    if (failed > 0) {
+        console.log(`${failed} failed, ${passed} passed`);
+        for (const failure of failures) console.log(`  - ${failure}`);
+        process.exitCode = 1;
+        return;
+    }
+    console.log(`ok: ${passed} assertions`);
 }
 
 asyncChecks()
-  .then(finish)
-  .catch((error) => {
-    console.log(`FAIL: ${error && error.stack ? error.stack.split("\n")[0] : String(error)}`);
-    process.exitCode = 1;
-  });
+    .then(finish)
+    .catch((error) => {
+        console.log(`FAIL: ${error && error.stack ? error.stack.split("\n")[0] : String(error)}`);
+        process.exitCode = 1;
+    });

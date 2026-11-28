@@ -7,8 +7,8 @@
 const { Buffer } = require("buffer");
 
 function decode(label, text, encoding) {
-  const out = Buffer.from(text, encoding);
-  console.log(`${label}: ${out.length} ${out.toString("hex")}`);
+    const out = Buffer.from(text, encoding);
+    console.log(`${label}: ${out.length} ${out.toString("hex")}`);
 }
 
 decode("empty base64", "", "base64");
@@ -41,12 +41,12 @@ decode("base64 lone surrogate first", "\uD83DQUJD", "base64");
 
 // Encode edges: empty, every tail length, and lowercase hex.
 for (const sample of [[], [0x00], [0x0f], [0xff], [0xff, 0xff], [0xfb, 0xff], [0x41, 0x42, 0x43]]) {
-  const buffer = Buffer.from(sample);
-  console.log(
-    `encode ${buffer.length} ${JSON.stringify(buffer.toString("hex"))} ` +
-      `${JSON.stringify(buffer.toString("base64"))} ` +
-      `${JSON.stringify(buffer.toString("base64url"))}`,
-  );
+    const buffer = Buffer.from(sample);
+    console.log(
+        `encode ${buffer.length} ${JSON.stringify(buffer.toString("hex"))} ` +
+            `${JSON.stringify(buffer.toString("base64"))} ` +
+            `${JSON.stringify(buffer.toString("base64url"))}`,
+    );
 }
 
 // `toString` range handling: Buffer clamps, then the host encodes the borrowed window.
@@ -60,5 +60,7 @@ console.log(`base64url range ${wide.toString("base64url", 0, 8)}`);
 
 // A Buffer subclass instance and a plain Uint8Array both reach the same host entry point.
 const view = new Uint8Array(wide.buffer, wide.byteOffset + 2, 4);
-console.log(`uint8 view hex ${Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString("hex")}`);
+console.log(
+    `uint8 view hex ${Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString("hex")}`,
+);
 console.log(`write+read ${Buffer.from([1, 2, 3]).toString("hex")}`);

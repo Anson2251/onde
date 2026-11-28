@@ -40,11 +40,11 @@
 
 let bufferModule;
 try {
-  bufferModule = require("buffer");
+    bufferModule = require("buffer");
 } catch (_) {
-  // Loaded by path (for example by the differential oracle) instead of through
-  // the builtin table.
-  bufferModule = require("./buffer.js");
+    // Loaded by path (for example by the differential oracle) instead of through
+    // the builtin table.
+    bufferModule = require("./buffer.js");
 }
 const Buffer = bufferModule.Buffer || bufferModule;
 
@@ -68,19 +68,19 @@ const MAX_LEVEL = 9;
 const MAX_SAFE_INTEGER = 9007199254740991;
 
 const constants = Object.freeze({
-  Z_NO_COMPRESSION,
-  Z_BEST_SPEED,
-  Z_BEST_COMPRESSION,
-  Z_DEFAULT_COMPRESSION,
-  Z_SYNC_FLUSH,
-  Z_FULL_FLUSH,
-  Z_FINISH,
-  Z_OK,
-  Z_STREAM_END,
-  Z_STREAM_ERROR,
-  Z_DATA_ERROR,
-  Z_MEM_ERROR,
-  Z_BUF_ERROR,
+    Z_NO_COMPRESSION,
+    Z_BEST_SPEED,
+    Z_BEST_COMPRESSION,
+    Z_DEFAULT_COMPRESSION,
+    Z_SYNC_FLUSH,
+    Z_FULL_FLUSH,
+    Z_FINISH,
+    Z_OK,
+    Z_STREAM_END,
+    Z_STREAM_ERROR,
+    Z_DATA_ERROR,
+    Z_MEM_ERROR,
+    Z_BUF_ERROR,
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -90,18 +90,18 @@ const constants = Object.freeze({
 // ---------------------------------------------------------------------------------------------
 
 const {
-  coded: makeError,
-  invalidArgType,
-  invalidPropertyType,
-  outOfRange,
+    coded: makeError,
+    invalidArgType,
+    invalidPropertyType,
+    outOfRange,
 } = require("./internal/errors.js");
 
 function tooLarge(limit) {
-  return makeError(
-    Error,
-    "ERR_BUFFER_TOO_LARGE",
-    `Cannot create a Buffer larger than ${limit} bytes`,
-  );
+    return makeError(
+        Error,
+        "ERR_BUFFER_TOO_LARGE",
+        `Cannot create a Buffer larger than ${limit} bytes`,
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -110,21 +110,17 @@ function tooLarge(limit) {
 
 // Coercion is shared. `byteView` returns `null` for a non-byte value, but `inputBytes` checks the
 // type first, so the non-null path is the only one reached.
-const {
-  byteView,
-  isAnyArrayBuffer,
-  isArrayBufferView,
-} = require("./internal/bytes.js");
+const { byteView, isAnyArrayBuffer, isArrayBufferView } = require("./internal/bytes.js");
 
 function hostZlib() {
-  const host = globalThis.__ln_host;
-  const zlib = host === undefined || host === null ? undefined : host.zlib;
-  if (zlib === undefined || zlib === null) {
-    // Not a Node error: this only happens when the module runs outside onde without the
-    // differential oracle's host shim.
-    throw new Error("zlib is unavailable: __ln_host.zlib is not installed");
-  }
-  return zlib;
+    const host = globalThis.__ln_host;
+    const zlib = host === undefined || host === null ? undefined : host.zlib;
+    if (zlib === undefined || zlib === null) {
+        // Not a Node error: this only happens when the module runs outside onde without the
+        // differential oracle's host shim.
+        throw new Error("zlib is unavailable: __ln_host.zlib is not installed");
+    }
+    return zlib;
 }
 
 /**
@@ -134,17 +130,17 @@ function hostZlib() {
  * implicit string encoding for the compression entry points is out of scope.
  */
 function inputBytes(value, name) {
-  if (isArrayBufferView(value) || isAnyArrayBuffer(value)) return byteView(value);
-  throw invalidArgType(
-    name,
-    "an instance of Buffer, TypedArray, DataView, or ArrayBuffer",
-    value,
-  );
+    if (isArrayBufferView(value) || isAnyArrayBuffer(value)) return byteView(value);
+    throw invalidArgType(
+        name,
+        "an instance of Buffer, TypedArray, DataView, or ArrayBuffer",
+        value,
+    );
 }
 
 /** Wrap the host's fresh `Uint8Array` in a Buffer without copying its bytes. */
 function toBuffer(bytes) {
-  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -154,40 +150,40 @@ function toBuffer(bytes) {
 // `maxOutputLength: 0` is the host's "no explicit limit" sentinel; the caller-visible default
 // is therefore the absence of the property, not the literal 0. Node rejects a literal 0.
 function normalizeOptions(options) {
-  let level = Z_DEFAULT_COMPRESSION;
-  let maxOutputLength = 0;
+    let level = Z_DEFAULT_COMPRESSION;
+    let maxOutputLength = 0;
 
-  // Node accepts a missing, null, or non-object `options` and treats it as "defaults"; arrays
-  // behave the same way (no `level` property).
-  if (options === undefined || options === null || typeof options !== "object") {
+    // Node accepts a missing, null, or non-object `options` and treats it as "defaults"; arrays
+    // behave the same way (no `level` property).
+    if (options === undefined || options === null || typeof options !== "object") {
+        return { level, maxOutputLength };
+    }
+
+    if (options.level !== undefined) {
+        if (typeof options.level !== "number") {
+            throw invalidPropertyType("options.level", "number", options.level);
+        }
+        level = options.level;
+        if (!(level >= MIN_LEVEL && level <= MAX_LEVEL)) {
+            throw outOfRange("options.level", `>= ${MIN_LEVEL} and <= ${MAX_LEVEL}`, level);
+        }
+    }
+
+    if (options.maxOutputLength !== undefined) {
+        if (typeof options.maxOutputLength !== "number") {
+            throw invalidPropertyType("options.maxOutputLength", "number", options.maxOutputLength);
+        }
+        if (!(options.maxOutputLength >= 1 && options.maxOutputLength <= MAX_SAFE_INTEGER)) {
+            throw outOfRange(
+                "options.maxOutputLength",
+                `>= 1 and <= ${MAX_SAFE_INTEGER}`,
+                options.maxOutputLength,
+            );
+        }
+        maxOutputLength = options.maxOutputLength;
+    }
+
     return { level, maxOutputLength };
-  }
-
-  if (options.level !== undefined) {
-    if (typeof options.level !== "number") {
-      throw invalidPropertyType("options.level", "number", options.level);
-    }
-    level = options.level;
-    if (!(level >= MIN_LEVEL && level <= MAX_LEVEL)) {
-      throw outOfRange("options.level", `>= ${MIN_LEVEL} and <= ${MAX_LEVEL}`, level);
-    }
-  }
-
-  if (options.maxOutputLength !== undefined) {
-    if (typeof options.maxOutputLength !== "number") {
-      throw invalidPropertyType("options.maxOutputLength", "number", options.maxOutputLength);
-    }
-    if (!(options.maxOutputLength >= 1 && options.maxOutputLength <= MAX_SAFE_INTEGER)) {
-      throw outOfRange(
-        "options.maxOutputLength",
-        `>= 1 and <= ${MAX_SAFE_INTEGER}`,
-        options.maxOutputLength,
-      );
-    }
-    maxOutputLength = options.maxOutputLength;
-  }
-
-  return { level, maxOutputLength };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -195,39 +191,39 @@ function normalizeOptions(options) {
 // ---------------------------------------------------------------------------------------------
 
 function runSync(mode, buffer, options) {
-  const bytes = inputBytes(buffer, "buffer");
-  const { level, maxOutputLength } = normalizeOptions(options);
-  const result = toBuffer(hostZlib().run(mode, bytes, level, maxOutputLength));
-  // The host ignores `maxOutput` for compression (there is no streaming bound to enforce on the
-  // encode side), so the limit is applied to the finished buffer here.
-  if (maxOutputLength !== 0 && result.byteLength > maxOutputLength) {
-    throw tooLarge(maxOutputLength);
-  }
-  return result;
+    const bytes = inputBytes(buffer, "buffer");
+    const { level, maxOutputLength } = normalizeOptions(options);
+    const result = toBuffer(hostZlib().run(mode, bytes, level, maxOutputLength));
+    // The host ignores `maxOutput` for compression (there is no streaming bound to enforce on the
+    // encode side), so the limit is applied to the finished buffer here.
+    if (maxOutputLength !== 0 && result.byteLength > maxOutputLength) {
+        throw tooLarge(maxOutputLength);
+    }
+    return result;
 }
 
 function gzipSync(buffer, options) {
-  return runSync("gzip", buffer, options);
+    return runSync("gzip", buffer, options);
 }
 
 function gunzipSync(buffer, options) {
-  return runSync("gunzip", buffer, options);
+    return runSync("gunzip", buffer, options);
 }
 
 function deflateSync(buffer, options) {
-  return runSync("deflate", buffer, options);
+    return runSync("deflate", buffer, options);
 }
 
 function inflateSync(buffer, options) {
-  return runSync("inflate", buffer, options);
+    return runSync("inflate", buffer, options);
 }
 
 function deflateRawSync(buffer, options) {
-  return runSync("deflateRaw", buffer, options);
+    return runSync("deflateRaw", buffer, options);
 }
 
 function inflateRawSync(buffer, options) {
-  return runSync("inflateRaw", buffer, options);
+    return runSync("inflateRaw", buffer, options);
 }
 
 /**
@@ -236,8 +232,8 @@ function inflateRawSync(buffer, options) {
  * Unlike the compression entry points, Node's crc32 accepts a string; it is encoded as UTF-8.
  */
 function crc32(data) {
-  if (typeof data === "string") return hostZlib().crc32(Buffer.from(data, "utf8"));
-  return hostZlib().crc32(inputBytes(data, "data"));
+    if (typeof data === "string") return hostZlib().crc32(Buffer.from(data, "utf8"));
+    return hostZlib().crc32(inputBytes(data, "data"));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -248,67 +244,67 @@ function crc32(data) {
 // ---------------------------------------------------------------------------------------------
 
 function runAsync(mode, buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
-  const bytes = inputBytes(buffer, "buffer");
-  const { level, maxOutputLength } = normalizeOptions(options);
-  if (typeof callback !== "function") {
-    throw invalidArgType("callback", "of type function", callback);
-  }
-
-  let result;
-  let error = null;
-  try {
-    result = toBuffer(hostZlib().run(mode, bytes, level, maxOutputLength));
-    if (maxOutputLength !== 0 && result.byteLength > maxOutputLength) {
-      throw tooLarge(maxOutputLength);
+    if (typeof options === "function") {
+        callback = options;
+        options = undefined;
     }
-  } catch (caught) {
-    error = caught;
-  }
-  process.nextTick(() => callback(error, result));
-  return undefined;
+    const bytes = inputBytes(buffer, "buffer");
+    const { level, maxOutputLength } = normalizeOptions(options);
+    if (typeof callback !== "function") {
+        throw invalidArgType("callback", "of type function", callback);
+    }
+
+    let result;
+    let error = null;
+    try {
+        result = toBuffer(hostZlib().run(mode, bytes, level, maxOutputLength));
+        if (maxOutputLength !== 0 && result.byteLength > maxOutputLength) {
+            throw tooLarge(maxOutputLength);
+        }
+    } catch (caught) {
+        error = caught;
+    }
+    process.nextTick(() => callback(error, result));
+    return undefined;
 }
 
 function gzip(buffer, options, callback) {
-  return runAsync("gzip", buffer, options, callback);
+    return runAsync("gzip", buffer, options, callback);
 }
 
 function gunzip(buffer, options, callback) {
-  return runAsync("gunzip", buffer, options, callback);
+    return runAsync("gunzip", buffer, options, callback);
 }
 
 function deflate(buffer, options, callback) {
-  return runAsync("deflate", buffer, options, callback);
+    return runAsync("deflate", buffer, options, callback);
 }
 
 function inflate(buffer, options, callback) {
-  return runAsync("inflate", buffer, options, callback);
+    return runAsync("inflate", buffer, options, callback);
 }
 
 function deflateRaw(buffer, options, callback) {
-  return runAsync("deflateRaw", buffer, options, callback);
+    return runAsync("deflateRaw", buffer, options, callback);
 }
 
 function inflateRaw(buffer, options, callback) {
-  return runAsync("inflateRaw", buffer, options, callback);
+    return runAsync("inflateRaw", buffer, options, callback);
 }
 
 module.exports = {
-  crc32,
-  constants,
-  deflate,
-  deflateRaw,
-  deflateRawSync,
-  deflateSync,
-  gzip,
-  gzipSync,
-  gunzip,
-  gunzipSync,
-  inflate,
-  inflateRaw,
-  inflateRawSync,
-  inflateSync,
+    crc32,
+    constants,
+    deflate,
+    deflateRaw,
+    deflateRawSync,
+    deflateSync,
+    gzip,
+    gzipSync,
+    gunzip,
+    gunzipSync,
+    inflate,
+    inflateRaw,
+    inflateRawSync,
+    inflateSync,
 };

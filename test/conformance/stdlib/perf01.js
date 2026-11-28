@@ -3,11 +3,11 @@
 // observer shape, and the clock/timeOrigin types. No raw timing is printed, so the expectation is
 // valid on any machine (recorded from node v26.10.0).
 const {
-  performance,
-  Performance,
-  PerformanceMark,
-  PerformanceMeasure,
-  PerformanceObserver,
+    performance,
+    Performance,
+    PerformanceMark,
+    PerformanceMeasure,
+    PerformanceObserver,
 } = require("perf_hooks");
 const mark = performance.mark("conf-mark", { startTime: 10, detail: 3 });
 console.log(mark.name, mark.entryType, mark.startTime, mark.duration, mark.detail);
@@ -36,7 +36,7 @@ console.log(typeof performance.now(), performance.now() >= 0);
 console.log(typeof performance.timeOrigin, performance.timeOrigin > 0);
 const utilization = performance.eventLoopUtilization();
 console.log(
-  typeof utilization.idle,
-  typeof utilization.active,
-  utilization.utilization >= 0 && utilization.utilization <= 1,
+    typeof utilization.idle,
+    typeof utilization.active,
+    utilization.utilization >= 0 && utilization.utilization <= 1,
 );

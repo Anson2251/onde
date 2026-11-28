@@ -6,24 +6,24 @@
 const net = require("net");
 
 const server = net.createServer((socket) => {
-  socket.end(`family:${socket.remoteFamily}`);
+    socket.end(`family:${socket.remoteFamily}`);
 });
 
 server.on("error", () => {
-  console.log("skip:ipv6-unavailable");
+    console.log("skip:ipv6-unavailable");
 });
 
 server.listen(0, "::1", () => {
-  const address = server.address();
-  console.log(`listening:${address.address}:${address.family}`);
-  const client = net.connect(address.port, "::1", () => client.end());
-  client.setEncoding("utf8");
-  let data = "";
-  client.on("data", (chunk) => {
-    data += chunk;
-  });
-  client.on("close", () => {
-    console.log(`data:${data}`);
-    server.close();
-  });
+    const address = server.address();
+    console.log(`listening:${address.address}:${address.family}`);
+    const client = net.connect(address.port, "::1", () => client.end());
+    client.setEncoding("utf8");
+    let data = "";
+    client.on("data", (chunk) => {
+        data += chunk;
+    });
+    client.on("close", () => {
+        console.log(`data:${data}`);
+        server.close();
+    });
 });

@@ -18,46 +18,46 @@ const tls = process.env.INTEROP_TLS === "1";
 const portFile = process.argv[2];
 
 function handler(req, res) {
-  const socket = req.socket;
-  socket.__interopRequests = (socket.__interopRequests || 0) + 1;
-  if (req.url === "/chunked") {
-    res.writeHead(200, { "Content-Type": "text/plain", "X-Custom": "ValueCase" });
-    res.write("chunk-one");
-    res.end("chunk-two");
-    return;
-  }
-  res.writeHead(200, {
-    "Content-Type": "text/plain",
-    "Content-Length": "5",
-    "X-Custom": "ValueCase",
-    "X-Connection-Requests": String(socket.__interopRequests),
-  });
-  res.end("hello");
+    const socket = req.socket;
+    socket.__interopRequests = (socket.__interopRequests || 0) + 1;
+    if (req.url === "/chunked") {
+        res.writeHead(200, { "Content-Type": "text/plain", "X-Custom": "ValueCase" });
+        res.write("chunk-one");
+        res.end("chunk-two");
+        return;
+    }
+    res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": "5",
+        "X-Custom": "ValueCase",
+        "X-Connection-Requests": String(socket.__interopRequests),
+    });
+    res.end("hello");
 }
 
 let server;
 if (tls) {
-  const https = require("https");
-  server = https.createServer(
-    { key: fs.readFileSync(process.env.TLS_KEY), cert: fs.readFileSync(process.env.TLS_CERT) },
-    handler,
-  );
+    const https = require("https");
+    server = https.createServer(
+        { key: fs.readFileSync(process.env.TLS_KEY), cert: fs.readFileSync(process.env.TLS_CERT) },
+        handler,
+    );
 } else {
-  const http = require("http");
-  server = http.createServer(handler);
+    const http = require("http");
+    server = http.createServer(handler);
 }
 
 server.on("error", (error) => {
-  console.error(`interop-server: ${error.code || error.message}`);
-  process.exit(1);
+    console.error(`interop-server: ${error.code || error.message}`);
+    process.exit(1);
 });
 
 server.listen(0, "127.0.0.1", () => {
-  fs.writeFileSync(portFile, String(server.address().port));
+    fs.writeFileSync(portFile, String(server.address().port));
 });
 
 function shutdown() {
-  server.close(() => process.exit(0));
+    server.close(() => process.exit(0));
 }
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

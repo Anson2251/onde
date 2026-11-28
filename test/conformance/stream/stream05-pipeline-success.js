@@ -4,11 +4,11 @@ const { Readable, Writable, PassThrough, pipeline } = require("stream");
 
 const out = [];
 const dest = new Writable({
-  write(chunk, encoding, callback) {
-    out.push(String(chunk));
-    callback();
-  },
+    write(chunk, encoding, callback) {
+        out.push(String(chunk));
+        callback();
+    },
 });
 const returned = pipeline(Readable.from(["x", "y"]), new PassThrough(), dest, (err) => {
-  console.log("callback", err === undefined || err === null, out.join(""), returned === dest);
+    console.log("callback", err === undefined || err === null, out.join(""), returned === dest);
 });

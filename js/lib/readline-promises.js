@@ -16,52 +16,52 @@ const readline = require("./readline.js");
 const { abortError } = require("./internal/errors.js");
 
 function signalOf(options) {
-  if (options === null || options === undefined || typeof options !== "object") return undefined;
-  return options.signal;
+    if (options === null || options === undefined || typeof options !== "object") return undefined;
+    return options.signal;
 }
 
 class Interface extends readline.Interface {
-  question(query, options) {
-    return new Promise((resolve, reject) => {
-      const signal = signalOf(options);
-      let onAbort = null;
+    question(query, options) {
+        return new Promise((resolve, reject) => {
+            const signal = signalOf(options);
+            let onAbort = null;
 
-      if (signal !== undefined && signal !== null) {
-        if (signal.aborted === true) {
-          reject(abortError(signal.reason));
-          return;
-        }
-        onAbort = () => {
-          reject(abortError(signal.reason));
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
+            if (signal !== undefined && signal !== null) {
+                if (signal.aborted === true) {
+                    reject(abortError(signal.reason));
+                    return;
+                }
+                onAbort = () => {
+                    reject(abortError(signal.reason));
+                };
+                signal.addEventListener("abort", onAbort, { once: true });
+            }
 
-      const cleanup = () => {
-        if (onAbort !== null && typeof signal.removeEventListener === "function") {
-          signal.removeEventListener("abort", onAbort);
-        }
-      };
+            const cleanup = () => {
+                if (onAbort !== null && typeof signal.removeEventListener === "function") {
+                    signal.removeEventListener("abort", onAbort);
+                }
+            };
 
-      try {
-        // The core method validates `closed`, restores the prompt and owns the answer path.
-        readline.Interface.prototype.question.call(this, query, options, (answer) => {
-          cleanup();
-          resolve(answer);
+            try {
+                // The core method validates `closed`, restores the prompt and owns the answer path.
+                readline.Interface.prototype.question.call(this, query, options, (answer) => {
+                    cleanup();
+                    resolve(answer);
+                });
+            } catch (error) {
+                cleanup();
+                reject(error);
+            }
         });
-      } catch (error) {
-        cleanup();
-        reject(error);
-      }
-    });
-  }
+    }
 }
 
 function createInterface(input, output, completer, terminal) {
-  return new Interface(input, output, completer, terminal);
+    return new Interface(input, output, completer, terminal);
 }
 
 module.exports = {
-  Interface,
-  createInterface,
+    Interface,
+    createInterface,
 };

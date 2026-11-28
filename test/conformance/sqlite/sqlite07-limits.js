@@ -13,9 +13,9 @@ console.log("set:", db.limits.sqlLength);
 db.limits.sqlLength = Infinity;
 console.log("reset:", db.limits.sqlLength >= 100000);
 try {
-  db.limits.column = -1;
+    db.limits.column = -1;
 } catch (error) {
-  console.log("negative:", error.name, error.code);
+    console.log("negative:", error.name, error.code);
 }
 
 console.log("transaction before:", db.isTransaction);

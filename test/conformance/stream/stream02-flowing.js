@@ -7,8 +7,8 @@ const events = [];
 r.on("data", (chunk) => events.push("data:" + String(chunk)));
 r.on("end", () => events.push("end"));
 r.on("close", () => {
-  events.push("close");
-  console.log(events.join("|"));
+    events.push("close");
+    console.log(events.join("|"));
 });
 r.push("a");
 r.push("b");

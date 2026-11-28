@@ -8,15 +8,15 @@ const { PassThrough } = require("stream");
 const input = new PassThrough();
 const output = new PassThrough();
 const rl = readline.createInterface({
-  input,
-  output,
-  terminal: true,
-  historySize: 2,
-  removeHistoryDuplicates: true,
+    input,
+    output,
+    terminal: true,
+    historySize: 2,
+    removeHistoryDuplicates: true,
 });
 
 rl.on("line", (line) => {
-  console.log("line:" + line + " history:" + rl.history.join(","));
+    console.log("line:" + line + " history:" + rl.history.join(","));
 });
 
 input.write("a\n");

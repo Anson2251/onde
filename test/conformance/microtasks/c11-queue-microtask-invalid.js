@@ -3,7 +3,7 @@
 // global with a wrapper that mints the microtask's async_hooks resource, and
 // the wrapper now performs the check the engine omitted (D2 retired).
 try {
-  queueMicrotask(1);
+    queueMicrotask(1);
 } catch (e) {
-  console.log(e.name, e.code);
+    console.log(e.name, e.code);
 }

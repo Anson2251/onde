@@ -6,15 +6,17 @@
 const net = require("net");
 
 const server = net.createServer((socket) => {
-  let bytes = 0;
-  socket.on("data", (chunk) => {
-    bytes += chunk.length;
-  });
-  socket.on("end", () => {
-    console.log(`server-bytes:${bytes}`);
-  });
+    let bytes = 0;
+    socket.on("data", (chunk) => {
+        bytes += chunk.length;
+    });
+    socket.on("end", () => {
+        console.log(`server-bytes:${bytes}`);
+    });
 });
 server.listen(0, "127.0.0.1", () => {
-  const client = net.connect(server.address().port, "127.0.0.1", () => client.end("héllo", "latin1"));
-  client.on("close", () => server.close());
+    const client = net.connect(server.address().port, "127.0.0.1", () =>
+        client.end("héllo", "latin1"),
+    );
+    client.on("close", () => server.close());
 });

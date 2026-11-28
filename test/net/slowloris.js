@@ -25,46 +25,46 @@ let stopped = false;
 const partial = "GET / HTTP/1.1\r\nHost: example\r\nX-Partial: ";
 
 function openOne() {
-  const socket = net.connect(port, "127.0.0.1");
-  sockets.push(socket);
-  socket.setNoDelay(true);
-  socket.on("connect", () => {
-    socket.write(partial);
-    connected += 1;
-    maybeDone();
-  });
-  socket.on("error", () => {
-    errors += 1;
-    maybeDone();
-  });
+    const socket = net.connect(port, "127.0.0.1");
+    sockets.push(socket);
+    socket.setNoDelay(true);
+    socket.on("connect", () => {
+        socket.write(partial);
+        connected += 1;
+        maybeDone();
+    });
+    socket.on("error", () => {
+        errors += 1;
+        maybeDone();
+    });
 }
 
 function maybeDone() {
-  if (launched < total) return;
-  // Every launched socket has either connected or errored.
-  if (connected + errors < total) return;
-  console.log(`OPEN:${connected}${errors > 0 ? ` ERRORS:${errors}` : ""}`);
-  launched = total + 1; // one-shot
+    if (launched < total) return;
+    // Every launched socket has either connected or errored.
+    if (connected + errors < total) return;
+    console.log(`OPEN:${connected}${errors > 0 ? ` ERRORS:${errors}` : ""}`);
+    launched = total + 1; // one-shot
 }
 
 // Keep the process (and all sockets) alive until the harness is done.
 setInterval(() => {}, 1000);
 
 function pump() {
-  if (stopped) return;
-  const target = Math.min(total, launched + batch);
-  while (launched < target) {
-    launched += 1;
-    openOne();
-  }
-  if (launched < total) setTimeout(pump, 20);
-  else maybeDone();
+    if (stopped) return;
+    const target = Math.min(total, launched + batch);
+    while (launched < target) {
+        launched += 1;
+        openOne();
+    }
+    if (launched < total) setTimeout(pump, 20);
+    else maybeDone();
 }
 
 function shutdown() {
-  stopped = true;
-  for (const socket of sockets) socket.destroy();
-  process.exit(0);
+    stopped = true;
+    for (const socket of sockets) socket.destroy();
+    process.exit(0);
 }
 
 process.on("SIGTERM", shutdown);

@@ -24,49 +24,51 @@ let passed = 0;
 const failures = [];
 
 function record(condition, message) {
-  if (condition) {
-    passed += 1;
-  } else {
-    failures.push(message);
-  }
+    if (condition) {
+        passed += 1;
+    } else {
+        failures.push(message);
+    }
 }
 
 function eq(actual, expected, message) {
-  record(actual === expected, `${message} (expected ${String(expected)}, got ${String(actual)})`);
+    record(actual === expected, `${message} (expected ${String(expected)}, got ${String(actual)})`);
 }
 
 function finish() {
-  if (failures.length === 0) {
-    console.log(`ok: ${passed} assertions`);
-    process.exit(0);
-  }
-  for (const failure of failures) console.log(`not ok: ${failure}`);
-  process.exit(1);
+    if (failures.length === 0) {
+        console.log(`ok: ${passed} assertions`);
+        process.exit(0);
+    }
+    for (const failure of failures) console.log(`not ok: ${failure}`);
+    process.exit(1);
 }
 
 // --- shape -----------------------------------------------------------------------------------
 
 record(
-  constants !== null && typeof constants === "object" && !Array.isArray(constants),
-  "constants is a plain object",
+    constants !== null && typeof constants === "object" && !Array.isArray(constants),
+    "constants is a plain object",
 );
 eq(Object.getPrototypeOf(constants), Object.prototype, "constants has Object.prototype");
 record(Object.isFrozen(constants), "constants is frozen, like Node's");
 record(Object.keys(constants).length > 0, "constants is not empty");
 
 const nested = Object.keys(constants).filter(
-  (key) => constants[key] !== null && typeof constants[key] === "object",
+    (key) => constants[key] !== null && typeof constants[key] === "object",
 );
 eq(nested.length, 0, `constants has no nested object values (found ${nested.join(", ")})`);
 
 record(
-  builtin !== null && typeof builtin === "object" && Object.getPrototypeOf(builtin) === Object.prototype,
-  "require('constants') is a plain object",
+    builtin !== null &&
+        typeof builtin === "object" &&
+        Object.getPrototypeOf(builtin) === Object.prototype,
+    "require('constants') is a plain object",
 );
 eq(builtin, prefixed, "require('constants') === require('node:constants')");
 record(
-  Object.keys(builtin).every((key) => builtin[key] === null || typeof builtin[key] !== "object"),
-  "the builtin has no nested object values",
+    Object.keys(builtin).every((key) => builtin[key] === null || typeof builtin[key] !== "object"),
+    "the builtin has no nested object values",
 );
 record(Object.isFrozen(builtin), "the builtin is frozen, like Node's");
 
@@ -95,39 +97,35 @@ eq(constants.O_NOFOLLOW, isDarwin ? 256 : 131072, "O_NOFOLLOW follows the platfo
 // --- coverage: everything the owner modules export, nothing else -----------------------------
 
 function forwarded(source, label) {
-  for (const key of Object.keys(source)) {
-    record(
-      Object.prototype.hasOwnProperty.call(constants, key),
-      `${label}.${key} is forwarded`,
-    );
-    eq(constants[key], source[key], `${label}.${key} keeps its value`);
-  }
+    for (const key of Object.keys(source)) {
+        record(
+            Object.prototype.hasOwnProperty.call(constants, key),
+            `${label}.${key} is forwarded`,
+        );
+        eq(constants[key], source[key], `${label}.${key} keeps its value`);
+    }
 }
 
 const expectedKeys = new Set(Object.keys(fsConstants));
 forwarded(fsConstants, "fs.constants");
 
 for (const group of Object.keys(osConstants)) {
-  const values = osConstants[group];
-  if (values !== null && typeof values === "object") {
-    for (const key of Object.keys(values)) expectedKeys.add(key);
-    forwarded(values, `os.constants.${group}`);
-  }
+    const values = osConstants[group];
+    if (values !== null && typeof values === "object") {
+        for (const key of Object.keys(values)) expectedKeys.add(key);
+        forwarded(values, `os.constants.${group}`);
+    }
 }
 
 // onde's crypto has no `constants` today; when it gains one this loop starts asserting it without
 // changing the test. Both runtimes load the same source module, so the branch is identical.
 if (cryptoConstants !== null && typeof cryptoConstants === "object") {
-  for (const key of Object.keys(cryptoConstants)) expectedKeys.add(key);
-  forwarded(cryptoConstants, "crypto.constants");
+    for (const key of Object.keys(cryptoConstants)) expectedKeys.add(key);
+    forwarded(cryptoConstants, "crypto.constants");
 }
 
 // Every owner key is present above; matching the counts proves there is no invented key either.
-eq(
-  Object.keys(constants).length,
-  expectedKeys.size,
-  "constants has exactly the forwarded keys",
-);
+eq(Object.keys(constants).length, expectedKeys.size, "constants has exactly the forwarded keys");
 
 // --- deliberately excluded modules ------------------------------------------------------------
 

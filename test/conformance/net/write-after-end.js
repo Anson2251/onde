@@ -8,18 +8,22 @@ const net = require("net");
 const events = [];
 const server = net.createServer((socket) => socket.resume());
 server.listen(0, "127.0.0.1", () => {
-  const client = net.connect(server.address().port, "127.0.0.1", () => {
-    client.end();
-    events.push(`write-returned:${client.write("late", (error) => {
-      events.push(`callback:${error === null || error === undefined ? "none" : error.code}`);
-    })}`);
-  });
-  client.on("error", (error) => events.push(`error:${error.code}`));
-  client.on("close", () => {
-    events.push("close");
-    setTimeout(() => {
-      console.log(events.join(","));
-      server.close();
-    }, 10);
-  });
+    const client = net.connect(server.address().port, "127.0.0.1", () => {
+        client.end();
+        events.push(
+            `write-returned:${client.write("late", (error) => {
+                events.push(
+                    `callback:${error === null || error === undefined ? "none" : error.code}`,
+                );
+            })}`,
+        );
+    });
+    client.on("error", (error) => events.push(`error:${error.code}`));
+    client.on("close", () => {
+        events.push("close");
+        setTimeout(() => {
+            console.log(events.join(","));
+            server.close();
+        }, 10);
+    });
 });

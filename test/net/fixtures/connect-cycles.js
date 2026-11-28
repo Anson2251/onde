@@ -27,47 +27,47 @@ const errorCodes = {};
 const connectTimeoutMs = Number(process.env.NET_CONNECT_TIMEOUT_MS || 15000);
 
 function one() {
-  return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1");
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      completed += 1;
-      resolve();
-    };
-    socket.setTimeout(connectTimeoutMs, () => {
-      errors += 1;
-      errorCodes.ETIMEDOUT = (errorCodes.ETIMEDOUT || 0) + 1;
-      socket.destroy();
+    return new Promise((resolve) => {
+        const socket = net.connect(port, "127.0.0.1");
+        let settled = false;
+        const done = () => {
+            if (settled) return;
+            settled = true;
+            completed += 1;
+            resolve();
+        };
+        socket.setTimeout(connectTimeoutMs, () => {
+            errors += 1;
+            errorCodes.ETIMEDOUT = (errorCodes.ETIMEDOUT || 0) + 1;
+            socket.destroy();
+        });
+        socket.on("connect", () => {
+            socket.setTimeout(0);
+            socket.end();
+        });
+        socket.on("error", (error) => {
+            // A connection destroyed by its owner may observe the peer's RST; churn is the point.
+            errors += 1;
+            errorCodes[error.code] = (errorCodes[error.code] || 0) + 1;
+        });
+        socket.on("close", done);
     });
-    socket.on("connect", () => {
-      socket.setTimeout(0);
-      socket.end();
-    });
-    socket.on("error", (error) => {
-      // A connection destroyed by its owner may observe the peer's RST; churn is the point.
-      errors += 1;
-      errorCodes[error.code] = (errorCodes[error.code] || 0) + 1;
-    });
-    socket.on("close", done);
-  });
 }
 
 async function worker() {
-  while (started < cycles) {
-    started += 1;
-    await one();
-  }
+    while (started < cycles) {
+        started += 1;
+        await one();
+    }
 }
 
 Promise.all(Array.from({ length: concurrency }, worker)).then(() => {
-  console.log(`cycles=${completed} errors=${errors} ${JSON.stringify(errorCodes)}`);
-  if (errorCodes.ETIMEDOUT !== undefined) {
-    console.error(
-      "connect-cycles: connections timed out; the ephemeral port range is saturated by the " +
-        "previous run's TIME_WAIT sockets, so wait about 30 s before running fdleak again",
-    );
-  }
-  process.exit(completed === cycles ? 0 : 1);
+    console.log(`cycles=${completed} errors=${errors} ${JSON.stringify(errorCodes)}`);
+    if (errorCodes.ETIMEDOUT !== undefined) {
+        console.error(
+            "connect-cycles: connections timed out; the ephemeral port range is saturated by the " +
+                "previous run's TIME_WAIT sockets, so wait about 30 s before running fdleak again",
+        );
+    }
+    process.exit(completed === cycles ? 0 : 1);
 });

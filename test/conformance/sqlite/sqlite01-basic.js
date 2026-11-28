@@ -30,20 +30,20 @@ console.log("column prototype is null:", Object.getPrototypeOf(select.columns()[
 
 select.close();
 try {
-  select.all();
+    select.all();
 } catch (error) {
-  console.log("closed statement:", error.code, error.message);
+    console.log("closed statement:", error.code, error.message);
 }
 
 db.close();
 console.log("closed database open:", db.isOpen);
 try {
-  db.exec("SELECT 1");
+    db.exec("SELECT 1");
 } catch (error) {
-  console.log("closed database use:", error.code, error.message);
+    console.log("closed database use:", error.code, error.message);
 }
 try {
-  db.close();
+    db.close();
 } catch (error) {
-  console.log("close twice:", error.code, error.message);
+    console.log("close twice:", error.code, error.message);
 }

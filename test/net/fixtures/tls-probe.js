@@ -15,17 +15,17 @@ const cert = fs.readFileSync(process.argv[3]);
 
 let server;
 try {
-  server = https.createServer({ key, cert }, (req, res) => res.end("ok"));
+    server = https.createServer({ key, cert }, (req, res) => res.end("ok"));
 } catch (error) {
-  console.error(`tls-probe: ${error.code || error.message}`);
-  process.exit(1);
+    console.error(`tls-probe: ${error.code || error.message}`);
+    process.exit(1);
 }
 
 server.on("error", (error) => {
-  console.error(`tls-probe: ${error.code || error.message}`);
-  process.exit(1);
+    console.error(`tls-probe: ${error.code || error.message}`);
+    process.exit(1);
 });
 
 server.listen(0, "127.0.0.1", () => {
-  server.close(() => process.exit(0));
+    server.close(() => process.exit(0));
 });

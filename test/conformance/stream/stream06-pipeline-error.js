@@ -4,13 +4,13 @@ const { Readable, Writable, pipeline } = require("stream");
 
 const source = new Readable({ read() {} });
 const dest = new Writable({
-  write(chunk, encoding, callback) {
-    callback(new Error("dest boom"));
-  },
+    write(chunk, encoding, callback) {
+        callback(new Error("dest boom"));
+    },
 });
 source.on("error", () => {});
 dest.on("error", () => {});
 pipeline(source, dest, (err) => {
-  console.log("error", err && err.message, source.destroyed, dest.destroyed);
+    console.log("error", err && err.message, source.destroyed, dest.destroyed);
 });
 source.push("a");

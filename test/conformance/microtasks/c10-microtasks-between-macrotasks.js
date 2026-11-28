@@ -3,11 +3,11 @@
 // asserted order-insensitively in divergences/d04).
 // Expected: imm1 m-imm1 imm2 t1 m-t1   (deterministic in onde; Node is too, in practice)
 setImmediate(() => {
-  console.log('imm1');
-  queueMicrotask(() => console.log('m-imm1'));
+    console.log("imm1");
+    queueMicrotask(() => console.log("m-imm1"));
 });
 setTimeout(() => {
-  console.log('t1');
-  queueMicrotask(() => console.log('m-t1'));
+    console.log("t1");
+    queueMicrotask(() => console.log("m-t1"));
 }, 20);
-setImmediate(() => console.log('imm2'));
+setImmediate(() => console.log("imm2"));

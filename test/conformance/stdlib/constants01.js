@@ -10,14 +10,14 @@ console.log(constants.O_RDONLY, constants.F_OK, constants.COPYFILE_EXCL, constan
 console.log(constants.SIGHUP, constants.ENOENT, constants.PRIORITY_LOW);
 
 const flat = Object.keys(constants).every(
-  (key) => constants[key] === null || typeof constants[key] !== "object",
+    (key) => constants[key] === null || typeof constants[key] !== "object",
 );
 console.log("flat:", flat);
 console.log(
-  "forwarded:",
-  constants.O_RDONLY === fs.constants.O_RDONLY &&
-    constants.SIGHUP === os.constants.signals.SIGHUP &&
-    constants.ENOENT === os.constants.errno.ENOENT,
+    "forwarded:",
+    constants.O_RDONLY === fs.constants.O_RDONLY &&
+        constants.SIGHUP === os.constants.signals.SIGHUP &&
+        constants.ENOENT === os.constants.errno.ENOENT,
 );
 console.log("zlib-included:", constants.Z_NO_COMPRESSION !== undefined);
 console.log("node-prefix:", require("node:constants") === constants);

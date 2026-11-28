@@ -8,24 +8,24 @@ const net = require("net");
 
 const events = [];
 const server = net.createServer((socket) => {
-  socket.resume();
-  socket.on("end", () => {
-    events.push("server-end");
-    socket.end("reply");
-  });
-  socket.on("error", (error) => events.push(`server-error:${error.code}`));
-  socket.on("close", () => events.push("server-close"));
+    socket.resume();
+    socket.on("end", () => {
+        events.push("server-end");
+        socket.end("reply");
+    });
+    socket.on("error", (error) => events.push(`server-error:${error.code}`));
+    socket.on("close", () => events.push("server-close"));
 });
 server.listen(0, "127.0.0.1", () => {
-  const client = net.connect(server.address().port, "127.0.0.1", () => client.end("request"));
-  let data = "";
-  client.setEncoding("utf8");
-  client.on("data", (chunk) => {
-    data += chunk;
-  });
-  client.on("close", () => {
-    console.log(`reply:${JSON.stringify(data)}`);
-    console.log(`server:${events.join(",")}`);
-    server.close();
-  });
+    const client = net.connect(server.address().port, "127.0.0.1", () => client.end("request"));
+    let data = "";
+    client.setEncoding("utf8");
+    client.on("data", (chunk) => {
+        data += chunk;
+    });
+    client.on("close", () => {
+        console.log(`reply:${JSON.stringify(data)}`);
+        console.log(`server:${events.join(",")}`);
+        server.close();
+    });
 });

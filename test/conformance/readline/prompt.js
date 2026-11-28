@@ -9,21 +9,21 @@ const input = new PassThrough();
 const output = new PassThrough();
 let written = "";
 output.on("data", (chunk) => {
-  written += String(chunk);
+    written += String(chunk);
 });
 
 const rl = readline.createInterface({
-  input,
-  output,
-  terminal: false,
-  prompt: "P> ",
+    input,
+    output,
+    terminal: false,
+    prompt: "P> ",
 });
 
 rl.question("Q? ", (answer) => {
-  console.log("answer:" + answer);
-  console.log("written:" + JSON.stringify(written));
-  console.log("prompt-restored:" + rl.getPrompt());
-  rl.close();
+    console.log("answer:" + answer);
+    console.log("written:" + JSON.stringify(written));
+    console.log("prompt-restored:" + rl.getPrompt());
+    rl.close();
 });
 
 console.log("written-before:" + JSON.stringify(written));

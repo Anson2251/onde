@@ -28,73 +28,73 @@ const { PassThrough } = require("stream");
 const als = new AsyncLocalStorage();
 const cells = [];
 const record = (context, cell, value) => {
-  cells.push(`${context}:${cell}=${value === undefined ? "<none>" : value}`);
+    cells.push(`${context}:${cell}=${value === undefined ? "<none>" : value}`);
 };
 
 const contexts = {
-  await: (fn) => {
-    (async () => {
-      await null;
-      fn();
-    })();
-  },
-  then: (fn) => {
-    Promise.resolve().then(fn);
-  },
-  microtask: (fn) => queueMicrotask(fn),
-  tick: (fn) => process.nextTick(fn),
-  timeout: (fn) => setTimeout(fn, 1),
-  immediate: (fn) => setImmediate(fn),
-  fscb: (fn) => fs.readFile(__filename, () => fn()),
-  fspromise: (fn) => {
-    fs.promises.readFile(__filename).then(() => fn());
-  },
-  emitter: (fn) => {
-    const emitter = new EventEmitter();
-    emitter.on("go", fn);
-    setTimeout(() => emitter.emit("go"), 1);
-  },
-  resource: (fn) => {
-    new AsyncResource("ContextResource").runInAsyncScope(fn);
-  },
-  stream: (fn) => {
-    const stream = new PassThrough();
-    stream.on("data", fn);
-    stream.write("x");
-  },
-  tickFromThen: (fn) => {
-    Promise.resolve().then(() => process.nextTick(fn));
-  },
+    await: (fn) => {
+        (async () => {
+            await null;
+            fn();
+        })();
+    },
+    then: (fn) => {
+        Promise.resolve().then(fn);
+    },
+    microtask: (fn) => queueMicrotask(fn),
+    tick: (fn) => process.nextTick(fn),
+    timeout: (fn) => setTimeout(fn, 1),
+    immediate: (fn) => setImmediate(fn),
+    fscb: (fn) => fs.readFile(__filename, () => fn()),
+    fspromise: (fn) => {
+        fs.promises.readFile(__filename).then(() => fn());
+    },
+    emitter: (fn) => {
+        const emitter = new EventEmitter();
+        emitter.on("go", fn);
+        setTimeout(() => emitter.emit("go"), 1);
+    },
+    resource: (fn) => {
+        new AsyncResource("ContextResource").runInAsyncScope(fn);
+    },
+    stream: (fn) => {
+        const stream = new PassThrough();
+        stream.on("data", fn);
+        stream.write("x");
+    },
+    tickFromThen: (fn) => {
+        Promise.resolve().then(() => process.nextTick(fn));
+    },
 };
 
 for (const [context, run] of Object.entries(contexts)) {
-  // One run per context, with the observations made from inside it.
-  als.run(`${context}-A`, () => {
-    run(() => {
-      record(context, "inside", als.getStore());
-      new AsyncResource("Inherited").runInAsyncScope(() => {
-        record(context, "resource", als.getStore());
-      });
-      Promise.resolve().then(() => {
-        record(context, "thenchild", als.getStore());
-      });
-      setTimeout(() => record(context, "late", als.getStore()), 1);
-      als.run("nested", () => {
-        record(context, "nested", als.getStore());
-      });
-      record(context, "restored", als.getStore());
+    // One run per context, with the observations made from inside it.
+    als.run(`${context}-A`, () => {
+        run(() => {
+            record(context, "inside", als.getStore());
+            new AsyncResource("Inherited").runInAsyncScope(() => {
+                record(context, "resource", als.getStore());
+            });
+            Promise.resolve().then(() => {
+                record(context, "thenchild", als.getStore());
+            });
+            setTimeout(() => record(context, "late", als.getStore()), 1);
+            als.run("nested", () => {
+                record(context, "nested", als.getStore());
+            });
+            record(context, "restored", als.getStore());
+        });
     });
-  });
-  record(context, "outside", als.getStore());
+    record(context, "outside", als.getStore());
 
-  // A second run, started after the first, must never see the first store.
-  als.run(`${context}-B`, () => {
-    run(() => record(context, "concurrent", als.getStore()));
-  });
+    // A second run, started after the first, must never see the first store.
+    als.run(`${context}-B`, () => {
+        run(() => record(context, "concurrent", als.getStore()));
+    });
 }
 
 setTimeout(() => {
-  cells.sort();
-  console.log(cells.join("\n"));
-  console.log(`cells=${cells.length}`);
+    cells.sort();
+    console.log(cells.join("\n"));
+    console.log(`cells=${cells.length}`);
 }, 400);

@@ -10,12 +10,12 @@ fs.writeFileSync(file, "");
 const missing = path.join(dir, "missing.txt");
 
 function capture(fn) {
-  try {
-    fn();
-    return null;
-  } catch (error) {
-    return error;
-  }
+    try {
+        fn();
+        return null;
+    } catch (error) {
+        return error;
+    }
 }
 
 const enoent = capture(() => fs.readFileSync(missing));
@@ -27,7 +27,13 @@ console.log("encoding", encoding.code);
 const data = capture(() => fs.writeFileSync(file, 42));
 console.log("data", data.code);
 const mkdirFile = capture(() => fs.mkdirSync(file, { recursive: true }));
-console.log("mkdir-file", mkdirFile.code, mkdirFile.errno, mkdirFile.syscall, path.basename(mkdirFile.path));
+console.log(
+    "mkdir-file",
+    mkdirFile.code,
+    mkdirFile.errno,
+    mkdirFile.syscall,
+    path.basename(mkdirFile.path),
+);
 
 const fd = fs.openSync(file, "r");
 fs.closeSync(fd);
@@ -39,7 +45,7 @@ console.log("arg-throw", argThrow.code);
 
 let synchronous = true;
 fs.readFile(missing, (error) => {
-  console.log("callback", error.code, "async", !synchronous);
-  fs.rmSync(dir, { recursive: true, force: true });
+    console.log("callback", error.code, "async", !synchronous);
+    fs.rmSync(dir, { recursive: true, force: true });
 });
 synchronous = false;

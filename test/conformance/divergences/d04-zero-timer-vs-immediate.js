@@ -5,6 +5,6 @@
 // non-racing cases in `loop/`; this marker keeps the Node self-test and the differential run out
 // of a wall-clock race they cannot reproduce.
 const seen = [];
-setTimeout(() => seen.push('timer'), 0);
-setImmediate(() => seen.push('immediate'));
-process.on('exit', () => console.log(seen.sort().join(',')));
+setTimeout(() => seen.push("timer"), 0);
+setImmediate(() => seen.push("immediate"));
+process.on("exit", () => console.log(seen.sort().join(",")));

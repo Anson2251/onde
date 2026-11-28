@@ -26,65 +26,65 @@ let errors = 0;
 const errorCodes = {};
 
 function oneRequest() {
-  return new Promise((resolve) => {
-    const started = process.hrtime.bigint();
-    const req = http.get({ host: "127.0.0.1", port, path: "/", agent }, (res) => {
-      res.resume();
-      res.on("end", () => {
-        const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
-        latencies[slot] = elapsed;
-        slot += 1;
-        resolve();
-      });
+    return new Promise((resolve) => {
+        const started = process.hrtime.bigint();
+        const req = http.get({ host: "127.0.0.1", port, path: "/", agent }, (res) => {
+            res.resume();
+            res.on("end", () => {
+                const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
+                latencies[slot] = elapsed;
+                slot += 1;
+                resolve();
+            });
+        });
+        req.on("socket", (socket) => sockets.add(socket));
+        req.on("error", (error) => {
+            errors += 1;
+            const code = error && error.code ? error.code : "unknown";
+            errorCodes[code] = (errorCodes[code] || 0) + 1;
+            resolve();
+        });
     });
-    req.on("socket", (socket) => sockets.add(socket));
-    req.on("error", (error) => {
-      errors += 1;
-      const code = error && error.code ? error.code : "unknown";
-      errorCodes[code] = (errorCodes[code] || 0) + 1;
-      resolve();
-    });
-  });
 }
 
 async function worker(count) {
-  for (let i = 0; i < count; i += 1) await oneRequest();
+    for (let i = 0; i < count; i += 1) await oneRequest();
 }
 
 function percentile(sorted, fraction) {
-  if (sorted.length === 0) return Number.NaN;
-  const index = Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1);
-  return sorted[index];
+    if (sorted.length === 0) return Number.NaN;
+    const index = Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1);
+    return sorted[index];
 }
 
 async function main() {
-  await Promise.all(Array.from({ length: connections }, () => worker(warmup)));
-  slot = 0;
+    await Promise.all(Array.from({ length: connections }, () => worker(warmup)));
+    slot = 0;
 
-  const startedAt = process.hrtime.bigint();
-  await Promise.all(Array.from({ length: connections }, () => worker(requests)));
-  const seconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
+    const startedAt = process.hrtime.bigint();
+    await Promise.all(Array.from({ length: connections }, () => worker(requests)));
+    const seconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
 
-  const total = connections * requests;
-  const measured = latencies.subarray(0, slot);
-  const sorted = Array.from(measured).sort((a, b) => a - b);
-  const rps = total / seconds;
+    const total = connections * requests;
+    const measured = latencies.subarray(0, slot);
+    const sorted = Array.from(measured).sort((a, b) => a - b);
+    const rps = total / seconds;
 
-  console.log(
-    `RESULT connections=${sockets.size} requests=${total} seconds=${seconds.toFixed(3)} ` +
-      `rps=${rps.toFixed(1)} p50_ms=${percentile(sorted, 0.5).toFixed(3)} ` +
-      `p99_ms=${percentile(sorted, 0.99).toFixed(3)} errors=${errors} ` +
-      `error_codes=${JSON.stringify(errorCodes)}`,
-  );
+    console.log(
+        `RESULT connections=${sockets.size} requests=${total} seconds=${seconds.toFixed(3)} ` +
+            `rps=${rps.toFixed(1)} p50_ms=${percentile(sorted, 0.5).toFixed(3)} ` +
+            `p99_ms=${percentile(sorted, 0.99).toFixed(3)} errors=${errors} ` +
+            `error_codes=${JSON.stringify(errorCodes)}`,
+    );
 
-  agent.destroy();
-  if (errors !== 0 || sockets.size !== connections) {
-    process.exit(1);
-  }
+    agent.destroy();
+    if (errors !== 0 || sockets.size !== connections) {
+        process.exit(1);
+    }
 }
 
 main().catch((error) => {
-  console.error(`loadgen: ${error && error.code ? error.code : error}`);
-  agent.destroy();
-  process.exit(1);
+    console.error(`loadgen: ${error && error.code ? error.code : error}`);
+    agent.destroy();
+    process.exit(1);
 });

@@ -1,3 +1,3 @@
-const imm = setImmediate(() => console.log('nope'));
+const imm = setImmediate(() => console.log("nope"));
 clearImmediate(imm);
-console.log('cleared');
+console.log("cleared");

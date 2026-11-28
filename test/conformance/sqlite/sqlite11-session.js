@@ -3,9 +3,9 @@
 const { Database } = require("node:sqlite");
 
 function newDatabase() {
-  const db = new Database(":memory:");
-  db.exec("CREATE TABLE data(key INTEGER PRIMARY KEY, value TEXT)");
-  return db;
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE data(key INTEGER PRIMARY KEY, value TEXT)");
+    return db;
 }
 
 const source = newDatabase();
@@ -23,14 +23,14 @@ console.log("after abort:", JSON.stringify(target.prepare("SELECT * FROM data").
 
 let conflict = null;
 console.log(
-  "omit:",
-  target.applyChangeset(changeset, {
-    onConflict: (code) => {
-      conflict = code;
-      return 0;
-    },
-  }),
-  conflict === 3,
+    "omit:",
+    target.applyChangeset(changeset, {
+        onConflict: (code) => {
+            conflict = code;
+            return 0;
+        },
+    }),
+    conflict === 3,
 );
 console.log("after omit:", JSON.stringify(target.prepare("SELECT * FROM data").all()));
 
@@ -39,22 +39,22 @@ console.log("after replace:", JSON.stringify(target.prepare("SELECT * FROM data"
 
 let filtered = null;
 console.log(
-  "filter:",
-  target.applyChangeset(changeset, {
-    filter: (table) => {
-      filtered = table;
-      return false;
-    },
-    onConflict: () => 1,
-  }),
-  filtered,
+    "filter:",
+    target.applyChangeset(changeset, {
+        filter: (table) => {
+            filtered = table;
+            return false;
+        },
+        onConflict: () => 1,
+    }),
+    filtered,
 );
 
 const patchset = session.patchset();
 console.log("patchset:", patchset instanceof Uint8Array, patchset.length > 0);
 session.close();
 try {
-  session.changeset();
+    session.changeset();
 } catch (error) {
-  console.log("closed session:", error.code);
+    console.log("closed session:", error.code);
 }

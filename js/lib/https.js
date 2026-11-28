@@ -21,9 +21,9 @@ const internal = require("./internal/http.js");
 
 let BufferCtor = null;
 try {
-  BufferCtor = require("buffer").Buffer;
+    BufferCtor = require("buffer").Buffer;
 } catch (_) {
-  BufferCtor = require("./buffer.js");
+    BufferCtor = require("./buffer.js");
 }
 const Buffer = BufferCtor;
 
@@ -32,35 +32,35 @@ const Buffer = BufferCtor;
 /// The pooling layer for HTTPS. Everything (keep-alive, free sockets, queueing) is `http.Agent`;
 /// only the socket factory and the protocol differ.
 class Agent extends http.Agent {
-  constructor(options) {
-    super(options);
-    this.protocol = "https:";
-  }
+    constructor(options) {
+        super(options);
+        this.protocol = "https:";
+    }
 
-  createConnection(options) {
-    // `tls.connect` knows how to consume `options.tlsOptions` (see `tls.connect`), which is where
-    // `ca`/`cert`/`key`/`rejectUnauthorized`/`servername`/`ALPNProtocols` live after
-    // `https.request` normalized them.
-    return tls.connect(options);
-  }
+    createConnection(options) {
+        // `tls.connect` knows how to consume `options.tlsOptions` (see `tls.connect`), which is where
+        // `ca`/`cert`/`key`/`rejectUnauthorized`/`servername`/`ALPNProtocols` live after
+        // `https.request` normalized them.
+        return tls.connect(options);
+    }
 
-  /// The pool key must include the TLS options: a socket opened with one `ca` (or with
-  /// verification disabled) must never be reused for a request that asked for another. Node's
-  /// `https.Agent.getName` appends the same fields for the same reason.
-  getName(options) {
-    return super.getName(options) + tlsPoolKey(options.tlsOptions);
-  }
+    /// The pool key must include the TLS options: a socket opened with one `ca` (or with
+    /// verification disabled) must never be reused for a request that asked for another. Node's
+    /// `https.Agent.getName` appends the same fields for the same reason.
+    getName(options) {
+        return super.getName(options) + tlsPoolKey(options.tlsOptions);
+    }
 }
 
 /// A compact, stable rendering of the TLS options for the agent's pool key.
 function tlsPoolKey(tlsOptions) {
-  if (tlsOptions === undefined || tlsOptions === null) return "";
-  const ca =
-    tlsOptions.ca === undefined || tlsOptions.ca === null
-      ? ""
-      : Buffer.from(tlsOptions.ca).toString("base64");
-  const alpn = (tlsOptions.ALPNProtocols || []).join(",");
-  return `:${tlsOptions.servername || ""}:${tlsOptions.rejectUnauthorized !== false}:${ca}:${alpn}`;
+    if (tlsOptions === undefined || tlsOptions === null) return "";
+    const ca =
+        tlsOptions.ca === undefined || tlsOptions.ca === null
+            ? ""
+            : Buffer.from(tlsOptions.ca).toString("base64");
+    const alpn = (tlsOptions.ALPNProtocols || []).join(",");
+    return `:${tlsOptions.servername || ""}:${tlsOptions.rejectUnauthorized !== false}:${ca}:${alpn}`;
 }
 
 const globalAgent = new Agent({ keepAlive: true });
@@ -68,33 +68,33 @@ const globalAgent = new Agent({ keepAlive: true });
 // --- Server ----------------------------------------------------------------------------------
 
 class Server extends http.Server {
-  constructor(options, requestListener) {
-    super(options, requestListener);
-    const settings = options === undefined || options === null ? {} : options;
-    // Validated at creation like Node's `tls.createServer`: a missing cert/key is a throw, not a
-    // surprise `error` on the first connection.
-    this._tlsOptions = tls.serverOptions(settings);
-    // Node's https.Server is a tls.Server, so it also reports `'secureConnection'`, after the
-    // socket's TLS details are known (the `connected` event follows `connection`).
-    this.on("connection", (socket) => {
-      process.nextTick(() => {
-        if (!socket.destroyed) this.emit("secureConnection", socket);
-      });
-    });
-  }
+    constructor(options, requestListener) {
+        super(options, requestListener);
+        const settings = options === undefined || options === null ? {} : options;
+        // Validated at creation like Node's `tls.createServer`: a missing cert/key is a throw, not a
+        // surprise `error` on the first connection.
+        this._tlsOptions = tls.serverOptions(settings);
+        // Node's https.Server is a tls.Server, so it also reports `'secureConnection'`, after the
+        // socket's TLS details are known (the `connected` event follows `connection`).
+        this.on("connection", (socket) => {
+            process.nextTick(() => {
+                if (!socket.destroyed) this.emit("secureConnection", socket);
+            });
+        });
+    }
 
-  setSecureContext(options) {
-    this._tlsOptions = tls.serverOptions(options);
-    return this;
-  }
+    setSecureContext(options) {
+        this._tlsOptions = tls.serverOptions(options);
+        return this;
+    }
 }
 
 function createServer(options, requestListener) {
-  if (typeof options === "function") {
-    requestListener = options;
-    options = undefined;
-  }
-  return new Server(options, requestListener);
+    if (typeof options === "function") {
+        requestListener = options;
+        options = undefined;
+    }
+    return new Server(options, requestListener);
 }
 
 // --- client ----------------------------------------------------------------------------------
@@ -103,43 +103,43 @@ function createServer(options, requestListener) {
 /// TLS payload and the default agent. `internal/http` does the rest, so header handling, framing
 /// and keep-alive are one implementation.
 function request(input, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
-  const opts = internal.normalizeRequestOptions(input, options, "https:", 443);
-  opts._tls = tls.tlsOptionsFrom(opts);
-  if (opts.agent === undefined || opts.agent === null) {
-    opts.agent = globalAgent;
-  } else if (opts.agent === false) {
-    opts.agent = new Agent({ keepAlive: false, maxSockets: 1 });
-  }
-  return internal.sendRequest(opts, callback);
+    if (typeof options === "function") {
+        callback = options;
+        options = undefined;
+    }
+    const opts = internal.normalizeRequestOptions(input, options, "https:", 443);
+    opts._tls = tls.tlsOptionsFrom(opts);
+    if (opts.agent === undefined || opts.agent === null) {
+        opts.agent = globalAgent;
+    } else if (opts.agent === false) {
+        opts.agent = new Agent({ keepAlive: false, maxSockets: 1 });
+    }
+    return internal.sendRequest(opts, callback);
 }
 
 function get(...args) {
-  const req = request(...args);
-  req.end();
-  return req;
+    const req = request(...args);
+    req.end();
+    return req;
 }
 
 // --- exports ---------------------------------------------------------------------------------
 
 module.exports = {
-  STATUS_CODES: http.STATUS_CODES,
-  METHODS: http.METHODS,
-  maxHeaderSize: http.maxHeaderSize,
-  Agent,
-  globalAgent,
-  Server,
-  ClientRequest: http.ClientRequest,
-  ServerResponse: http.ServerResponse,
-  IncomingMessage: http.IncomingMessage,
-  OutgoingMessage: http.OutgoingMessage,
-  _connectionListener: http._connectionListener,
-  createServer,
-  request,
-  get,
-  validateHeaderName: http.validateHeaderName,
-  validateHeaderValue: http.validateHeaderValue,
+    STATUS_CODES: http.STATUS_CODES,
+    METHODS: http.METHODS,
+    maxHeaderSize: http.maxHeaderSize,
+    Agent,
+    globalAgent,
+    Server,
+    ClientRequest: http.ClientRequest,
+    ServerResponse: http.ServerResponse,
+    IncomingMessage: http.IncomingMessage,
+    OutgoingMessage: http.OutgoingMessage,
+    _connectionListener: http._connectionListener,
+    createServer,
+    request,
+    get,
+    validateHeaderName: http.validateHeaderName,
+    validateHeaderValue: http.validateHeaderValue,
 };

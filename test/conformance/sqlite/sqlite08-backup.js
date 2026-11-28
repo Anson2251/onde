@@ -11,18 +11,23 @@ const target = path.join(os.tmpdir(), `onde-sqlite-backup-${process.pid}.db`);
 const progress = [];
 
 backup(source, target, {
-  rate: 1,
-  progress: (entry) => {
-    progress.push(entry.totalPages >= entry.remainingPages);
-  },
-}).then((pages) => {
-  console.log("resolved promise:", typeof pages, pages > 0);
-  console.log("progress:", progress.length > 0, progress.every(Boolean));
-  const copy = new Database(target);
-  console.log("copied rows:", JSON.stringify(copy.prepare("SELECT COUNT(*) AS n FROM t").get()));
-  copy.close();
-  source.close();
-  fs.rmSync(target, { force: true });
-}).catch((error) => {
-  console.log("backup failed:", error.code);
-});
+    rate: 1,
+    progress: (entry) => {
+        progress.push(entry.totalPages >= entry.remainingPages);
+    },
+})
+    .then((pages) => {
+        console.log("resolved promise:", typeof pages, pages > 0);
+        console.log("progress:", progress.length > 0, progress.every(Boolean));
+        const copy = new Database(target);
+        console.log(
+            "copied rows:",
+            JSON.stringify(copy.prepare("SELECT COUNT(*) AS n FROM t").get()),
+        );
+        copy.close();
+        source.close();
+        fs.rmSync(target, { force: true });
+    })
+    .catch((error) => {
+        console.log("backup failed:", error.code);
+    });

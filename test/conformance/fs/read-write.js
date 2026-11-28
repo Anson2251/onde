@@ -19,10 +19,10 @@ console.log("options", fs.readFileSync(file, { encoding: "utf8" }));
 
 let synchronous = true;
 fs.readFile(file, "utf8", (error, text) => {
-  console.log("callback", error, text, "async", !synchronous);
-  fs.writeFile(file, "cb", (writeError) => {
-    console.log("write-callback", writeError, fs.readFileSync(file, "utf8"));
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
+    console.log("callback", error, text, "async", !synchronous);
+    fs.writeFile(file, "cb", (writeError) => {
+        console.log("write-callback", writeError, fs.readFileSync(file, "utf8"));
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
 });
 synchronous = false;

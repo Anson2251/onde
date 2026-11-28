@@ -18,17 +18,17 @@ const again = select.iterate();
 console.log("again:", JSON.stringify(again.next()));
 select.all();
 try {
-  again.next();
+    again.next();
 } catch (error) {
-  console.log("invalidated:", error.code, error.message);
+    console.log("invalidated:", error.code, error.message);
 }
 
 const closed = select.iterate();
 closed.next();
 select.close();
 try {
-  closed.next();
+    closed.next();
 } catch (error) {
-  console.log("closed statement:", error.code, error.message);
+    console.log("closed statement:", error.code, error.message);
 }
 db.close();

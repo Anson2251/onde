@@ -7,25 +7,25 @@ const http = require("http");
 const net = require("net");
 
 function probe(options, sendPartialHead, label, done) {
-  const server = http.createServer(options, (req, res) => res.end("ok"));
-  server.listen(0, "127.0.0.1", () => {
-    const socket = net.connect(server.address().port, "127.0.0.1", () => {
-      if (sendPartialHead) socket.write("GET / HTTP/1.1\r\nHost: example\r\nX-Partial: ");
+    const server = http.createServer(options, (req, res) => res.end("ok"));
+    server.listen(0, "127.0.0.1", () => {
+        const socket = net.connect(server.address().port, "127.0.0.1", () => {
+            if (sendPartialHead) socket.write("GET / HTTP/1.1\r\nHost: example\r\nX-Partial: ");
+        });
+        let closed = false;
+        socket.on("close", () => {
+            closed = true;
+        });
+        socket.on("error", () => {});
+        // Generous window: the deadline is 300 ms and what is being asserted is "it happens", not when.
+        setTimeout(() => {
+            console.log(`${label} "${closed}"`);
+            socket.destroy();
+            server.close(done);
+        }, 1200);
     });
-    let closed = false;
-    socket.on("close", () => {
-      closed = true;
-    });
-    socket.on("error", () => {});
-    // Generous window: the deadline is 300 ms and what is being asserted is "it happens", not when.
-    setTimeout(() => {
-      console.log(`${label} "${closed}"`);
-      socket.destroy();
-      server.close(done);
-    }, 1200);
-  });
 }
 
 probe({ headersTimeout: 300 }, true, "headers-timeout-closed", () => {
-  probe({ timeout: 300 }, false, "server-timeout-closed", () => {});
+    probe({ timeout: 300 }, false, "server-timeout-closed", () => {});
 });

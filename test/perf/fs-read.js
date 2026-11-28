@@ -18,8 +18,8 @@ const file = process.argv[2];
 const iterations = Number(process.argv[3] || 30);
 
 if (!file) {
-  console.error("usage: fs-read.js <file> [iterations]");
-  process.exit(2);
+    console.error("usage: fs-read.js <file> [iterations]");
+    process.exit(2);
 }
 
 const size = fs.statSync(file).size;
@@ -30,14 +30,14 @@ for (let i = 0; i < 3; i += 1) fs.readFileSync(file);
 
 const samples = [];
 for (let i = 0; i < iterations; i += 1) {
-  const started = process.hrtime.bigint();
-  const bytes = fs.readFileSync(file);
-  const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
-  if (bytes.length !== size) {
-    console.error(`fs-read: short read ${bytes.length} of ${size}`);
-    process.exit(1);
-  }
-  samples.push(elapsed);
+    const started = process.hrtime.bigint();
+    const bytes = fs.readFileSync(file);
+    const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
+    if (bytes.length !== size) {
+        console.error(`fs-read: short read ${bytes.length} of ${size}`);
+        process.exit(1);
+    }
+    samples.push(elapsed);
 }
 
 samples.sort((a, b) => a - b);
@@ -45,6 +45,6 @@ const median = samples[Math.floor(samples.length / 2)];
 const min = samples[0];
 const max = samples[samples.length - 1];
 console.log(
-  `RESULT mode=sync bytes=${size} iterations=${iterations} median_ms=${median.toFixed(3)} ` +
-    `min_ms=${min.toFixed(3)} max_ms=${max.toFixed(3)}`,
+    `RESULT mode=sync bytes=${size} iterations=${iterations} median_ms=${median.toFixed(3)} ` +
+        `min_ms=${min.toFixed(3)} max_ms=${max.toFixed(3)}`,
 );

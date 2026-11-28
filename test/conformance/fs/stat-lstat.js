@@ -16,8 +16,16 @@ const own = fs.lstatSync(link);
 console.log("stat", followed.isFile(), followed.isSymbolicLink(), followed.size);
 console.log("lstat", own.isSymbolicLink(), own.isFile());
 console.log("mode", (fs.statSync(file).mode & 0o777).toString(8));
-console.log("dates", followed.atime instanceof Date, followed.mtime instanceof Date, followed.birthtime instanceof Date);
+console.log(
+    "dates",
+    followed.atime instanceof Date,
+    followed.mtime instanceof Date,
+    followed.birthtime instanceof Date,
+);
 console.log("plain", fs.statSync(file).isFile(), fs.lstatSync(file).isSymbolicLink());
-console.log("missing", fs.statSync(path.join(dir, "nope"), { throwIfNoEntry: false }) === undefined);
+console.log(
+    "missing",
+    fs.statSync(path.join(dir, "nope"), { throwIfNoEntry: false }) === undefined,
+);
 
 fs.rmSync(dir, { recursive: true, force: true });

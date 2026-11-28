@@ -13,37 +13,37 @@ let initTriggerOk = true;
 let seen = new Set();
 
 const hook = createHook({
-  init(id, type, trigger) {
-    inits += 1;
-    if (trigger <= 0) initTriggerOk = false;
-    seen.add(id);
-  },
-  before(id) {
-    befores += 1;
-    if (executionAsyncId() !== id) beforeMatched = false;
-  },
-  after(id) {
-    afters += 1;
-    if (executionAsyncId() !== id) afterMatched = false;
-  },
-  promiseResolve(id) {
-    resolves += 1;
-    if (!seen.has(id)) initTriggerOk = false;
-  },
+    init(id, type, trigger) {
+        inits += 1;
+        if (trigger <= 0) initTriggerOk = false;
+        seen.add(id);
+    },
+    before(id) {
+        befores += 1;
+        if (executionAsyncId() !== id) beforeMatched = false;
+    },
+    after(id) {
+        afters += 1;
+        if (executionAsyncId() !== id) afterMatched = false;
+    },
+    promiseResolve(id) {
+        resolves += 1;
+        if (!seen.has(id)) initTriggerOk = false;
+    },
 });
 hook.enable();
 
 setTimeout(() => {
-  Promise.resolve().then(() => {});
+    Promise.resolve().then(() => {});
 }, 1);
 
 const target = setTimeout(() => {
-  hook.disable();
-  console.log("inits", inits > 0);
-  console.log("before-after-pairs", befores > 0 && afters > 0);
-  console.log("before-context", beforeMatched);
-  console.log("after-context", afterMatched);
-  console.log("resolve-after-init", resolves > 0 && initTriggerOk);
-  console.log("root", executionAsyncId() > 0, triggerAsyncId() >= 0);
-  clearTimeout(target);
+    hook.disable();
+    console.log("inits", inits > 0);
+    console.log("before-after-pairs", befores > 0 && afters > 0);
+    console.log("before-context", beforeMatched);
+    console.log("after-context", afterMatched);
+    console.log("resolve-after-init", resolves > 0 && initTriggerOk);
+    console.log("root", executionAsyncId() > 0, triggerAsyncId() >= 0);
+    clearTimeout(target);
 }, 10);

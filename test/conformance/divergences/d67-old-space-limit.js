@@ -7,18 +7,18 @@ const path = require("path");
 
 const hog = path.join(os.tmpdir(), `ln-hog-${process.pid}.js`);
 fs.writeFileSync(
-  hog,
-  "const held = [];\nfor (let i = 0; i < 64; i += 1) held.push(new Array(1024 * 1024).fill(i));\n",
+    hog,
+    "const held = [];\nfor (let i = 0; i < 64; i += 1) held.push(new Array(1024 * 1024).fill(i));\n",
 );
 const child = spawn(process.execPath, ["--max-old-space-size=16", hog], {
-  stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
 child.stderr.on("data", (chunk) => {
-  stderr += chunk;
+    stderr += chunk;
 });
 child.on("close", (code) => {
-  fs.unlinkSync(hog);
-  console.log("exit", code);
-  console.log("oom", /out of memory/i.test(stderr));
+    fs.unlinkSync(hog);
+    console.log("exit", code);
+    console.log("oom", /out of memory/i.test(stderr));
 });

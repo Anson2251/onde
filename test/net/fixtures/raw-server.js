@@ -11,21 +11,21 @@ const fs = require("fs");
 const net = require("net");
 
 const server = net.createServer((socket) => {
-  socket.on("data", () => {});
-  socket.on("error", () => {});
+    socket.on("data", () => {});
+    socket.on("error", () => {});
 });
 
 server.on("error", (error) => {
-  console.error(`raw-server: ${error.code || error.message}`);
-  process.exit(1);
+    console.error(`raw-server: ${error.code || error.message}`);
+    process.exit(1);
 });
 
 server.listen(0, "127.0.0.1", () => {
-  fs.writeFileSync(process.argv[2], String(server.address().port));
+    fs.writeFileSync(process.argv[2], String(server.address().port));
 });
 
 function shutdown() {
-  server.close(() => process.exit(0));
+    server.close(() => process.exit(0));
 }
 
 process.on("SIGTERM", shutdown);

@@ -12,9 +12,9 @@ console.log(emitter.listenerCount("x"));
 emitter.removeAllListeners("x");
 console.log(emitter.listenerCount("x"));
 try {
-  emitter.emit("error", new Error("boom"));
+    emitter.emit("error", new Error("boom"));
 } catch (error) {
-  console.log("threw", error.message);
+    console.log("threw", error.message);
 }
 const monitored = new EventEmitter();
 monitored.on(errorMonitor, () => console.log("monitor"));

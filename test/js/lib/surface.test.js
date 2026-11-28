@@ -6,18 +6,18 @@
 // onde-only).
 
 if (typeof globalThis.__ln_host !== "object") {
-  console.log("skip: onde host unavailable");
-  process.exit(0);
+    console.log("skip: onde host unavailable");
+    process.exit(0);
 }
 
 let failures = 0;
 function check(label, actual, expected) {
-  if (actual === expected) return;
-  failures += 1;
-  console.log(`not ok ${label}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
+    if (actual === expected) return;
+    failures += 1;
+    console.log(`not ok ${label}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
 }
 function checkName(value, expected) {
-  check(`name ${expected}`, typeof value === "function" ? value.name : undefined, expected);
+    check(`name ${expected}`, typeof value === "function" ? value.name : undefined, expected);
 }
 
 const { EventEmitter, once } = require("events");

@@ -17,39 +17,47 @@ const ca = fs.readFileSync(path.join(fixtures, "ca-cert.pem"));
 const otherCa = fs.readFileSync(path.join(fixtures, "other-ca-cert.pem"));
 
 const server = https.createServer({ key, cert }, (req, res) => {
-  res.end("ok");
+    res.end("ok");
 });
 
 function failure(options, label) {
-  return new Promise((resolve) => {
-    const req = https.request(Object.assign({ host: "127.0.0.1", port: server.address().port }, options), () => {
-      console.log(`${label}:unexpected-success`);
-      resolve();
+    return new Promise((resolve) => {
+        const req = https.request(
+            Object.assign({ host: "127.0.0.1", port: server.address().port }, options),
+            () => {
+                console.log(`${label}:unexpected-success`);
+                resolve();
+            },
+        );
+        req.on("error", (error) => {
+            console.log(`${label}:${error.code}`);
+            resolve();
+        });
+        req.end();
     });
-    req.on("error", (error) => {
-      console.log(`${label}:${error.code}`);
-      resolve();
-    });
-    req.end();
-  });
 }
 
 server.listen(0, "127.0.0.1", async () => {
-  await new Promise((resolve) => {
-    const req = https.get({ host: "127.0.0.1", port: server.address().port, rejectUnauthorized: false }, (res) => {
-      const socket = res.socket;
-      console.log(`unverified:${res.statusCode}:${socket.encrypted}:${socket.authorized}`);
-      console.log(`unverified-error:${socket.authorizationError}`);
-      res.resume();
-      res.on("end", resolve);
+    await new Promise((resolve) => {
+        const req = https.get(
+            { host: "127.0.0.1", port: server.address().port, rejectUnauthorized: false },
+            (res) => {
+                const socket = res.socket;
+                console.log(
+                    `unverified:${res.statusCode}:${socket.encrypted}:${socket.authorized}`,
+                );
+                console.log(`unverified-error:${socket.authorizationError}`);
+                res.resume();
+                res.on("end", resolve);
+            },
+        );
+        req.on("error", (error) => {
+            console.log(`unverified:${error.code}`);
+            resolve();
+        });
     });
-    req.on("error", (error) => {
-      console.log(`unverified:${error.code}`);
-      resolve();
-    });
-  });
 
-  await failure({ ca: otherCa, agent: false }, "untrusted");
-  await failure({ ca, servername: "wrong.example", agent: false }, "altname");
-  server.close();
+    await failure({ ca: otherCa, agent: false }, "untrusted");
+    await failure({ ca, servername: "wrong.example", agent: false }, "altname");
+    server.close();
 });

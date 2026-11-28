@@ -14,12 +14,12 @@ console.log("again", fs.mkdirSync(path.join(dir, "a/b/c"), { recursive: true }) 
 console.log("existing", fs.mkdirSync(dir, { recursive: true }) === undefined);
 
 try {
-  fs.mkdirSync(file, { recursive: true });
+    fs.mkdirSync(file, { recursive: true });
 } catch (error) {
-  console.log("file", error.code);
+    console.log("file", error.code);
 }
 
 fs.mkdir(path.join(dir, "cb/deep"), { recursive: true }, (error, created) => {
-  console.log("callback", error, created === path.join(dir, "cb"));
-  fs.rmSync(dir, { recursive: true, force: true });
+    console.log("callback", error, created === path.join(dir, "cb"));
+    fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -9,44 +9,49 @@ const { URL, URLSearchParams } = url;
 let passed = 0;
 
 function assert(condition, label, detail) {
-  if (!condition) {
-    console.error("not ok " + label + (detail ? " — " + detail : ""));
-    process.exit(1);
-  }
-  passed++;
-  console.log("ok " + label);
+    if (!condition) {
+        console.error("not ok " + label + (detail ? " — " + detail : ""));
+        process.exit(1);
+    }
+    passed++;
+    console.log("ok " + label);
 }
 
 function assertEqual(actual, expected, label) {
-  const actualJson = JSON.stringify(actual);
-  const expectedJson = JSON.stringify(expected);
-  assert(
-    actualJson === expectedJson,
-    label,
-    actualJson === expectedJson ? "" : `expected ${expectedJson}, got ${actualJson}`,
-  );
+    const actualJson = JSON.stringify(actual);
+    const expectedJson = JSON.stringify(expected);
+    assert(
+        actualJson === expectedJson,
+        label,
+        actualJson === expectedJson ? "" : `expected ${expectedJson}, got ${actualJson}`,
+    );
 }
 
 function assertThrowsURL(input, label, base) {
-  try {
-    // eslint-disable-next-line no-new
-    new URL(input, base);
-  } catch (err) {
-    assert(
-      err instanceof TypeError && err.code === "ERR_INVALID_URL" &&
-        err.input === String(input),
-      label,
-      `${err.name} code=${err.code} input=${JSON.stringify(err.input)}`,
-    );
-    return;
-  }
-  assert(false, label, "did not throw");
+    try {
+        // eslint-disable-next-line no-new
+        new URL(input, base);
+    } catch (err) {
+        assert(
+            err instanceof TypeError &&
+                err.code === "ERR_INVALID_URL" &&
+                err.input === String(input),
+            label,
+            `${err.name} code=${err.code} input=${JSON.stringify(err.input)}`,
+        );
+        return;
+    }
+    assert(false, label, "did not throw");
 }
 
 // --- WHATWG URL: parsing and serialisation --------------------------------
 
 const basic = new URL("HTTP://User:Pa%20ss@Example.COM:80/a/../b?q=a b#f g");
-assertEqual(basic.href, "http://User:Pa%20ss@example.com/b?q=a%20b#f%20g", "href normalises scheme, host, port, path and query");
+assertEqual(
+    basic.href,
+    "http://User:Pa%20ss@example.com/b?q=a%20b#f%20g",
+    "href normalises scheme, host, port, path and query",
+);
 assertEqual(basic.protocol, "http:", "protocol getter");
 assertEqual(basic.username, "User", "username getter");
 assertEqual(basic.password, "Pa%20ss", "password getter keeps percent encoding");
@@ -60,19 +65,51 @@ assertEqual(basic.origin, "http://example.com", "origin for an http URL");
 assertEqual(basic.toString(), basic.href, "toString() returns href");
 assertEqual(basic.toJSON(), basic.href, "toJSON() returns href");
 
-assertEqual(new URL("https://example.com:443/").href, "https://example.com/", "https default port is stripped");
+assertEqual(
+    new URL("https://example.com:443/").href,
+    "https://example.com/",
+    "https default port is stripped",
+);
 assertEqual(new URL("ws://a:80/b").href, "ws://a/b", "ws default port is stripped");
 assertEqual(new URL("foo://a:99/b").href, "foo://a:99/b", "non-special URLs keep explicit ports");
-assertEqual(new URL("http://example.com/a/./b/../c").pathname, "/a/c", "path dot-segment normalisation");
-assertEqual(new URL("http://example.com/%2e%2e/a").pathname, "/a", "percent-encoded dot segments are normalised");
-assertEqual(new URL("http://example.com/%zz?x=%zz#%zz").href, "http://example.com/%zz?x=%zz#%zz", "invalid percent escapes survive in URL components");
-assertEqual(new URL("http://example.com/?q='").search, "?q=%27", "special-query encodes the apostrophe");
-assertEqual(new URL("foo://example.com/?q='").search, "?q='", "non-special query leaves the apostrophe");
+assertEqual(
+    new URL("http://example.com/a/./b/../c").pathname,
+    "/a/c",
+    "path dot-segment normalisation",
+);
+assertEqual(
+    new URL("http://example.com/%2e%2e/a").pathname,
+    "/a",
+    "percent-encoded dot segments are normalised",
+);
+assertEqual(
+    new URL("http://example.com/%zz?x=%zz#%zz").href,
+    "http://example.com/%zz?x=%zz#%zz",
+    "invalid percent escapes survive in URL components",
+);
+assertEqual(
+    new URL("http://example.com/?q='").search,
+    "?q=%27",
+    "special-query encodes the apostrophe",
+);
+assertEqual(
+    new URL("foo://example.com/?q='").search,
+    "?q='",
+    "non-special query leaves the apostrophe",
+);
 assertEqual(new URL("http://a%2eb.com/").hostname, "a.b.com", "percent-decoded host dots");
-assertEqual(new URL("http://0x7f.1/").host, "127.0.0.1", "IPv4 hex and short-form canonicalisation");
+assertEqual(
+    new URL("http://0x7f.1/").host,
+    "127.0.0.1",
+    "IPv4 hex and short-form canonicalisation",
+);
 assertEqual(new URL("http://2130706433/").host, "127.0.0.1", "IPv4 decimal canonicalisation");
 assertEqual(new URL("http://[0:0:0:0:0:0:0:1]/").host, "[::1]", "IPv6 compression");
-assertEqual(new URL("http://[::ffff:1.2.3.4]/").host, "[::ffff:102:304]", "IPv6 embedded IPv4 serialisation");
+assertEqual(
+    new URL("http://[::ffff:1.2.3.4]/").host,
+    "[::ffff:102:304]",
+    "IPv6 embedded IPv4 serialisation",
+);
 assertEqual(new URL("http://[::1]:8080/").host, "[::1]:8080", "IPv6 host with port");
 assertEqual(new URL("http://☃.net/").host, "xn--n3h.net", "Unicode host is punycoded");
 assertEqual(new URL("http://faß.de/").host, "xn--fa-hia.de", "IDNA is non-transitional for ß");
@@ -81,37 +118,101 @@ assertEqual(new URL("foo://☃/").host, "%E2%98%83", "non-special hosts are perc
 assertEqual(new URL("http://u s@host/").href, "http://u%20s@host/", "userinfo encodes a space");
 assertEqual(new URL("http://a@b@c/").href, "http://a%40b@c/", "only the last @ separates the host");
 assertEqual(new URL("http://example.com:/").port, "", "an empty port is dropped");
-assertEqual(new URL("http://example.com:00080/").port, "", "leading zeroes in a default port are dropped");
+assertEqual(
+    new URL("http://example.com:00080/").port,
+    "",
+    "leading zeroes in a default port are dropped",
+);
 
 assertEqual(new URL("mailto:a@b.com").href, "mailto:a@b.com", "opaque path href");
 assertEqual(new URL("mailto:a@b.com").origin, "null", "opaque URLs have a null origin");
-assertEqual(new URL("data:text/plain,hi there").pathname, "text/plain,hi there", "opaque paths keep interior spaces");
-assertEqual(new URL("data:hi ?x").href, "data:hi%20?x", "a trailing opaque space before a query is encoded");
+assertEqual(
+    new URL("data:text/plain,hi there").pathname,
+    "text/plain,hi there",
+    "opaque paths keep interior spaces",
+);
+assertEqual(
+    new URL("data:hi ?x").href,
+    "data:hi%20?x",
+    "a trailing opaque space before a query is encoded",
+);
 assertEqual(new URL("data:hi  ").href, "data:hi", "trailing opaque spaces are removed");
-assertEqual(new URL("blob:https://example.com/id").origin, "https://example.com", "blob origin comes from the inner URL");
+assertEqual(
+    new URL("blob:https://example.com/id").origin,
+    "https://example.com",
+    "blob origin comes from the inner URL",
+);
 assertEqual(new URL("blob:null/x").origin, "null", "blob with a null inner origin");
 
 assertEqual(new URL("file:///tmp/x").href, "file:///tmp/x", "file URL with an empty host");
-assertEqual(new URL("file://localhost/tmp/x").href, "file:///tmp/x", "file localhost host is emptied");
+assertEqual(
+    new URL("file://localhost/tmp/x").href,
+    "file:///tmp/x",
+    "file localhost host is emptied",
+);
 assertEqual(new URL("file:relative").href, "file:///relative", "file-relative input is rooted");
 assertEqual(new URL("file:///C|/x").href, "file:///C:/x", "file drive letter normalisation");
-assertEqual(new URL("file:///C:/a/../../b").href, "file:///C:/b", "file '..' cannot escape the drive root");
+assertEqual(
+    new URL("file:///C:/a/../../b").href,
+    "file:///C:/b",
+    "file '..' cannot escape the drive root",
+);
 assertEqual(new URL("file:///tmp/x").origin, "null", "file URLs have a null origin");
 
 // Relative resolution.
 assertEqual(new URL("../d", "https://a/b/c").href, "https://a/d", "relative '../d' resolution");
 assertEqual(new URL("//h/x", "https://a/b/c").href, "https://h/x", "protocol-relative resolution");
-assertEqual(new URL("?q", "https://a/b/c?x#y").href, "https://a/b/c?q", "query-only relative clears the fragment");
-assertEqual(new URL("#f", "https://a/b/c?x#y").href, "https://a/b/c?x#f", "fragment-only relative keeps the query");
-assertEqual(new URL("", "https://a/b/c?x#y").href, "https://a/b/c?x", "empty relative keeps query, clears fragment");
+assertEqual(
+    new URL("?q", "https://a/b/c?x#y").href,
+    "https://a/b/c?q",
+    "query-only relative clears the fragment",
+);
+assertEqual(
+    new URL("#f", "https://a/b/c?x#y").href,
+    "https://a/b/c?x#f",
+    "fragment-only relative keeps the query",
+);
+assertEqual(
+    new URL("", "https://a/b/c?x#y").href,
+    "https://a/b/c?x",
+    "empty relative keeps query, clears fragment",
+);
 assertEqual(new URL("/x/y", "https://a/b/c").href, "https://a/x/y", "absolute path resolution");
-assertEqual(new URL("x/./y/../z", "https://a/b/c").href, "https://a/b/x/z", "relative path dot normalisation");
-assertEqual(new URL("https:g", "https://a/b/c").href, "https://a/b/g", "same special scheme resolves relatively");
-assertEqual(new URL("http:g", "https://a/b/c").href, "http://g/", "different special scheme is absolute");
-assertEqual(new URL("d", "foo://a/b/c").href, "foo://a/b/d", "relative resolution for a non-special URL");
-assertEqual(new URL("//h/x", "file://host/a/b").href, "file://h/x", "file protocol-relative resolution");
-assertEqual(new URL("/x", "file:///C:/a/b").href, "file:///C:/x", "file absolute path inherits the drive");
-assertEqual(new URL("///x", "file:///a/b").href, "file:///x", "file keeps extra slashes as path segments");
+assertEqual(
+    new URL("x/./y/../z", "https://a/b/c").href,
+    "https://a/b/x/z",
+    "relative path dot normalisation",
+);
+assertEqual(
+    new URL("https:g", "https://a/b/c").href,
+    "https://a/b/g",
+    "same special scheme resolves relatively",
+);
+assertEqual(
+    new URL("http:g", "https://a/b/c").href,
+    "http://g/",
+    "different special scheme is absolute",
+);
+assertEqual(
+    new URL("d", "foo://a/b/c").href,
+    "foo://a/b/d",
+    "relative resolution for a non-special URL",
+);
+assertEqual(
+    new URL("//h/x", "file://host/a/b").href,
+    "file://h/x",
+    "file protocol-relative resolution",
+);
+assertEqual(
+    new URL("/x", "file:///C:/a/b").href,
+    "file:///C:/x",
+    "file absolute path inherits the drive",
+);
+assertEqual(
+    new URL("///x", "file:///a/b").href,
+    "file:///x",
+    "file keeps extra slashes as path segments",
+);
 
 // Invalid input.
 assertThrowsURL("http://exa mple.com", "space in host throws ERR_INVALID_URL");
@@ -124,7 +225,11 @@ assertEqual(URL.canParse("https://a/"), true, "URL.canParse() accepts a valid UR
 assertEqual(URL.canParse("/x"), false, "URL.canParse() rejects a relative URL without a base");
 assertEqual(URL.canParse("/x", "https://a/"), true, "URL.canParse() honours a base");
 assertEqual(URL.parse("not a url"), null, "URL.parse() returns null for invalid input");
-assertEqual(URL.parse("/x", "https://a/b").href, "https://a/x", "URL.parse() returns a URL for valid input");
+assertEqual(
+    URL.parse("/x", "https://a/b").href,
+    "https://a/x",
+    "URL.parse() returns a URL for valid input",
+);
 
 // --- Setters ---------------------------------------------------------------
 
@@ -138,7 +243,11 @@ assertEqual(setter.username, "x%20y%40", "username setter encodes userinfo");
 setter.password = "p:q";
 assertEqual(setter.password, "p%3Aq", "password setter encodes userinfo");
 setter.host = "example.com:9090";
-assertEqual(setter.href, "http://x%20y%40:p%3Aq@example.com:9090/b?c#d", "host setter replaces host and port");
+assertEqual(
+    setter.href,
+    "http://x%20y%40:p%3Aq@example.com:9090/b?c#d",
+    "host setter replaces host and port",
+);
 setter.hostname = "other.example";
 assertEqual(setter.host, "other.example:9090", "hostname setter keeps the port");
 setter.port = "";
@@ -150,7 +259,11 @@ assertEqual(setter.pathname, "/y%20z", "pathname setter normalises and encodes")
 setter.search = "?a b#c";
 assertEqual(setter.search, "?a%20b%23c", "search setter encodes");
 setter.search = "";
-assertEqual(setter.href, "http://x%20y%40:p%3Aq@other.example/y%20z#d", "search setter with '' removes the query but keeps the fragment");
+assertEqual(
+    setter.href,
+    "http://x%20y%40:p%3Aq@other.example/y%20z#d",
+    "search setter with '' removes the query but keeps the fragment",
+);
 setter.hash = "a b";
 assertEqual(setter.hash, "#a%20b", "hash setter encodes");
 setter.hash = "";
@@ -160,10 +273,10 @@ const setterFail = new URL("https://a/b");
 setterFail.href = "https://a/\t/b";
 assertEqual(setterFail.href, "https://a//b", "href setter removes tab characters");
 try {
-  setterFail.href = "not a url";
-  assert(false, "href setter throws on invalid input");
+    setterFail.href = "not a url";
+    assert(false, "href setter throws on invalid input");
 } catch (err) {
-  assert(err.code === "ERR_INVALID_URL", "href setter throws on invalid input");
+    assert(err.code === "ERR_INVALID_URL", "href setter throws on invalid input");
 }
 
 // --- URLSearchParams -------------------------------------------------------
@@ -183,23 +296,45 @@ assertEqual(params.toString(), "a=1&a=2&b=%25zz&c=+x&d=%E4%B8%AD&e=", "toString(
 params.delete("a", "2");
 assertEqual(params.getAll("a"), ["1"], "delete(name, value) removes only that pair");
 params.set("a", "9");
-assertEqual(params.toString(), "a=9&b=%25zz&c=+x&d=%E4%B8%AD&e=", "set() replaces the first value and drops the rest");
+assertEqual(
+    params.toString(),
+    "a=9&b=%25zz&c=+x&d=%E4%B8%AD&e=",
+    "set() replaces the first value and drops the rest",
+);
 params.append("a", "10");
 params.sort();
 assertEqual(params.toString(), "a=9&a=10&b=%25zz&c=+x&d=%E4%B8%AD&e=", "sort() is stable");
 
-assertEqual([...new URLSearchParams("x=1&y=2")], [["x", "1"], ["y", "2"]], "iteration yields pairs");
+assertEqual(
+    [...new URLSearchParams("x=1&y=2")],
+    [
+        ["x", "1"],
+        ["y", "2"],
+    ],
+    "iteration yields pairs",
+);
 assertEqual([...new URLSearchParams("x=1&y=2").keys()], ["x", "y"], "keys() iterator");
 assertEqual([...new URLSearchParams("x=1&y=2").values()], ["1", "2"], "values() iterator");
-assertEqual(new URLSearchParams({ a: 1, b: [1, 2] }).toString(), "a=1&b=1%2C2", "object init stringifies values");
+assertEqual(
+    new URLSearchParams({ a: 1, b: [1, 2] }).toString(),
+    "a=1&b=1%2C2",
+    "object init stringifies values",
+);
 assertEqual(new URLSearchParams("?a=1").toString(), "a=1", "leading '?' is tolerated");
 assertEqual(new URLSearchParams("a=1 2").toString(), "a=1+2", "spaces are serialized as '+'");
 
 const forEachPairs = [];
 new URLSearchParams("a=1&b=2").forEach((value, name, owner) => {
-  forEachPairs.push([name, value, owner instanceof URLSearchParams]);
+    forEachPairs.push([name, value, owner instanceof URLSearchParams]);
 });
-assertEqual(forEachPairs, [["a", "1", true], ["b", "2", true]], "forEach() receives (value, name, owner)");
+assertEqual(
+    forEachPairs,
+    [
+        ["a", "1", true],
+        ["b", "2", true],
+    ],
+    "forEach() receives (value, name, owner)",
+);
 
 // URL <-> searchParams synchronisation.
 const synced = new URL("https://example.com/?a=1");
@@ -235,17 +370,25 @@ assertEqual(Object.getPrototypeOf(legacyQuery.query), null, "parsed query has a 
 assertEqual(legacyQuery.query.a, ["1", "2"], "parsed query turns repeated keys into arrays");
 
 assertEqual(
-  url.format({ protocol: "https:", host: "example.com", pathname: "/a b", query: { x: 1 }, hash: "h" }),
-  "https://example.com/a b?x=1#h",
-  "url.format() serialises a legacy object",
+    url.format({
+        protocol: "https:",
+        host: "example.com",
+        pathname: "/a b",
+        query: { x: 1 },
+        hash: "h",
+    }),
+    "https://example.com/a b?x=1#h",
+    "url.format() serialises a legacy object",
 );
 assertEqual(url.format(legacy), legacy.href, "url.format() round-trips url.parse() output");
 assertEqual(url.resolve("https://a/b/c", "../d"), "https://a/d", "url.resolve() relative path");
-assertEqual(url.resolve("https://a/b/c", "//h/x"), "https://h/x", "url.resolve() protocol-relative");
-
-const httpOptions = url.urlToHttpOptions(
-  new URL("https://user:p%40ss@example.com:8443/p/a?q=1#h"),
+assertEqual(
+    url.resolve("https://a/b/c", "//h/x"),
+    "https://h/x",
+    "url.resolve() protocol-relative",
 );
+
+const httpOptions = url.urlToHttpOptions(new URL("https://user:p%40ss@example.com:8443/p/a?q=1#h"));
 assertEqual(httpOptions.protocol, "https:", "urlToHttpOptions() protocol");
 assertEqual(httpOptions.hostname, "example.com", "urlToHttpOptions() hostname");
 assertEqual(httpOptions.port, 8443, "urlToHttpOptions() numeric port");
@@ -254,10 +397,10 @@ assertEqual(httpOptions.auth, "user:p@ss", "urlToHttpOptions() decoded auth");
 
 assertEqual(url.fileURLToPath("file:///tmp/a%20b"), "/tmp/a b", "fileURLToPath() decodes");
 try {
-  url.fileURLToPath("file:///tmp/a%2Fb");
-  assert(false, "fileURLToPath() rejects encoded slashes");
+    url.fileURLToPath("file:///tmp/a%2Fb");
+    assert(false, "fileURLToPath() rejects encoded slashes");
 } catch (err) {
-  assert(err.code === "ERR_INVALID_FILE_URL_PATH", "fileURLToPath() rejects encoded slashes");
+    assert(err.code === "ERR_INVALID_FILE_URL_PATH", "fileURLToPath() rejects encoded slashes");
 }
 assertEqual(url.pathToFileURL("/tmp/a b").href, "file:///tmp/a%20b", "pathToFileURL() encodes");
 assertEqual(url.pathToFileURL("/tmp/%41").href, "file:///tmp/%2541", "pathToFileURL() escapes '%'");
@@ -269,7 +412,10 @@ assertEqual(url.domainToUnicode("xn--mnchen-3ya.de"), "münchen.de", "domainToUn
 assertEqual(url.domainToUnicode("EXAMPLE.COM"), "example.com", "domainToUnicode() lowercases");
 
 assert(url.URL === URL, "url.URL is the URL constructor");
-assert(url.URLSearchParams === URLSearchParams, "url.URLSearchParams is the URLSearchParams constructor");
+assert(
+    url.URLSearchParams === URLSearchParams,
+    "url.URLSearchParams is the URLSearchParams constructor",
+);
 assert(typeof url.Url === "function", "url.Url is exported");
 
 console.log(`# url: ${passed} assertions passed`);

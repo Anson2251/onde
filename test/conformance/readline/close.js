@@ -7,14 +7,14 @@ const { PassThrough } = require("stream");
 
 const input = new PassThrough();
 const rl = readline.createInterface({
-  input,
-  output: new PassThrough(),
-  terminal: false,
+    input,
+    output: new PassThrough(),
+    terminal: false,
 });
 
 let closes = 0;
 rl.on("close", () => {
-  closes += 1;
+    closes += 1;
 });
 
 rl.close();

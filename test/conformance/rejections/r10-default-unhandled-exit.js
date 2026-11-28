@@ -1,1 +1,1 @@
-Promise.reject(new Error('r1'));
+Promise.reject(new Error("r1"));

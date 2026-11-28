@@ -24,9 +24,9 @@ const os = require("./os.js");
 // (a real load failure in the module must not be swallowed). Under plain Node, where `__ln_host`
 // does not exist, the require below loads the local file as usual.
 const cryptoUnavailable =
-  typeof __ln_host !== "undefined" &&
-  typeof __ln_host.builtinUnavailable === "function" &&
-  __ln_host.builtinUnavailable("crypto") !== null;
+    typeof __ln_host !== "undefined" &&
+    typeof __ln_host.builtinUnavailable === "function" &&
+    __ln_host.builtinUnavailable("crypto") !== null;
 const crypto = cryptoUnavailable ? null : require("./crypto.js");
 
 const constants = Object.assign({}, fs.constants);
@@ -35,15 +35,15 @@ const constants = Object.assign({}, fs.constants);
 // `UV_UDP_REUSEADDR` stay out. Selecting by value shape rather than by group name means a group
 // added to `os.constants` later is picked up here without another edit.
 for (const group of Object.keys(os.constants)) {
-  const values = os.constants[group];
-  if (values !== null && typeof values === "object") Object.assign(constants, values);
+    const values = os.constants[group];
+    if (values !== null && typeof values === "object") Object.assign(constants, values);
 }
 
 // onde's crypto has no `constants` today. Checking instead of assuming keeps this module working
 // unchanged when one appears; a non-object export is ignored rather than spread into the flat
 // object.
 if (crypto !== null && crypto.constants !== null && typeof crypto.constants === "object") {
-  Object.assign(constants, crypto.constants);
+    Object.assign(constants, crypto.constants);
 }
 
 // Node freezes the flat module; so does this one, so callers cannot mutate a shared constant.

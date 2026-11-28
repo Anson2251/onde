@@ -8,10 +8,10 @@ const { PassThrough } = require("stream");
 const input = new PassThrough();
 const output = new PassThrough();
 const rl = readline.createInterface({
-  input,
-  output,
-  terminal: false,
-  crlfDelay: 100,
+    input,
+    output,
+    terminal: false,
+    crlfDelay: 100,
 });
 
 rl.on("line", (line) => console.log("line:" + JSON.stringify(line)));

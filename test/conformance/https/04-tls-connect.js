@@ -16,42 +16,42 @@ const ca = fs.readFileSync(path.join(fixtures, "ca-cert.pem"));
 let serverLine = "server:none";
 
 const server = tls.createServer({ key, cert, ALPNProtocols: ["echo"] }, (socket) => {
-  socket.on("error", () => {});
-  socket.pipe(socket);
+    socket.on("error", () => {});
+    socket.pipe(socket);
 });
 server.on("secureConnection", (socket) => {
-  serverLine = `server:${socket.encrypted}:${socket.authorized}:${socket.alpnProtocol}:${socket
-    .getProtocol()
-    .startsWith("TLSv")}`;
+    serverLine = `server:${socket.encrypted}:${socket.authorized}:${socket.alpnProtocol}:${socket
+        .getProtocol()
+        .startsWith("TLSv")}`;
 });
 
 server.listen(0, "127.0.0.1", () => {
-  const port = server.address().port;
-  const socket = tls.connect(
-    { host: "127.0.0.1", port, ca, ALPNProtocols: ["echo"], servername: "localhost" },
-    () => {
-      console.log(
-        `client:${socket.encrypted}:${socket.authorized}:${socket.alpnProtocol}:${socket
-          .getProtocol()
-          .startsWith("TLSv")}:${socket.servername}`,
-      );
-      console.log(`sessionReused:${socket.isSessionReused()}`);
-      socket.write("ping");
-    },
-  );
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk) => {
-    console.log(`echo:${chunk}`);
-    socket.end();
-  });
-  socket.on("error", (error) => {
-    console.log(`error:${error.code}`);
-    server.close();
-  });
-  socket.on("close", () => {
-    setTimeout(() => {
-      console.log(serverLine);
-      server.close();
-    }, 20);
-  });
+    const port = server.address().port;
+    const socket = tls.connect(
+        { host: "127.0.0.1", port, ca, ALPNProtocols: ["echo"], servername: "localhost" },
+        () => {
+            console.log(
+                `client:${socket.encrypted}:${socket.authorized}:${socket.alpnProtocol}:${socket
+                    .getProtocol()
+                    .startsWith("TLSv")}:${socket.servername}`,
+            );
+            console.log(`sessionReused:${socket.isSessionReused()}`);
+            socket.write("ping");
+        },
+    );
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+        console.log(`echo:${chunk}`);
+        socket.end();
+    });
+    socket.on("error", (error) => {
+        console.log(`error:${error.code}`);
+        server.close();
+    });
+    socket.on("close", () => {
+        setTimeout(() => {
+            console.log(serverLine);
+            server.close();
+        }, 20);
+    });
 });

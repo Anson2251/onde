@@ -7,21 +7,21 @@
 const fs = require("fs");
 
 async function main() {
-  const files = process.argv.slice(2);
-  if (files.length === 0) {
-    for await (const chunk of process.stdin) {
-      process.stdout.write(chunk);
+    const files = process.argv.slice(2);
+    if (files.length === 0) {
+        for await (const chunk of process.stdin) {
+            process.stdout.write(chunk);
+        }
+        return;
     }
-    return;
-  }
-  for (const file of files) {
-    for await (const chunk of fs.createReadStream(file)) {
-      process.stdout.write(chunk);
+    for (const file of files) {
+        for await (const chunk of fs.createReadStream(file)) {
+            process.stdout.write(chunk);
+        }
     }
-  }
 }
 
 main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
+    console.error(error.message);
+    process.exitCode = 1;
 });

@@ -51,7 +51,7 @@ skip these files; onde still asserts its own stable order.
 ## Adding a case
 
 1. Write the smallest program that isolates one behaviour.
-2. Prefer stdout assertions over stderr: fatal stderr is Node-*shaped*, not byte-identical
+2. Prefer stdout assertions over stderr: fatal stderr is Node-_shaped_, not byte-identical
    (V8 internal frames do not exist in QuickJS).
 3. Record from Node, then run the onde and differential modes.
 4. If Node is timing-dependent, keep the case and add a `.nodiff` marker with a comment
